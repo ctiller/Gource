@@ -1,0 +1,23 @@
+<?xml version=1.0 encoding=UTF-8?>
+<log>
+<logentry revision=10>
+<date>2020-01-03T10:00:00.000000Z</date>
+<msg>No author entry</msg>
+<paths>
+<path action=M kind=file>/file_no_auth.txt</path>
+</paths>
+</logentry>
+<logentry revision=11>
+<author>Charlie</author>
+<date>2020-01-04T10:00:00.000000Z</date>
+<msg>Empty paths</msg>
+</logentry>
+<logentry revision=12>
+<author>David</author>
+<date>2020-01-05T10:00:00.000000Z</date>
+<paths>
+<path action=D kind=dir>/deleted_dir/</path>
+<path action=A kind=file>/created.txt</path>
+</paths>
+</logentry>
+</log>

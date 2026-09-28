@@ -1,0 +1,7 @@
+{
+  "name": "start_position_invalid",
+  "args": "--start-position invalid",
+  "status": 1,
+  "reason": "start-position outside of range 0.0 - 1.0 (non-inclusive)",
+  "first_line": "gource: start-position outside of range 0.0 - 1.0 (non-inclusive)"
+}

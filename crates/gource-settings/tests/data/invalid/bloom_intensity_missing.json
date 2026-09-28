@@ -1,0 +1,7 @@
+{
+  "name": "bloom_intensity_missing",
+  "args": "--bloom-intensity",
+  "status": 1,
+  "reason": "specify bloom-intensity (float)",
+  "first_line": "gource: specify bloom-intensity (float)"
+}

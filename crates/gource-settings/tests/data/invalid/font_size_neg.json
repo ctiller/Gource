@@ -1,0 +1,7 @@
+{
+  "name": "font_size_neg",
+  "args": "--font-size -5",
+  "status": 1,
+  "reason": "invalid 'font-size' value",
+  "first_line": "gource: invalid 'font-size' value"
+}

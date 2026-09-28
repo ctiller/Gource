@@ -1,0 +1,20 @@
+<?xml version=1.0 encoding=UTF-8?>
+<log>
+<logentry revision=1>
+<author>Alice</author>
+<date>2020-01-01T12:00:00.000000Z</date>
+<paths>
+<path action=A kind=file>/trunk/src/main.rs</path>
+<path action=M kind=file>/trunk/README.md</path>
+<path action=D kind=dir>/trunk/old_dir</path>
+<path action=A kind=dir>/trunk/new_dir</path>
+</paths>
+</logentry>
+<logentry revision=2>
+<author>Bob</author>
+<date>2020-01-02T12:00:00.000000Z</date>
+<paths>
+<path action=M kind=file>/trunk/src/main.rs</path>
+</paths>
+</logentry>
+</log>

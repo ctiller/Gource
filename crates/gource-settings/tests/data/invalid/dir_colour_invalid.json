@@ -1,0 +1,7 @@
+{
+  "name": "dir_colour_invalid",
+  "args": "--dir-colour badcolor",
+  "status": 1,
+  "reason": "invalid 'dir-colour' value",
+  "first_line": "gource: invalid 'dir-colour' value"
+}

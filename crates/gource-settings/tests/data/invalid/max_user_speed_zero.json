@@ -1,0 +1,7 @@
+{
+  "name": "max_user_speed_zero",
+  "args": "--max-user-speed 0",
+  "status": 1,
+  "reason": "invalid 'max-user-speed' value",
+  "first_line": "gource: invalid 'max-user-speed' value"
+}

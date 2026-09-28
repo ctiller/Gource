@@ -1,0 +1,7 @@
+{
+  "name": "dir_name_position_missing",
+  "args": "--dir-name-position",
+  "status": 1,
+  "reason": "specify dir-name-position (float)",
+  "first_line": "gource: specify dir-name-position (float)"
+}

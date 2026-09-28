@@ -1,0 +1,7 @@
+{
+  "name": "user_show_filter_invalid_regex",
+  "args": "--user-show-filter (unclosed",
+  "status": 1,
+  "reason": "invalid user-show-filter regular expression",
+  "first_line": "gource: invalid user-show-filter regular expression"
+}

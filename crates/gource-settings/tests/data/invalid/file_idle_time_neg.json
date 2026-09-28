@@ -1,0 +1,7 @@
+{
+  "name": "file_idle_time_neg",
+  "args": "--file-idle-time -10",
+  "status": 1,
+  "reason": "invalid 'file-idle-time' value",
+  "first_line": "gource: invalid 'file-idle-time' value"
+}

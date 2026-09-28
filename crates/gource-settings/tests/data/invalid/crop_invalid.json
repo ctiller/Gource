@@ -1,0 +1,7 @@
+{
+  "name": "crop_invalid",
+  "args": "--crop invalid",
+  "status": 1,
+  "reason": "invalid 'crop' value",
+  "first_line": "gource: invalid 'crop' value"
+}

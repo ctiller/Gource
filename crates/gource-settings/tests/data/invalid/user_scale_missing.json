@@ -1,0 +1,7 @@
+{
+  "name": "user_scale_missing",
+  "args": "--user-scale",
+  "status": 1,
+  "reason": "specify user-scale (scale)",
+  "first_line": "gource: specify user-scale (scale)"
+}

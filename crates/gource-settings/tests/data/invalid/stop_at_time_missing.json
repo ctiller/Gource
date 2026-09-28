@@ -1,0 +1,7 @@
+{
+  "name": "stop_at_time_missing",
+  "args": "--stop-at-time",
+  "status": 1,
+  "reason": "specify stop-at-time (seconds)",
+  "first_line": "gource: specify stop-at-time (seconds)"
+}

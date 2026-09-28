@@ -1,0 +1,11 @@
+user:Alice
+1577836800
+:100644 100644 e69de29 d95f3ad M	src/main.rs
+:100644 100644 e69de29 d95f3ad A	"src/quoted file.rs"
+:100644 000000 e69de29 0000000 D	old.rs
+:100644 100644 e69de29 d95f3ad R	renamed.rs
+
+user:Bob
+1577836900
+:100644 100644 e69de29 d95f3ad M	README.md
+

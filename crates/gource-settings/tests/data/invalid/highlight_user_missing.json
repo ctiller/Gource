@@ -1,0 +1,7 @@
+{
+  "name": "highlight_user_missing",
+  "args": "--highlight-user",
+  "status": 1,
+  "reason": "specify highlight-user (user)",
+  "first_line": "gource: specify highlight-user (user)"
+}

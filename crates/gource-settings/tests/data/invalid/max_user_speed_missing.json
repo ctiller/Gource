@@ -1,0 +1,7 @@
+{
+  "name": "max_user_speed_missing",
+  "args": "--max-user-speed",
+  "status": 1,
+  "reason": "specify max-user-speed (units)",
+  "first_line": "gource: specify max-user-speed (units)"
+}

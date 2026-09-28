@@ -1,0 +1,7 @@
+{
+  "name": "selection_colour_invalid",
+  "args": "--selection-colour badcolor",
+  "status": 1,
+  "reason": "invalid 'selection-colour' value",
+  "first_line": "gource: invalid 'selection-colour' value"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "bloom_intensity_neg",
+  "args": "--bloom-intensity -0.5",
+  "status": 1,
+  "reason": "invalid 'bloom-intensity' value",
+  "first_line": "gource: invalid 'bloom-intensity' value"
+}

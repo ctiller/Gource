@@ -1,0 +1,7 @@
+{
+  "name": "elasticity_missing",
+  "args": "--elasticity",
+  "status": 1,
+  "reason": "specify elasticity (float)",
+  "first_line": "gource: specify elasticity (float)"
+}

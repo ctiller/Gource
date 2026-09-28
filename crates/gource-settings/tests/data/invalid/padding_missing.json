@@ -1,0 +1,7 @@
+{
+  "name": "padding_missing",
+  "args": "--padding",
+  "status": 1,
+  "reason": "specify padding (float)",
+  "first_line": "gource: specify padding (float)"
+}

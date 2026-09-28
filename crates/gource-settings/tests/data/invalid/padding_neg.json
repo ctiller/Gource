@@ -1,0 +1,7 @@
+{
+  "name": "padding_neg",
+  "args": "--padding -1.0",
+  "status": 1,
+  "reason": "invalid 'padding' value",
+  "first_line": "gource: invalid 'padding' value"
+}

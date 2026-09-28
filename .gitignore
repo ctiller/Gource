@@ -24,3 +24,8 @@ logs/*
 *.d
 .deps
 .dirstamp
+
+# Rust port
+/target
+*.profraw
+/mutants.out*

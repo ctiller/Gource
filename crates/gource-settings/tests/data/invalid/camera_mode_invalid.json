@@ -1,0 +1,7 @@
+{
+  "name": "camera_mode_invalid",
+  "args": "--camera-mode invalid",
+  "status": 1,
+  "reason": "invalid 'camera-mode' value",
+  "first_line": "gource: invalid 'camera-mode' value"
+}

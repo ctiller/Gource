@@ -1,0 +1,7 @@
+{
+  "name": "font_scale_neg",
+  "args": "--font-scale -0.5",
+  "status": 1,
+  "reason": "invalid 'font-scale' value",
+  "first_line": "gource: invalid 'font-scale' value"
+}

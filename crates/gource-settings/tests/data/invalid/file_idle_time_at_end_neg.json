@@ -1,0 +1,7 @@
+{
+  "name": "file_idle_time_at_end_neg",
+  "args": "--file-idle-time-at-end -5",
+  "status": 1,
+  "reason": "invalid 'file-idle-time-at-end' value",
+  "first_line": "gource: invalid 'file-idle-time-at-end' value"
+}

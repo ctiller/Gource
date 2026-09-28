@@ -1,0 +1,7 @@
+{
+  "name": "caption_size_missing",
+  "args": "--caption-size",
+  "status": 1,
+  "reason": "specify caption size",
+  "first_line": "gource: specify caption size"
+}

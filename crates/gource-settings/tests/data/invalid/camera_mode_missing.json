@@ -1,0 +1,7 @@
+{
+  "name": "camera_mode_missing",
+  "args": "--camera-mode",
+  "status": 1,
+  "reason": "specify camera-mode (overview,track)",
+  "first_line": "gource: specify camera-mode (overview,track)"
+}

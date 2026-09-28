@@ -1,0 +1,7 @@
+{
+  "name": "bloom_multiplier_missing",
+  "args": "--bloom-multiplier",
+  "status": 1,
+  "reason": "specify bloom-multiplier (float)",
+  "first_line": "gource: specify bloom-multiplier (float)"
+}

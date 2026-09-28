@@ -1,0 +1,7 @@
+{
+  "name": "dir_font_size_zero",
+  "args": "--dir-font-size 0",
+  "status": 1,
+  "reason": "invalid 'dir-font-size' value",
+  "first_line": "gource: invalid 'dir-font-size' value"
+}

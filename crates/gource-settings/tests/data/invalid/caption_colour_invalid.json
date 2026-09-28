@@ -1,0 +1,7 @@
+{
+  "name": "caption_colour_invalid",
+  "args": "--caption-colour badcolor",
+  "status": 1,
+  "reason": "invalid 'caption-colour' value",
+  "first_line": "gource: invalid 'caption-colour' value"
+}

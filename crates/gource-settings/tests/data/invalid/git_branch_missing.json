@@ -1,0 +1,7 @@
+{
+  "name": "git_branch_missing",
+  "args": "--git-branch",
+  "status": 1,
+  "reason": "no value specified for 'git-branch'",
+  "first_line": "gource: no value specified for 'git-branch'"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "font_colour_invalid",
+  "args": "--font-colour 12345",
+  "status": 1,
+  "reason": "invalid 'font-colour' value",
+  "first_line": "gource: invalid 'font-colour' value"
+}

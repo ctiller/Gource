@@ -1,0 +1,8 @@
+ 1.0 Alice	2020-01-01
+  A  src/main.rs
+  M  README.md
+  D  old.txt
+  R  renamed.rs
+
+ 2.0 Bob	2020-01-02 [merge]
+  A  docs/index.html

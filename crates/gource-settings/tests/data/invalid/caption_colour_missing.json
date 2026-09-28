@@ -1,0 +1,7 @@
+{
+  "name": "caption_colour_missing",
+  "args": "--caption-colour",
+  "status": 1,
+  "reason": "specify caption colour (FFFFFF)",
+  "first_line": "gource: specify caption colour (FFFFFF)"
+}

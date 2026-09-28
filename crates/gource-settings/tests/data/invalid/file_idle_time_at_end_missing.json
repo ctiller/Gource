@@ -1,0 +1,7 @@
+{
+  "name": "file_idle_time_at_end_missing",
+  "args": "--file-idle-time-at-end",
+  "status": 1,
+  "reason": "specify file-idle-time-at-end (seconds)",
+  "first_line": "gource: specify file-idle-time-at-end (seconds)"
+}

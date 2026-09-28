@@ -1,0 +1,7 @@
+{
+  "name": "user_friction_missing",
+  "args": "--user-friction",
+  "status": 1,
+  "reason": "specify user-friction (seconds)",
+  "first_line": "gource: specify user-friction (seconds)"
+}

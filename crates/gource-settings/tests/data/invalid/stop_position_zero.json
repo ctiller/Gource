@@ -1,0 +1,7 @@
+{
+  "name": "stop_position_zero",
+  "args": "--stop-position 0.0",
+  "status": 1,
+  "reason": "stop-position outside of range 0.0 - 1.0 (inclusive)",
+  "first_line": "gource: stop-position outside of range 0.0 - 1.0 (inclusive)"
+}

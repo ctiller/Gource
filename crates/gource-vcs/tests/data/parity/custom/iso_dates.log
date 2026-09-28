@@ -1,0 +1,4 @@
+2020-01-01 12:00:00|Alice|A|file1.txt|ff0000
+2020-01-01 12:00:00|Alice|M|file2.txt
+2020-01-01T15:30:00Z|Bob|D|file3.txt
+2020-01-01T10:00:00+02:00|Bob|A|file4.txt

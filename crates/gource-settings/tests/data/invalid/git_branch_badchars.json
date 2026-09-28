@@ -1,0 +1,7 @@
+{
+  "name": "git_branch_badchars",
+  "args": "--git-branch bad*branch",
+  "status": 1,
+  "reason": "invalid 'git-branch' value",
+  "first_line": "gource: invalid 'git-branch' value"
+}

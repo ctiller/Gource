@@ -1,0 +1,7 @@
+{
+  "name": "file_filter_invalid_regex",
+  "args": "--file-filter [unclosed",
+  "status": 1,
+  "reason": "invalid file-filter regular expression",
+  "first_line": "gource: invalid file-filter regular expression"
+}

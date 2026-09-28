@@ -1,0 +1,7 @@
+{
+  "name": "seconds_per_day_missing",
+  "args": "--seconds-per-day",
+  "status": 1,
+  "reason": "specify seconds-per-day (seconds)",
+  "first_line": "gource: specify seconds-per-day (seconds)"
+}

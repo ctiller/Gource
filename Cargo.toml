@@ -1,0 +1,72 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.57.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+rust-version = "1.90"
+repository = "https://github.com/acaudwell/Gource"
+
+[workspace.dependencies]
+# Internal crates
+gource-core = { path = "crates/gource-core" }
+gource-draw = { path = "crates/gource-draw" }
+gource-vcs = { path = "crates/gource-vcs" }
+gource-settings = { path = "crates/gource-settings" }
+gource-sim = { path = "crates/gource-sim" }
+gource-widgets = { path = "crates/gource-widgets" }
+
+# External crates. Versions are aligned with what Bevy already pulls in to
+# avoid duplicate builds.
+glam = "0.32"
+log = "0.4"
+thiserror = "2"
+anyhow = "1"
+regex = "1"
+fancy-regex = "0.14"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+roxmltree = "0.20"
+tempfile = "3"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif", "tga"] }
+ab_glyph = "0.2"
+slotmap = "1"
+fastrand = "2"
+
+[workspace.dependencies.bevy]
+version = "0.19.1"
+default-features = false
+features = [
+    "std",
+    "multi_threaded",
+    "async_executor",
+    "bevy_asset",
+    "bevy_log",
+    "bevy_state",
+    "bevy_winit",
+    "x11",
+    "bevy_window",
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_camera",
+    "bevy_color",
+    "bevy_image",
+    "bevy_mesh",
+    "bevy_shader",
+    "bevy_material",
+    "bevy_sprite",
+    "bevy_sprite_render",
+    "png",
+    "keyboard",
+    "mouse",
+]
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"

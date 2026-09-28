@@ -1,0 +1,7 @@
+{
+  "name": "file_filter_missing",
+  "args": "--file-filter",
+  "status": 1,
+  "reason": "specify file-filter (regex)",
+  "first_line": "gource: specify file-filter (regex)"
+}

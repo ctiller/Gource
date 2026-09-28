@@ -1,0 +1,7 @@
+{
+  "name": "elasticity_neg",
+  "args": "--elasticity -0.5",
+  "status": 1,
+  "reason": "invalid 'elasticity' value",
+  "first_line": "gource: invalid 'elasticity' value"
+}

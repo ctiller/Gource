@@ -1,0 +1,7 @@
+{
+  "name": "time_scale_missing",
+  "args": "--time-scale",
+  "status": 1,
+  "reason": "specify time-scale (scale)",
+  "first_line": "gource: specify time-scale (scale)"
+}

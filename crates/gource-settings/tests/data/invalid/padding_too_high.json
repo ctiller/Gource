@@ -1,0 +1,7 @@
+{
+  "name": "padding_too_high",
+  "args": "--padding 2.5",
+  "status": 1,
+  "reason": "invalid 'padding' value",
+  "first_line": "gource: invalid 'padding' value"
+}

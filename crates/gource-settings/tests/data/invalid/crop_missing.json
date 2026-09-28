@@ -1,0 +1,7 @@
+{
+  "name": "crop_missing",
+  "args": "--crop",
+  "status": 1,
+  "reason": "specify crop (vertical,horizontal)",
+  "first_line": "gource: specify crop (vertical,horizontal)"
+}

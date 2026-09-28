@@ -1,0 +1,18 @@
+[package]
+name = "gource-vcs"
+description = "Version control log readers for Gource (git, hg, bzr, svn, cvs, custom, apache)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gource-core = { workspace = true }
+glam = { workspace = true }
+regex = { workspace = true }
+fancy-regex = { workspace = true }
+roxmltree = { workspace = true }
+tempfile = { workspace = true }
+chrono = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }

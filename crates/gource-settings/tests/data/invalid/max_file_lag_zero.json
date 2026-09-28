@@ -1,0 +1,7 @@
+{
+  "name": "max_file_lag_zero",
+  "args": "--max-file-lag 0",
+  "status": 1,
+  "reason": "invalid 'max-file-lag' value",
+  "first_line": "gource: invalid 'max-file-lag' value"
+}

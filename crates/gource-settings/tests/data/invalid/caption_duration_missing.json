@@ -1,0 +1,7 @@
+{
+  "name": "caption_duration_missing",
+  "args": "--caption-duration",
+  "status": 1,
+  "reason": "specify caption duration (seconds)",
+  "first_line": "gource: specify caption duration (seconds)"
+}

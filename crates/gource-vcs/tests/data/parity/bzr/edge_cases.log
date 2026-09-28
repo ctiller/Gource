@@ -1,0 +1,6 @@
+ 1.0 Alice {alice@example.com}	2020-01-01 [merge]
+  A  file1.txt
+  M  dir/with spaces/file2.txt
+
+ 1.1 René	2020-01-02
+  D  to_delete.txt

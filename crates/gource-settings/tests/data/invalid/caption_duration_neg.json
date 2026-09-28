@@ -1,0 +1,7 @@
+{
+  "name": "caption_duration_neg",
+  "args": "--caption-duration -5",
+  "status": 1,
+  "reason": "invalid 'caption-duration' value",
+  "first_line": "gource: invalid 'caption-duration' value"
+}

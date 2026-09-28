@@ -1,0 +1,7 @@
+{
+  "name": "dir_name_position_too_low",
+  "args": "--dir-name-position 0.05",
+  "status": 1,
+  "reason": "dir-name-position outside of range 0.1 - 1.0 (inclusive)",
+  "first_line": "gource: dir-name-position outside of range 0.1 - 1.0 (inclusive)"
+}

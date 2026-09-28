@@ -1,0 +1,7 @@
+{
+  "name": "highlight_colour_invalid",
+  "args": "--highlight-colour badcolor",
+  "status": 1,
+  "reason": "invalid 'highlight-colour' value",
+  "first_line": "gource: invalid 'highlight-colour' value"
+}

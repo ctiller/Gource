@@ -1,0 +1,7 @@
+{
+  "name": "user_friction_neg",
+  "args": "--user-friction -0.1",
+  "status": 1,
+  "reason": "invalid 'user-friction' value",
+  "first_line": "gource: invalid 'user-friction' value"
+}

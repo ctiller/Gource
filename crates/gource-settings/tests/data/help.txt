@@ -1,0 +1,63 @@
+Gource v0.57
+Usage: gource [options] [path]
+
+Options:
+  -h, --help                       Help
+
+  -WIDTHxHEIGHT, --viewport        Set viewport size
+  -f, --fullscreen                 Fullscreen
+      --screen SCREEN              Screen number
+      --multi-sampling             Enable multi-sampling
+      --high-dpi                   Request a high DPI display
+      --no-vsync                   Disable vsync
+
+  --start-date 'YYYY-MM-DD hh:mm:ss +tz'  Start at a date and optional time
+  --stop-date  'YYYY-MM-DD hh:mm:ss +tz'  Stop at a date and optional time
+
+  -p, --start-position POSITION    Start at some position (0.0-1.0 or 'random')
+      --stop-position  POSITION    Stop at some position
+  -t, --stop-at-time SECONDS       Stop after a specified number of seconds
+      --stop-at-end                Stop at end of the log
+      --dont-stop                  Keep running after the end of the log
+      --loop                       Loop at the end of the log
+
+  -a, --auto-skip-seconds SECONDS  Auto skip to next entry if nothing happens
+                                   for a number of seconds (default: 3)
+      --disable-auto-skip          Disable auto skip
+  -s, --seconds-per-day SECONDS    Speed in seconds per day (default: 10)
+      --realtime                   Realtime playback speed
+      --no-time-travel             Use the time of the last commit if the
+                                   time of a commit is in the past
+      --author-time                Use the timestamp of the author instead of
+                                   the timestamp of the committer
+  -c, --time-scale SCALE           Change simulation time scale (default: 1.0)
+  -e, --elasticity FLOAT           Elasticity of nodes (default: 0.0)
+
+  --key                            Show file extension key
+
+  --user-image-dir DIRECTORY       Dir containing images to use as avatars
+  --default-user-image IMAGE       Default user image file
+  --fixed-user-size                Use a fixed size throughout
+  --colour-images                  Colourize user images
+
+  -i, --file-idle-time SECONDS     Time files remain idle (default: 0)
+  --file-idle-time-at-end SECONDS  Time files remain idle at end (default: 0)
+
+  --max-files NUMBER      Max number of files or 0 for no limit
+  --max-file-lag SECONDS  Max time files of a commit can take to appear
+
+  --log-command VCS       Show the VCS log command (git,svn,hg,bzr,cvs2cl)
+  --log-format  VCS       Specify the log format (git,svn,hg,bzr,cvs2cl,custom)
+
+  --load-config CONF_FILE  Load a config file
+  --save-config CONF_FILE  Save a config file with the current options
+
+  -o, --output-ppm-stream FILE    Output PPM stream to a file ('-' for STDOUT)
+  -r, --output-framerate  FPS     Framerate of output (25,30,60)
+
+PATH may be a supported version control directory, a log file, a gource config
+file, or '-' to read STDIN. If omitted, gource will attempt to generate a log
+from the current directory.
+
+To see the full command line options use '-H'
+

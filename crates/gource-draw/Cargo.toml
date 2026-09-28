@@ -1,0 +1,18 @@
+[package]
+name = "gource-draw"
+description = "Backend-neutral 2D drawing primitives for Gource: draw lists, textures and fonts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gource-core = { workspace = true }
+glam = { workspace = true }
+image = { workspace = true }
+ab_glyph = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

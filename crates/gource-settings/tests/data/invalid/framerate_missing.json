@@ -1,0 +1,7 @@
+{
+  "name": "framerate_missing",
+  "args": "--output-framerate",
+  "status": 1,
+  "reason": "specify framerate (25,30,60)",
+  "first_line": "gource: specify framerate (25,30,60)"
+}

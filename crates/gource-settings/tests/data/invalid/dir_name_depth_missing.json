@@ -1,0 +1,7 @@
+{
+  "name": "dir_name_depth_missing",
+  "args": "--dir-name-depth",
+  "status": 1,
+  "reason": "specify dir-name-depth (depth)",
+  "first_line": "gource: specify dir-name-depth (depth)"
+}

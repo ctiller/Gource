@@ -1,0 +1,7 @@
+{
+  "name": "date_format_missing",
+  "args": "--date-format",
+  "status": 1,
+  "reason": "no value specified for 'date-format'",
+  "first_line": "gource: no value specified for 'date-format'"
+}

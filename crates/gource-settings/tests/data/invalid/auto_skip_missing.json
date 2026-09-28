@@ -1,0 +1,7 @@
+{
+  "name": "auto_skip_missing",
+  "args": "--auto-skip-seconds",
+  "status": 1,
+  "reason": "specify auto-skip-seconds (seconds)",
+  "first_line": "gource: specify auto-skip-seconds (seconds)"
+}

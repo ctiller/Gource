@@ -1,0 +1,7 @@
+{
+  "name": "loop_delay_missing",
+  "args": "--loop-delay-seconds",
+  "status": 1,
+  "reason": "specify loop-delay-seconds (float)",
+  "first_line": "gource: specify loop-delay-seconds (float)"
+}

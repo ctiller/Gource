@@ -1,0 +1,7 @@
+{
+  "name": "save_config_missing",
+  "args": "--save-config",
+  "status": 1,
+  "reason": "invalid save-config value",
+  "first_line": "gource: invalid save-config value"
+}

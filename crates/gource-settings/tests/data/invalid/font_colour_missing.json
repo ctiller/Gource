@@ -1,0 +1,7 @@
+{
+  "name": "font_colour_missing",
+  "args": "--font-colour",
+  "status": 1,
+  "reason": "specify font colour (FFFFFF)",
+  "first_line": "gource: specify font colour (FFFFFF)"
+}

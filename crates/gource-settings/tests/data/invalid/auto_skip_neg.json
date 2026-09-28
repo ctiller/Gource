@@ -1,0 +1,7 @@
+{
+  "name": "auto_skip_neg",
+  "args": "--auto-skip-seconds -1.0",
+  "status": 1,
+  "reason": "invalid 'auto-skip-seconds' value",
+  "first_line": "gource: invalid 'auto-skip-seconds' value"
+}

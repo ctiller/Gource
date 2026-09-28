@@ -1,0 +1,7 @@
+{
+  "name": "filename_time_missing",
+  "args": "--filename-time",
+  "status": 1,
+  "reason": "specify duration to keep files on screen (float)",
+  "first_line": "gource: specify duration to keep files on screen (float)"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "stop_at_time_neg",
+  "args": "--stop-at-time -10.0",
+  "status": 1,
+  "reason": "invalid 'stop-at-time' value",
+  "first_line": "gource: invalid 'stop-at-time' value"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "user_scale_neg",
+  "args": "--user-scale -1.0",
+  "status": 1,
+  "reason": "invalid 'user-scale' value",
+  "first_line": "gource: invalid 'user-scale' value"
+}

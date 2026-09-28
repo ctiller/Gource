@@ -1,0 +1,7 @@
+{
+  "name": "max_file_lag_missing",
+  "args": "--max-file-lag",
+  "status": 1,
+  "reason": "specify max-file-lag (seconds)",
+  "first_line": "gource: specify max-file-lag (seconds)"
+}

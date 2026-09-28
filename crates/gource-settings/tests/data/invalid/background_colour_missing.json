@@ -1,0 +1,7 @@
+{
+  "name": "background_colour_missing",
+  "args": "--background-colour",
+  "status": 1,
+  "reason": "specify background colour (FFFFFF)",
+  "first_line": "gource: specify background colour (FFFFFF)"
+}

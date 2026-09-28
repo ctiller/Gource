@@ -1,0 +1,17 @@
+[package]
+name = "gource-settings"
+description = "Gource settings: command line, config files and defaults"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gource-core = { workspace = true }
+glam = { workspace = true }
+fancy-regex = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -1,0 +1,8 @@
+000001:
+BRANCH [release-1.0]
+
+(date: 2020/05/10 08:30:00;  author: Charlie;  state: Exp;  lines: +5 -2)
+| branch_file.txt,v:1.1
+
+Branch commit
+=============================================================================

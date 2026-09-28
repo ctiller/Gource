@@ -1,0 +1,7 @@
+{
+  "name": "font_scale_missing",
+  "args": "--font-scale",
+  "status": 1,
+  "reason": "specify font scale",
+  "first_line": "gource: specify font scale"
+}

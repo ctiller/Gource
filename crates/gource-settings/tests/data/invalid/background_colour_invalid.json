@@ -1,0 +1,7 @@
+{
+  "name": "background_colour_invalid",
+  "args": "--background-colour notacolor",
+  "status": 1,
+  "reason": "invalid 'background-colour' value",
+  "first_line": "gource: invalid 'background-colour' value"
+}

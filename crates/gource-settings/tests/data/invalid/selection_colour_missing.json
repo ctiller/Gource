@@ -1,0 +1,7 @@
+{
+  "name": "selection_colour_missing",
+  "args": "--selection-colour",
+  "status": 1,
+  "reason": "specify selection colour (FFFFFF)",
+  "first_line": "gource: specify selection colour (FFFFFF)"
+}

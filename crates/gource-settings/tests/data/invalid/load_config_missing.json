@@ -1,0 +1,7 @@
+{
+  "name": "load_config_missing",
+  "args": "--load-config",
+  "status": 1,
+  "reason": "invalid load-config value",
+  "first_line": "gource: invalid load-config value"
+}

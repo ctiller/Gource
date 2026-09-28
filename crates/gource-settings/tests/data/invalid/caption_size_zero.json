@@ -1,0 +1,7 @@
+{
+  "name": "caption_size_zero",
+  "args": "--caption-size 0",
+  "status": 1,
+  "reason": "invalid 'caption-size' value",
+  "first_line": "gource: invalid 'caption-size' value"
+}

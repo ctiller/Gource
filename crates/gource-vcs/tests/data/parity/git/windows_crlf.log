@@ -1,0 +1,7 @@
+user:Alice
+1577836800
+:100644 100644 1 2 A	src/file.rs
+
+user:Bob
+1577836900
+:100644 100644 1 2 M	doc.txt

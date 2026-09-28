@@ -1,0 +1,7 @@
+{
+  "name": "user_show_filter_missing",
+  "args": "--user-show-filter",
+  "status": 1,
+  "reason": "specify user-show-filter (regex)",
+  "first_line": "gource: specify user-show-filter (regex)"
+}

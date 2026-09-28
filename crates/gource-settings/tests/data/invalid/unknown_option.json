@@ -1,0 +1,7 @@
+{
+  "name": "unknown_option",
+  "args": "--not-an-option",
+  "status": 1,
+  "reason": "unknown option not-an-option",
+  "first_line": "gource: unknown option not-an-option"
+}

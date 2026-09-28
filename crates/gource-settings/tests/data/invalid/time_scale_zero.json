@@ -1,0 +1,7 @@
+{
+  "name": "time_scale_zero",
+  "args": "--time-scale 0.0",
+  "status": 1,
+  "reason": "time-scale outside of range 0.0 - 4.0",
+  "first_line": "gource: time-scale outside of range 0.0 - 4.0"
+}

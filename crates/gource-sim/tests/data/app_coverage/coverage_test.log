@@ -1,0 +1,9 @@
+1577836800|Alice|A|/src/main.rs|#ff0000
+1577836800|Alice|A|/src/util/helper.rs|#00ff00
+1577836800|Alice|A|/docs/guide.txt|#0000ff
+1577836810|Bob|M|/src/main.rs|#ffff00
+1577836820|Charlie|A|/tests/test1.rs
+1577836830|Alice|D|/src/util/
+1577836840|Bob|D|/src/main.rs
+1577836850|Charlie|M|/docs/guide.txt
+1577836805|Dave|A|/out_of_order.txt

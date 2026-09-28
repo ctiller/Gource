@@ -1,0 +1,7 @@
+{
+  "name": "viewport_neg",
+  "args": "-viewport -100x100",
+  "status": 1,
+  "reason": "invalid 'viewport' value",
+  "first_line": "gource: invalid 'viewport' value"
+}

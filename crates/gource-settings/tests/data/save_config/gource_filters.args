@@ -1,0 +1,1 @@
+--user-filter bot.* --user-filter ci.* --file-filter .*\.min\.js --file-filter vendor/.*

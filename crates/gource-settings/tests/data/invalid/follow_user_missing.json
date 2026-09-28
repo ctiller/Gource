@@ -1,0 +1,7 @@
+{
+  "name": "follow_user_missing",
+  "args": "--follow-user",
+  "status": 1,
+  "reason": "specify follow-user (user)",
+  "first_line": "gource: specify follow-user (user)"
+}

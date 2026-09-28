@@ -1,0 +1,7 @@
+{
+  "name": "window_pos_not_num",
+  "args": "--window-position 100xabc",
+  "status": 1,
+  "reason": "invalid 'window-position' value",
+  "first_line": "gource: invalid 'window-position' value"
+}

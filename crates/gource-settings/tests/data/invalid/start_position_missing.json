@@ -1,0 +1,7 @@
+{
+  "name": "start_position_missing",
+  "args": "--start-position",
+  "status": 1,
+  "reason": "specify start-position (float,random)",
+  "first_line": "gource: specify start-position (float,random)"
+}

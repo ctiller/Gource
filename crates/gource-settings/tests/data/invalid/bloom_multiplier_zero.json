@@ -1,0 +1,7 @@
+{
+  "name": "bloom_multiplier_zero",
+  "args": "--bloom-multiplier 0.0",
+  "status": 1,
+  "reason": "invalid 'bloom-multiplier' value",
+  "first_line": "gource: invalid 'bloom-multiplier' value"
+}

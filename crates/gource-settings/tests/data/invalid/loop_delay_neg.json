@@ -1,0 +1,7 @@
+{
+  "name": "loop_delay_neg",
+  "args": "--loop-delay-seconds -1.0",
+  "status": 1,
+  "reason": "invalid 'loop-delay-seconds' value",
+  "first_line": "gource: invalid 'loop-delay-seconds' value"
+}

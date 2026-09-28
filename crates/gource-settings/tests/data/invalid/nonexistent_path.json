@@ -1,0 +1,7 @@
+{
+  "name": "nonexistent_path",
+  "args": "/path/to/nonexistent/gource_test_repo_12345",
+  "status": 1,
+  "reason": "'/path/to/nonexistent/gource_test_repo_12345' does not appear to be a valid file or directory",
+  "first_line": "gource: '/path/to/nonexistent/gource_test_repo_12345' does not appear to be a valid file or directory"
+}

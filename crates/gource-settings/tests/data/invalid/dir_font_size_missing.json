@@ -1,0 +1,7 @@
+{
+  "name": "dir_font_size_missing",
+  "args": "--dir-font-size",
+  "status": 1,
+  "reason": "specify font size",
+  "first_line": "gource: specify font size"
+}

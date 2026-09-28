@@ -1,0 +1,7 @@
+{
+  "name": "file_show_filter_invalid_regex",
+  "args": "--file-show-filter *invalid",
+  "status": 1,
+  "reason": "invalid file-show-filter regular expression",
+  "first_line": "gource: invalid file-show-filter regular expression"
+}

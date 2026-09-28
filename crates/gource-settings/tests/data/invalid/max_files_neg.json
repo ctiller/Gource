@@ -1,0 +1,7 @@
+{
+  "name": "max_files_neg",
+  "args": "--max-files -10",
+  "status": 1,
+  "reason": "invalid 'max-files' value",
+  "first_line": "gource: invalid 'max-files' value"
+}

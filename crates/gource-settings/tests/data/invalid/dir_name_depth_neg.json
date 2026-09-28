@@ -1,0 +1,7 @@
+{
+  "name": "dir_name_depth_neg",
+  "args": "--dir-name-depth -2",
+  "status": 1,
+  "reason": "invalid 'dir-name-depth' value",
+  "first_line": "gource: invalid 'dir-name-depth' value"
+}

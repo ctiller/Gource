@@ -1,0 +1,7 @@
+{
+  "name": "unknown_option_dash",
+  "args": "---invalid",
+  "status": 1,
+  "reason": "unknown option invalid",
+  "first_line": "gource: unknown option invalid"
+}

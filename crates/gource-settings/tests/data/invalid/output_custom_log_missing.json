@@ -1,0 +1,7 @@
+{
+  "name": "output_custom_log_missing",
+  "args": "--output-custom-log",
+  "status": 1,
+  "reason": "invalid output-custom-log value",
+  "first_line": "gource: invalid output-custom-log value"
+}

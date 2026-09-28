@@ -1,0 +1,7 @@
+{
+  "name": "highlight_colour_missing",
+  "args": "--highlight-colour",
+  "status": 1,
+  "reason": "specify highlight colour (FFFFFF)",
+  "first_line": "gource: specify highlight colour (FFFFFF)"
+}

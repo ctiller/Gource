@@ -1,0 +1,55 @@
+//! Options controlling log generation and parsing.
+
+use gource_core::StringHasher;
+
+/// Regex filters applied while reading commits (see `RCommit::addFile` and
+/// `RCommit::isValid`). Patterns use PCRE-like syntax (`fancy_regex`), and
+/// like the C++ `Regex::match` they are unanchored searches.
+#[derive(Debug, Clone, Default)]
+pub struct CommitFilters {
+    /// `--file-filter`: drop files whose (raw, unnormalised) name matches any.
+    pub file_filters: Vec<fancy_regex::Regex>,
+    /// `--file-show-filter`: keep only files matching all of these.
+    pub file_show_filters: Vec<fancy_regex::Regex>,
+    /// `--user-filter`: drop commits whose user matches any.
+    pub user_filters: Vec<fancy_regex::Regex>,
+    /// `--user-show-filter`: keep only commits whose user matches all.
+    pub user_show_filters: Vec<fancy_regex::Regex>,
+}
+
+impl CommitFilters {
+    /// Whether a file (raw name as it appears in the log) passes the filters.
+    pub fn allows_file(&self, filename: &str) -> bool {
+        let matches = |r: &fancy_regex::Regex| r.is_match(filename).unwrap_or(false);
+        !self.file_filters.iter().any(matches) && self.file_show_filters.iter().all(matches)
+    }
+
+    /// Whether a user passes the filters.
+    pub fn allows_user(&self, username: &str) -> bool {
+        let matches = |r: &fancy_regex::Regex| r.is_match(username).unwrap_or(false);
+        !self.user_filters.iter().any(matches) && self.user_show_filters.iter().all(matches)
+    }
+}
+
+/// Everything the VCS layer needs from the settings (instead of reading the
+/// global `gGourceSettings` like the C++ code).
+#[derive(Debug, Clone, Default)]
+pub struct VcsOptions {
+    /// `--log-format`: force a format ("git", "svn", ...); empty = auto-detect.
+    pub log_format: String,
+    /// `--git-branch`.
+    pub git_branch: String,
+    /// `--author-time`: use author time instead of commit time (git).
+    pub author_time: bool,
+    /// `--start-date` as a timestamp (0 = unset); passed to VCS commands
+    /// where the C++ code does so.
+    pub start_timestamp: i64,
+    /// `--stop-date` as a timestamp (0 = unset).
+    pub stop_timestamp: i64,
+    /// True if the path was not given explicitly (defaults to "."). Affects
+    /// error messages.
+    pub default_path: bool,
+    pub filters: CommitFilters,
+    /// Seed for file colours derived from extensions.
+    pub hasher: StringHasher,
+}

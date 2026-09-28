@@ -1,0 +1,7 @@
+{
+  "name": "framerate_neg",
+  "args": "--output-framerate -10",
+  "status": 1,
+  "reason": "supported framerates are 25,30,60",
+  "first_line": "gource: supported framerates are 25,30,60"
+}

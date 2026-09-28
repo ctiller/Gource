@@ -1,0 +1,8 @@
+commit 123
+tree 456
+author René 日本語 <a@b> 1577836800 +0000
+committer René 日本語 <a@b> 1577836800 +0000
+
+    msg
+
+:100644 100644 123 456 A	ファイル_résumé.txt

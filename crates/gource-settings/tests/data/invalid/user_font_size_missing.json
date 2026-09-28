@@ -1,0 +1,7 @@
+{
+  "name": "user_font_size_missing",
+  "args": "--user-font-size",
+  "status": 1,
+  "reason": "specify font size",
+  "first_line": "gource: specify font size"
+}

@@ -1,0 +1,4 @@
+1577836800|||file_empty_user_action.txt
+1577836800|Alice|A|path/no/leading/slash.txt
+1577836800|Alice|M|///multiple_leading_slashes.txt
+1577836900|René|A|unicode_user_résumé.txt|#123456

@@ -1,0 +1,7 @@
+{
+  "name": "max_files_missing",
+  "args": "--max-files",
+  "status": 1,
+  "reason": "specify max-files (number)",
+  "first_line": "gource: specify max-files (number)"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "seconds_per_day_zero",
+  "args": "--seconds-per-day 0",
+  "status": 1,
+  "reason": "invalid 'seconds-per-day' value",
+  "first_line": "gource: invalid 'seconds-per-day' value"
+}

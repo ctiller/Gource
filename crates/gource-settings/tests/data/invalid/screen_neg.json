@@ -1,0 +1,7 @@
+{
+  "name": "screen_neg",
+  "args": "--screen -1",
+  "status": 1,
+  "reason": "invalid 'screen' value",
+  "first_line": "gource: invalid 'screen' value"
+}

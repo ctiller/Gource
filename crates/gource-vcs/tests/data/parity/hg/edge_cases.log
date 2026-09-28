@@ -1,0 +1,4 @@
+1577836800 18000|Alice||empty_action.txt
+1577836800 18000|Alice|M|path/with spaces/file.txt
+1577836900 -18000|Zoë|A|unicode/name.txt
+1577837000 0|Bob|M|file_b.txt

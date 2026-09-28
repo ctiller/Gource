@@ -1,0 +1,12 @@
+user:René François
+1577836800
+:100644 100644 e69de29 d95f3ad A	"café/résumé.txt"
+:100644 100644 e69de29 d95f3ad M	"path with "embedded quotes".rs"
+:100644 100644 e69de29 d95f3ad D	обычный_файл.cpp
+
+user:UserWithNoFiles
+1577836900
+
+user:Dan
+1577837000
+:100644 100644 e69de29 d95f3ad A	file_dan.txt

@@ -1,0 +1,4 @@
+# Comment line
+2020-01-01 00:00:00|Initial release
+2020-01-01 00:00:10|Midway update
+2020-01-01 00:00:20|Final touches

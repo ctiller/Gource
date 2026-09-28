@@ -1,0 +1,7 @@
+{
+  "name": "stop_position_missing",
+  "args": "--stop-position",
+  "status": 1,
+  "reason": "specify stop-position (float)",
+  "first_line": "gource: specify stop-position (float)"
+}

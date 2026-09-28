@@ -1,0 +1,7 @@
+{
+  "name": "git_branch_dash",
+  "args": "--git-branch -invalid",
+  "status": 1,
+  "reason": "invalid 'git-branch' value",
+  "first_line": "gource: invalid 'git-branch' value"
+}

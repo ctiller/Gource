@@ -1,0 +1,28 @@
+[package]
+name = "gource"
+description = "Software version control visualization (Bevy frontend)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+# Native Wayland support (requires wayland-client development files to build).
+wayland = ["bevy/wayland"]
+
+[dependencies]
+# Default features are disabled: audio (alsa) and gamepads (udev) are not needed
+# and pull in system libraries that are not always available.
+bevy = { workspace = true }
+gource-core = { workspace = true }
+gource-draw = { workspace = true }
+gource-settings = { workspace = true }
+gource-sim = { workspace = true }
+gource-vcs = { workspace = true }
+glam = { workspace = true }
+image = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

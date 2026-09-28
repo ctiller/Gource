@@ -1,0 +1,7 @@
+{
+  "name": "dir_colour_missing",
+  "args": "--dir-colour",
+  "status": 1,
+  "reason": "specify dir colour (FFFFFF)",
+  "first_line": "gource: specify dir colour (FFFFFF)"
+}

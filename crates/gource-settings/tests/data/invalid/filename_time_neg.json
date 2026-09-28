@@ -1,0 +1,7 @@
+{
+  "name": "filename_time_neg",
+  "args": "--filename-time -1",
+  "status": 1,
+  "reason": "filename-time must be >= 2.0",
+  "first_line": "gource: filename-time must be >= 2.0"
+}
