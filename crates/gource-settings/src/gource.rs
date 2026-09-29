@@ -50,6 +50,147 @@ impl CameraMode {
     }
 }
 
+/// `--file-size-metric` (`none`, `size` / `bytes`, `lines`, `diff`, `churn`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum FileSizeMetric {
+    #[default]
+    None,
+    Size,
+    Lines,
+    Diff,
+    Churn,
+}
+
+impl FileSizeMetric {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "none" => Some(FileSizeMetric::None),
+            "size" | "bytes" => Some(FileSizeMetric::Size),
+            "lines" => Some(FileSizeMetric::Lines),
+            "diff" => Some(FileSizeMetric::Diff),
+            "churn" => Some(FileSizeMetric::Churn),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FileSizeMetric::None => "none",
+            FileSizeMetric::Size => "size",
+            FileSizeMetric::Lines => "lines",
+            FileSizeMetric::Diff => "diff",
+            FileSizeMetric::Churn => "churn",
+        }
+    }
+}
+
+/// `--file-colour-mode` (`ext` / `extension`, `age`, `churn`, `cohort`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum FileColourMode {
+    #[default]
+    Extension,
+    Age,
+    Churn,
+    Cohort,
+}
+
+impl FileColourMode {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "ext" | "extension" => Some(FileColourMode::Extension),
+            "age" => Some(FileColourMode::Age),
+            "churn" => Some(FileColourMode::Churn),
+            "cohort" => Some(FileColourMode::Cohort),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FileColourMode::Extension => "extension",
+            FileColourMode::Age => "age",
+            FileColourMode::Churn => "churn",
+            FileColourMode::Cohort => "cohort",
+        }
+    }
+}
+
+/// `--dashboard` panels (`lines`, `diff`, `editors`, `commits`, `theseus`, `churn`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum DashboardPanel {
+    Lines,
+    Diff,
+    Editors,
+    Commits,
+    Theseus,
+    Churn,
+}
+
+impl DashboardPanel {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "lines" => Some(DashboardPanel::Lines),
+            "diff" => Some(DashboardPanel::Diff),
+            "editors" => Some(DashboardPanel::Editors),
+            "commits" => Some(DashboardPanel::Commits),
+            "theseus" => Some(DashboardPanel::Theseus),
+            "churn" => Some(DashboardPanel::Churn),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DashboardPanel::Lines => "lines",
+            DashboardPanel::Diff => "diff",
+            DashboardPanel::Editors => "editors",
+            DashboardPanel::Commits => "commits",
+            DashboardPanel::Theseus => "theseus",
+            DashboardPanel::Churn => "churn",
+        }
+    }
+}
+
+/// `--dashboard-period` (`day`, `week`, `month`, `year`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum DashboardPeriod {
+    #[default]
+    Day,
+    Week,
+    Month,
+    Year,
+}
+
+impl DashboardPeriod {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "day" => Some(DashboardPeriod::Day),
+            "week" => Some(DashboardPeriod::Week),
+            "month" => Some(DashboardPeriod::Month),
+            "year" => Some(DashboardPeriod::Year),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DashboardPeriod::Day => "day",
+            DashboardPeriod::Week => "week",
+            DashboardPeriod::Month => "month",
+            DashboardPeriod::Year => "year",
+        }
+    }
+
+    pub fn seconds(&self) -> i64 {
+        match self {
+            DashboardPeriod::Day => 86400,
+            DashboardPeriod::Week => 7 * 86400,
+            DashboardPeriod::Month => 30 * 86400,
+            DashboardPeriod::Year => 365 * 86400,
+        }
+    }
+}
+
 /// All `[gource]` section settings. Field names follow the C++ members.
 ///
 /// Runtime state that the C++ code kept in the settings global (`shutdown`,
@@ -198,6 +339,19 @@ pub struct GourceSettings {
     pub hash_seed: i32,
 
     pub log_level: LogLevel,
+
+    // Evolution settings
+    pub file_size_metric: FileSizeMetric,
+    pub file_pulse: f32,
+    pub file_colour_mode: FileColourMode,
+    pub dashboards: Vec<DashboardPanel>,
+    pub dashboard_period: DashboardPeriod,
+    pub dashboard_window_days: u32,
+    pub hide_dashboards: bool,
+    pub output_stats_filename: String,
+    pub cache_dir: String,
+    pub no_cache: bool,
+    pub seed: Option<u32>,
 }
 
 impl Default for GourceSettings {
@@ -332,6 +486,18 @@ impl Default for GourceSettings {
             hash_seed: 31,
 
             log_level: LogLevel::Off,
+
+            file_size_metric: FileSizeMetric::None,
+            file_pulse: 0.0,
+            file_colour_mode: FileColourMode::Extension,
+            dashboards: Vec::new(),
+            dashboard_period: DashboardPeriod::Day,
+            dashboard_window_days: 30,
+            hide_dashboards: false,
+            output_stats_filename: String::new(),
+            cache_dir: String::new(),
+            no_cache: false,
+            seed: None,
         };
         s.set_scaled_font_sizes();
         s
@@ -350,6 +516,226 @@ impl GourceSettings {
         self.scaled_user_font_size = scale(self.user_font_size);
         self.scaled_dirname_font_size = scale(self.dirname_font_size);
         self.scaled_filename_font_size = scale(self.filename_font_size);
+    }
+
+    /// Formats non-default settings as CLI arguments.
+    pub fn to_cli_args(&self) -> Vec<String> {
+        let def = Self::default();
+        let mut args = Vec::new();
+
+        let fmt_col = |c: Vec3| {
+            format!(
+                "{:02x}{:02x}{:02x}",
+                (c.x * 255.0).round().clamp(0.0, 255.0) as u8,
+                (c.y * 255.0).round().clamp(0.0, 255.0) as u8,
+                (c.z * 255.0).round().clamp(0.0, 255.0) as u8,
+            )
+        };
+
+        if self.background_colour != def.background_colour {
+            args.push("--background-colour".to_string());
+            args.push(fmt_col(self.background_colour));
+        }
+        if self.dir_colour != def.dir_colour {
+            args.push("--dir-colour".to_string());
+            args.push(fmt_col(self.dir_colour));
+        }
+        if self.font_colour != def.font_colour {
+            args.push("--font-colour".to_string());
+            args.push(fmt_col(self.font_colour));
+        }
+        if self.highlight_colour != def.highlight_colour {
+            args.push("--highlight-colour".to_string());
+            args.push(fmt_col(self.highlight_colour));
+        }
+        if self.selection_colour != def.selection_colour {
+            args.push("--selection-colour".to_string());
+            args.push(fmt_col(self.selection_colour));
+        }
+        if self.bloom_multiplier != def.bloom_multiplier {
+            args.push("--bloom-multiplier".to_string());
+            args.push(self.bloom_multiplier.to_string());
+        }
+        if self.bloom_intensity != def.bloom_intensity {
+            args.push("--bloom-intensity".to_string());
+            args.push(self.bloom_intensity.to_string());
+        }
+        if self.font_scale != def.font_scale {
+            args.push("--font-scale".to_string());
+            args.push(self.font_scale.to_string());
+        }
+        if !self.title.is_empty() && self.title != def.title {
+            args.push("--title".to_string());
+            args.push(self.title.clone());
+        }
+        if self.camera_mode != def.camera_mode {
+            args.push("--camera-mode".to_string());
+            args.push(self.camera_mode.as_str().to_string());
+        }
+
+        // Hide flags
+        let mut hides = Vec::new();
+        if self.hide_date != def.hide_date && self.hide_date {
+            hides.push("date");
+        }
+        if self.hide_users != def.hide_users && self.hide_users {
+            hides.push("users");
+        }
+        if self.hide_tree != def.hide_tree && self.hide_tree {
+            hides.push("tree");
+        }
+        if self.hide_files != def.hide_files && self.hide_files {
+            hides.push("files");
+        }
+        if self.hide_usernames != def.hide_usernames && self.hide_usernames {
+            hides.push("usernames");
+        }
+        if self.hide_filenames != def.hide_filenames && self.hide_filenames {
+            hides.push("filenames");
+        }
+        if self.hide_dirnames != def.hide_dirnames && self.hide_dirnames {
+            hides.push("dirnames");
+        }
+        if self.hide_bloom != def.hide_bloom && self.hide_bloom {
+            hides.push("bloom");
+        }
+        if self.hide_mouse != def.hide_mouse && self.hide_mouse {
+            hides.push("mouse");
+        }
+        if self.hide_progress != def.hide_progress && self.hide_progress && !self.hide_mouse {
+            hides.push("progress");
+        }
+        if self.hide_root != def.hide_root && self.hide_root {
+            hides.push("root");
+        }
+        if self.hide_dashboards != def.hide_dashboards && self.hide_dashboards {
+            hides.push("dashboards");
+        }
+        if !hides.is_empty() {
+            args.push("--hide".to_string());
+            args.push(hides.join(","));
+        }
+
+        if self.file_pulse != def.file_pulse {
+            args.push("--file-pulse".to_string());
+            args.push(self.file_pulse.to_string());
+        }
+        if self.file_colour_mode != def.file_colour_mode {
+            args.push("--file-colour-mode".to_string());
+            args.push(self.file_colour_mode.as_str().to_string());
+        }
+        if !self.dashboards.is_empty() {
+            args.push("--dashboard".to_string());
+            let panel_names: Vec<&'static str> =
+                self.dashboards.iter().map(|p| p.as_str()).collect();
+            args.push(panel_names.join(","));
+        }
+        if self.dashboard_period != def.dashboard_period {
+            args.push("--dashboard-period".to_string());
+            args.push(self.dashboard_period.as_str().to_string());
+        }
+        if self.dashboard_window_days != def.dashboard_window_days {
+            args.push("--dashboard-window".to_string());
+            args.push(format!("{}d", self.dashboard_window_days));
+        }
+
+        if self.elasticity != def.elasticity {
+            args.push("--elasticity".to_string());
+            args.push(self.elasticity.to_string());
+        }
+        if (self.user_friction - def.user_friction).abs() > 1e-4 {
+            args.push("--user-friction".to_string());
+            let uf = if self.user_friction > 0.0 {
+                1.0 / self.user_friction
+            } else {
+                1.0
+            };
+            args.push(uf.to_string());
+        }
+        if self.max_user_speed != def.max_user_speed {
+            args.push("--max-user-speed".to_string());
+            args.push(self.max_user_speed.to_string());
+        }
+        if self.user_scale != def.user_scale {
+            args.push("--user-scale".to_string());
+            args.push(self.user_scale.to_string());
+        }
+        if self.file_idle_time != def.file_idle_time {
+            args.push("--file-idle-time".to_string());
+            args.push(self.file_idle_time.to_string());
+        }
+        if self.max_file_lag != def.max_file_lag {
+            args.push("--max-file-lag".to_string());
+            args.push(self.max_file_lag.to_string());
+        }
+        if self.file_size_metric != def.file_size_metric {
+            args.push("--file-size-metric".to_string());
+            args.push(self.file_size_metric.as_str().to_string());
+        }
+
+        if (self.days_per_second - def.days_per_second).abs() > 1e-4 {
+            args.push("--seconds-per-day".to_string());
+            let spd = if self.days_per_second > 0.0 {
+                1.0 / self.days_per_second
+            } else {
+                10.0
+            };
+            args.push(spd.to_string());
+        }
+        if self.auto_skip_seconds != def.auto_skip_seconds {
+            args.push("--auto-skip-seconds".to_string());
+            args.push(self.auto_skip_seconds.to_string());
+        }
+        if self.time_scale != def.time_scale {
+            args.push("--time-scale".to_string());
+            args.push(self.time_scale.to_string());
+        }
+        if self.looping != def.looping {
+            args.push("--loop".to_string());
+        }
+
+        if self.max_files != def.max_files {
+            args.push("--max-files".to_string());
+            args.push(self.max_files.to_string());
+        }
+        for rf in &self.file_filters {
+            args.push("--file-filter".to_string());
+            args.push(rf.as_str().to_string());
+        }
+        for rf in &self.file_show_filters {
+            args.push("--file-show-filter".to_string());
+            args.push(rf.as_str().to_string());
+        }
+        for rf in &self.user_filters {
+            args.push("--user-filter".to_string());
+            args.push(rf.as_str().to_string());
+        }
+        for rf in &self.user_show_filters {
+            args.push("--user-show-filter".to_string());
+            args.push(rf.as_str().to_string());
+        }
+
+        if !self.output_stats_filename.is_empty() {
+            args.push("--output-stats".to_string());
+            args.push(self.output_stats_filename.clone());
+        }
+        if !self.cache_dir.is_empty() {
+            args.push("--cache-dir".to_string());
+            args.push(self.cache_dir.clone());
+        }
+        if self.no_cache {
+            args.push("--no-cache".to_string());
+        }
+        if let Some(s) = self.seed {
+            args.push("--seed".to_string());
+            args.push(s.to_string());
+        }
+
+        if !self.default_path && !self.path.is_empty() && self.path != "." {
+            args.push(self.path.clone());
+        }
+
+        args
     }
 
     /// `importGourceSettings(conf, section)`: reset to defaults, then apply the
@@ -407,7 +793,7 @@ impl GourceSettings {
             for hide_field in &hide_fields {
                 match hide_field.as_str() {
                     "date" | "users" | "tree" | "files" | "usernames" | "filenames"
-                    | "dirnames" | "bloom" | "progress" | "mouse" | "root" => {}
+                    | "dirnames" | "bloom" | "progress" | "mouse" | "root" | "dashboards" => {}
                     _ => {
                         return Err(conf.entry_error(
                             Some(entry),
@@ -431,6 +817,7 @@ impl GourceSettings {
             "hide-bloom",
             "hide-mouse",
             "hide-root",
+            "hide-dashboards",
         ] {
             if gource_settings.get_bool(hide_bool_name) {
                 let hide_field = &hide_bool_name[5..];
@@ -450,6 +837,7 @@ impl GourceSettings {
                 "bloom" => settings.hide_bloom = true,
                 "progress" => settings.hide_progress = true,
                 "root" => settings.hide_root = true,
+                "dashboards" => settings.hide_dashboards = true,
                 "mouse" => {
                     settings.hide_mouse = true;
                     settings.hide_progress = true;
@@ -1214,6 +1602,125 @@ impl GourceSettings {
             }
         }
 
+        // Evolution settings
+        if let Some(entry) = gource_settings.entry("file-size-metric") {
+            if !entry.has_value() {
+                return Err(conf.missing_value_error(entry));
+            }
+            if let Some(metric) = FileSizeMetric::parse(&entry.value) {
+                settings.file_size_metric = metric;
+            } else {
+                return Err(conf.invalid_value_error(entry));
+            }
+        }
+
+        if let Some(entry) = gource_settings.entry("file-pulse") {
+            if !entry.has_value() {
+                return Err(conf.missing_value_error(entry));
+            }
+            let pulse = entry.get_float();
+            if !(0.0..=10.0).contains(&pulse) {
+                return Err(conf.invalid_value_error(entry));
+            }
+            settings.file_pulse = pulse;
+        }
+
+        if let Some(entry) = gource_settings.entry("file-colour-mode") {
+            if !entry.has_value() {
+                return Err(conf.missing_value_error(entry));
+            }
+            if let Some(mode) = FileColourMode::parse(&entry.value) {
+                settings.file_colour_mode = mode;
+            } else {
+                return Err(conf.invalid_value_error(entry));
+            }
+        }
+
+        if let Some(entry) = gource_settings.entry("dashboard") {
+            if !entry.has_value() {
+                return Err(conf.missing_value_error(entry));
+            }
+            if entry.value == "all" {
+                settings.dashboards = vec![
+                    DashboardPanel::Lines,
+                    DashboardPanel::Diff,
+                    DashboardPanel::Editors,
+                    DashboardPanel::Commits,
+                    DashboardPanel::Theseus,
+                    DashboardPanel::Churn,
+                ];
+            } else {
+                let mut panels = Vec::new();
+                for part in entry.value.split(',') {
+                    let item = part.trim();
+                    if item.is_empty() {
+                        continue;
+                    }
+                    if let Some(p) = DashboardPanel::parse(item) {
+                        panels.push(p);
+                    } else {
+                        return Err(conf.invalid_value_error(entry));
+                    }
+                }
+                settings.dashboards = panels;
+            }
+        }
+
+        if let Some(entry) = gource_settings.entry("dashboard-period") {
+            if !entry.has_value() {
+                return Err(conf.missing_value_error(entry));
+            }
+            if let Some(period) = DashboardPeriod::parse(&entry.value) {
+                settings.dashboard_period = period;
+            } else {
+                return Err(conf.invalid_value_error(entry));
+            }
+        }
+
+        if let Some(entry) = gource_settings.entry("dashboard-window") {
+            if !entry.has_value() {
+                return Err(conf.missing_value_error(entry));
+            }
+            let val_str = entry.value.trim().trim_end_matches(['d', 'D']);
+            if let Ok(days) = val_str.parse::<u32>() {
+                if days < 1 {
+                    return Err(conf.invalid_value_error(entry));
+                }
+                settings.dashboard_window_days = days;
+            } else {
+                return Err(conf.invalid_value_error(entry));
+            }
+        }
+
+        if let Some(entry) = gource_settings.entry("output-stats") {
+            if !entry.has_value() {
+                return Err(conf.missing_value_error(entry));
+            }
+            settings.output_stats_filename = entry.value.clone();
+        }
+
+        if let Some(entry) = gource_settings.entry("cache-dir") {
+            if !entry.has_value() {
+                return Err(conf.missing_value_error(entry));
+            }
+            settings.cache_dir = entry.value.clone();
+        }
+
+        if gource_settings.get_bool("no-cache") {
+            settings.no_cache = true;
+        }
+
+        if let Some(entry) = gource_settings.entry("seed") {
+            if !entry.has_value() {
+                return Err(conf.missing_value_error(entry));
+            }
+            if let Ok(val) = entry.value.parse::<u32>() {
+                settings.seed = Some(val);
+            } else {
+                return Err(conf.invalid_value_error(entry));
+            }
+        }
+
         // validate path
         if gource_settings.has_value("path") {
             settings.path = gource_settings.get_string("path");
@@ -1358,5 +1865,246 @@ mod tests {
         conf.set_entry("gource", "start-position", "random");
         let s = GourceSettings::import(&conf, None).unwrap();
         assert!(s.start_position >= 0.0 && s.start_position < 1.0);
+    }
+
+    #[test]
+    fn test_evolution_defaults() {
+        let s = GourceSettings::default();
+        assert_eq!(s.file_size_metric, FileSizeMetric::None);
+        assert_eq!(s.file_pulse, 0.0);
+        assert_eq!(s.file_colour_mode, FileColourMode::Extension);
+        assert!(s.dashboards.is_empty());
+        assert_eq!(s.dashboard_period, DashboardPeriod::Day);
+        assert_eq!(s.dashboard_window_days, 30);
+        assert!(!s.hide_dashboards);
+        assert_eq!(s.output_stats_filename, "");
+        assert_eq!(s.cache_dir, "");
+        assert!(!s.no_cache);
+        assert_eq!(s.seed, None);
+    }
+
+    #[test]
+    fn test_evolution_enums_as_str_and_methods() {
+        assert_eq!(FileSizeMetric::None.as_str(), "none");
+        assert_eq!(FileSizeMetric::Size.as_str(), "size");
+        assert_eq!(FileSizeMetric::Lines.as_str(), "lines");
+        assert_eq!(FileSizeMetric::Diff.as_str(), "diff");
+        assert_eq!(FileSizeMetric::Churn.as_str(), "churn");
+
+        assert_eq!(FileColourMode::Extension.as_str(), "extension");
+        assert_eq!(FileColourMode::Age.as_str(), "age");
+        assert_eq!(FileColourMode::Churn.as_str(), "churn");
+        assert_eq!(FileColourMode::Cohort.as_str(), "cohort");
+
+        assert_eq!(DashboardPanel::Lines.as_str(), "lines");
+        assert_eq!(DashboardPanel::Diff.as_str(), "diff");
+        assert_eq!(DashboardPanel::Editors.as_str(), "editors");
+        assert_eq!(DashboardPanel::Commits.as_str(), "commits");
+        assert_eq!(DashboardPanel::Theseus.as_str(), "theseus");
+        assert_eq!(DashboardPanel::Churn.as_str(), "churn");
+
+        assert_eq!(DashboardPeriod::Day.as_str(), "day");
+        assert_eq!(DashboardPeriod::Week.as_str(), "week");
+        assert_eq!(DashboardPeriod::Month.as_str(), "month");
+        assert_eq!(DashboardPeriod::Year.as_str(), "year");
+
+        assert_eq!(DashboardPeriod::Day.seconds(), 86400);
+        assert_eq!(DashboardPeriod::Week.seconds(), 7 * 86400);
+        assert_eq!(DashboardPeriod::Month.seconds(), 30 * 86400);
+        assert_eq!(DashboardPeriod::Year.seconds(), 365 * 86400);
+    }
+
+    #[test]
+    fn test_import_file_size_metric() {
+        for (input, expected) in [
+            ("none", FileSizeMetric::None),
+            ("size", FileSizeMetric::Size),
+            ("bytes", FileSizeMetric::Size),
+            ("lines", FileSizeMetric::Lines),
+            ("diff", FileSizeMetric::Diff),
+            ("churn", FileSizeMetric::Churn),
+        ] {
+            let mut conf = ConfFile::new();
+            conf.set_entry("gource", "file-size-metric", input);
+            let s = GourceSettings::import(&conf, None).unwrap();
+            assert_eq!(s.file_size_metric, expected);
+        }
+
+        let mut conf = ConfFile::new();
+        conf.set_entry("gource", "file-size-metric", "invalid");
+        assert!(GourceSettings::import(&conf, None).is_err());
+
+        let conf = ConfFile::parse("[gource]\nfile-size-metric=\n", "test.conf").unwrap();
+        assert!(GourceSettings::import(&conf, None).is_err());
+    }
+
+    #[test]
+    fn test_import_file_pulse() {
+        let mut conf = ConfFile::new();
+        conf.set_entry("gource", "file-pulse", "2.5");
+        let s = GourceSettings::import(&conf, None).unwrap();
+        assert_eq!(s.file_pulse, 2.5);
+
+        let mut conf = ConfFile::new();
+        conf.set_entry("gource", "file-pulse", "-1.0");
+        assert!(GourceSettings::import(&conf, None).is_err());
+
+        let mut conf = ConfFile::new();
+        conf.set_entry("gource", "file-pulse", "10.1");
+        assert!(GourceSettings::import(&conf, None).is_err());
+
+        let conf = ConfFile::parse("[gource]\nfile-pulse=\n", "test.conf").unwrap();
+        assert!(GourceSettings::import(&conf, None).is_err());
+    }
+
+    #[test]
+    fn test_import_file_colour_mode() {
+        for (input, expected) in [
+            ("ext", FileColourMode::Extension),
+            ("extension", FileColourMode::Extension),
+            ("age", FileColourMode::Age),
+            ("churn", FileColourMode::Churn),
+            ("cohort", FileColourMode::Cohort),
+        ] {
+            let mut conf = ConfFile::new();
+            conf.set_entry("gource", "file-colour-mode", input);
+            let s = GourceSettings::import(&conf, None).unwrap();
+            assert_eq!(s.file_colour_mode, expected);
+        }
+
+        let mut conf = ConfFile::new();
+        conf.set_entry("gource", "file-colour-mode", "unknown");
+        assert!(GourceSettings::import(&conf, None).is_err());
+
+        let conf = ConfFile::parse("[gource]\nfile-colour-mode=\n", "test.conf").unwrap();
+        assert!(GourceSettings::import(&conf, None).is_err());
+    }
+
+    #[test]
+    fn test_import_dashboard() {
+        let mut conf = ConfFile::new();
+        conf.set_entry("gource", "dashboard", "all");
+        let s = GourceSettings::import(&conf, None).unwrap();
+        assert_eq!(
+            s.dashboards,
+            vec![
+                DashboardPanel::Lines,
+                DashboardPanel::Diff,
+                DashboardPanel::Editors,
+                DashboardPanel::Commits,
+                DashboardPanel::Theseus,
+                DashboardPanel::Churn,
+            ]
+        );
+
+        let mut conf = ConfFile::new();
+        conf.set_entry("gource", "dashboard", "lines, diff, churn");
+        let s = GourceSettings::import(&conf, None).unwrap();
+        assert_eq!(
+            s.dashboards,
+            vec![
+                DashboardPanel::Lines,
+                DashboardPanel::Diff,
+                DashboardPanel::Churn
+            ]
+        );
+
+        let mut conf = ConfFile::new();
+        conf.set_entry("gource", "dashboard", "editors,invalid");
+        assert!(GourceSettings::import(&conf, None).is_err());
+
+        let conf = ConfFile::parse("[gource]\ndashboard=\n", "test.conf").unwrap();
+        assert!(GourceSettings::import(&conf, None).is_err());
+    }
+
+    #[test]
+    fn test_import_dashboard_period() {
+        for (input, expected) in [
+            ("day", DashboardPeriod::Day),
+            ("week", DashboardPeriod::Week),
+            ("month", DashboardPeriod::Month),
+            ("year", DashboardPeriod::Year),
+        ] {
+            let mut conf = ConfFile::new();
+            conf.set_entry("gource", "dashboard-period", input);
+            let s = GourceSettings::import(&conf, None).unwrap();
+            assert_eq!(s.dashboard_period, expected);
+        }
+
+        let mut conf = ConfFile::new();
+        conf.set_entry("gource", "dashboard-period", "decade");
+        assert!(GourceSettings::import(&conf, None).is_err());
+
+        let conf = ConfFile::parse("[gource]\ndashboard-period=\n", "test.conf").unwrap();
+        assert!(GourceSettings::import(&conf, None).is_err());
+    }
+
+    #[test]
+    fn test_import_dashboard_window() {
+        let mut conf = ConfFile::new();
+        conf.set_entry("gource", "dashboard-window", "14d");
+        let s = GourceSettings::import(&conf, None).unwrap();
+        assert_eq!(s.dashboard_window_days, 14);
+
+        let mut conf = ConfFile::new();
+        conf.set_entry("gource", "dashboard-window", "60D");
+        let s = GourceSettings::import(&conf, None).unwrap();
+        assert_eq!(s.dashboard_window_days, 60);
+
+        let mut conf = ConfFile::new();
+        conf.set_entry("gource", "dashboard-window", "30");
+        let s = GourceSettings::import(&conf, None).unwrap();
+        assert_eq!(s.dashboard_window_days, 30);
+
+        let mut conf = ConfFile::new();
+        conf.set_entry("gource", "dashboard-window", "0");
+        assert!(GourceSettings::import(&conf, None).is_err());
+
+        let mut conf = ConfFile::new();
+        conf.set_entry("gource", "dashboard-window", "abc");
+        assert!(GourceSettings::import(&conf, None).is_err());
+
+        let conf = ConfFile::parse("[gource]\ndashboard-window=\n", "test.conf").unwrap();
+        assert!(GourceSettings::import(&conf, None).is_err());
+    }
+
+    #[test]
+    fn test_import_hide_dashboards() {
+        let mut conf = ConfFile::new();
+        conf.set_entry("gource", "hide", "dashboards");
+        let s = GourceSettings::import(&conf, None).unwrap();
+        assert!(s.hide_dashboards);
+
+        let mut conf = ConfFile::new();
+        conf.set_entry("gource", "hide-dashboards", "true");
+        let s = GourceSettings::import(&conf, None).unwrap();
+        assert!(s.hide_dashboards);
+    }
+
+    #[test]
+    fn test_import_evolution_misc() {
+        let mut conf = ConfFile::new();
+        conf.set_entry("gource", "output-stats", "stats.json");
+        conf.set_entry("gource", "cache-dir", "/tmp/gource_cache");
+        conf.set_entry("gource", "no-cache", "true");
+        conf.set_entry("gource", "seed", "42");
+        let s = GourceSettings::import(&conf, None).unwrap();
+        assert_eq!(s.output_stats_filename, "stats.json");
+        assert_eq!(s.cache_dir, "/tmp/gource_cache");
+        assert!(s.no_cache);
+        assert_eq!(s.seed, Some(42));
+
+        let mut conf_seed_err = ConfFile::new();
+        conf_seed_err.set_entry("gource", "seed", "-5");
+        assert!(GourceSettings::import(&conf_seed_err, None).is_err());
+
+        let conf_seed_missing = ConfFile::parse("[gource]\nseed=\n", "test.conf").unwrap();
+        assert!(GourceSettings::import(&conf_seed_missing, None).is_err());
+
+        let conf_out_missing = ConfFile::parse("[gource]\noutput-stats=\n", "test.conf").unwrap();
+        assert!(GourceSettings::import(&conf_out_missing, None).is_err());
+
+        let conf_cache_missing = ConfFile::parse("[gource]\ncache-dir=\n", "test.conf").unwrap();
+        assert!(GourceSettings::import(&conf_cache_missing, None).is_err());
     }
 }

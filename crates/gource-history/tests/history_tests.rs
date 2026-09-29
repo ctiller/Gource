@@ -805,3 +805,290 @@ fn test_history_worker_streaming_cache_and_cancellation() {
     // Worker exits cleanly and joins on wait or drop
     let _ = cancel_worker.wait();
 }
+
+#[test]
+fn test_timeline_indexing_markers_and_hover() {
+    // 1. Empty history
+    let empty_hist =
+        HistoryBuilder::new(CohortMode::Year, ChurnDecayModel::LifoYoungestFirst).finish();
+    let empty_timeline = TimelineIndex::from_history(&empty_hist, 10);
+    assert!(empty_timeline.buckets.is_empty());
+    assert_eq!(empty_timeline.min_time, 0);
+    assert_eq!(empty_timeline.max_time, 0);
+    assert_eq!(empty_timeline.max_bucket_commits, 0);
+    assert_eq!(empty_timeline.time_to_fraction(100), 0.0);
+    assert_eq!(empty_timeline.fraction_to_time(0.5), 0);
+
+    let empty_hover = empty_timeline.hover_summary(&empty_hist, 0.5);
+    assert_eq!(empty_hover.bucket_commits, 0);
+    assert_eq!(empty_hover.commit_idx, None);
+    assert!(empty_hover.top_editors.is_empty());
+
+    // 2. Single commit history (min_time == max_time)
+    let mut single_builder =
+        HistoryBuilder::new(CohortMode::Year, ChurnDecayModel::LifoYoungestFirst);
+    single_builder.add_commit(CommitInput {
+        timestamp: 1000,
+        username: "Alice".to_string(),
+        files: vec![FileChangeInput {
+            path: "main.rs".to_string(),
+            op: ChangeOp::Add,
+            lines_added: 50,
+            lines_removed: 0,
+            byte_size: None,
+            is_binary: false,
+        }],
+    });
+    let single_hist = single_builder.finish();
+    let single_timeline = TimelineIndex::from_history(&single_hist, 5);
+    assert_eq!(single_timeline.buckets.len(), 5);
+    assert_eq!(single_timeline.max_bucket_commits, 1);
+    assert_eq!(single_timeline.min_time, 1000);
+    assert_eq!(single_timeline.max_time, 1000);
+    assert_eq!(single_timeline.time_to_fraction(1000), 0.0);
+    assert_eq!(single_timeline.fraction_to_time(0.5), 1000);
+
+    let single_hover = single_timeline.hover_summary(&single_hist, 0.5);
+    assert_eq!(single_hover.bucket_commits, 1);
+    assert_eq!(single_hover.commit_idx, Some(0));
+    assert_eq!(single_hover.top_editors.len(), 1);
+    assert_eq!(single_hover.top_editors[0].0, "Alice");
+    assert_eq!(single_hover.top_editors[0].1, 1);
+
+    // 3. Multi-commit history
+    let mut builder = HistoryBuilder::new(CohortMode::Year, ChurnDecayModel::LifoYoungestFirst);
+    // Commits at timestamps 1000, 2000, 3000, 4000, 5000
+    let users = ["Alice", "Bob", "Charlie", "Alice", "Dave"];
+    for (i, &user) in users.iter().enumerate() {
+        builder.add_commit(CommitInput {
+            timestamp: 1000 + i as i64 * 1000,
+            username: user.to_string(),
+            files: vec![FileChangeInput {
+                path: format!("file_{i}.rs"),
+                op: ChangeOp::Add,
+                lines_added: 100,
+                lines_removed: 10,
+                byte_size: None,
+                is_binary: false,
+            }],
+        });
+    }
+    let hist = builder.finish();
+    let mut timeline = TimelineIndex::from_history(&hist, 4);
+    assert_eq!(timeline.min_time, 1000);
+    assert_eq!(timeline.max_time, 5000);
+    assert_eq!(timeline.buckets.len(), 4);
+
+    // Test fraction conversions
+    assert_eq!(timeline.time_to_fraction(1000), 0.0);
+    assert_eq!(timeline.time_to_fraction(3000), 0.5);
+    assert_eq!(timeline.time_to_fraction(5000), 1.0);
+    assert_eq!(timeline.time_to_fraction(500), 0.0); // clamped
+    assert_eq!(timeline.time_to_fraction(6000), 1.0); // clamped
+
+    assert_eq!(timeline.fraction_to_time(0.0), 1000);
+    assert_eq!(timeline.fraction_to_time(0.5), 3000);
+    assert_eq!(timeline.fraction_to_time(1.0), 5000);
+
+    // Markers: add markers out of order, verify sorted insertion
+    timeline.add_marker(TimelineMarker {
+        timestamp: 4000,
+        label: "v1.0".to_string(),
+        kind: MarkerKind::Tag,
+    });
+    timeline.add_marker(TimelineMarker {
+        timestamp: 2000,
+        label: "Beta".to_string(),
+        kind: MarkerKind::Milestone,
+    });
+    timeline.add_marker(TimelineMarker {
+        timestamp: 3000,
+        label: "Caption here".to_string(),
+        kind: MarkerKind::Caption,
+    });
+    assert_eq!(timeline.markers.len(), 3);
+    assert_eq!(timeline.markers[0].timestamp, 2000);
+    assert_eq!(timeline.markers[0].kind, MarkerKind::Milestone);
+    assert_eq!(timeline.markers[1].timestamp, 3000);
+    assert_eq!(timeline.markers[1].kind, MarkerKind::Caption);
+    assert_eq!(timeline.markers[2].timestamp, 4000);
+    assert_eq!(timeline.markers[2].kind, MarkerKind::Tag);
+
+    // Hover summary inspection
+    let hover_mid = timeline.hover_summary(&hist, 0.5);
+    assert_eq!(hover_mid.timestamp, 3000);
+    assert_eq!(hover_mid.commit_idx, Some(2));
+    assert!(hover_mid.bucket_commits > 0);
+
+    // Test hover summary at lower bound (matching commit_idx = Some(0))
+    let hover_start = timeline.hover_summary(&hist, 0.0);
+    assert_eq!(hover_start.commit_idx, Some(0));
+
+    // Test hover when binary search returns Err(0) or Err(len)
+    let hover_before = timeline.hover_summary(&hist, -0.1);
+    assert_eq!(hover_before.commit_idx, Some(0));
+}
+
+#[test]
+fn test_dashboard_series_extraction() {
+    let empty_hist =
+        HistoryBuilder::new(CohortMode::Year, ChurnDecayModel::LifoYoungestFirst).finish();
+    let empty_series = DashboardSeriesData::extract(&empty_hist, 0, 100, 100, 10);
+    assert_eq!(empty_series, DashboardSeriesData::empty());
+    assert_eq!(empty_series.total_lines, 0);
+    assert_eq!(empty_series.total_files, 0);
+
+    // Out of bounds playhead
+    let mut builder = HistoryBuilder::new(CohortMode::Year, ChurnDecayModel::LifoYoungestFirst);
+    builder.add_commit(CommitInput {
+        timestamp: 1609459200, // 2021-01-01
+        username: "Alice".to_string(),
+        files: vec![
+            FileChangeInput {
+                path: "src/a.rs".to_string(),
+                op: ChangeOp::Add,
+                lines_added: 100,
+                lines_removed: 0,
+                byte_size: None,
+                is_binary: false,
+            },
+            FileChangeInput {
+                path: "src/b.rs".to_string(),
+                op: ChangeOp::Add,
+                lines_added: 50,
+                lines_removed: 0,
+                byte_size: None,
+                is_binary: false,
+            },
+        ],
+    });
+    builder.add_commit(CommitInput {
+        timestamp: 1609459200 + 86400 * 30, // 30 days later
+        username: "Bob".to_string(),
+        files: vec![FileChangeInput {
+            path: "src/a.rs".to_string(),
+            op: ChangeOp::Modify,
+            lines_added: 20,
+            lines_removed: 30,
+            byte_size: None,
+            is_binary: false,
+        }],
+    });
+    builder.add_commit(CommitInput {
+        timestamp: 1609459200 + 86400 * 60, // 60 days later
+        username: "Charlie".to_string(),
+        files: vec![FileChangeInput {
+            path: "src/b.rs".to_string(),
+            op: ChangeOp::Delete,
+            lines_added: 0,
+            lines_removed: 50,
+            byte_size: None,
+            is_binary: false,
+        }],
+    });
+    let hist = builder.finish();
+
+    let oob_series = DashboardSeriesData::extract(&hist, 999, 86400, 86400 * 30, 5);
+    assert_eq!(oob_series, DashboardSeriesData::empty());
+
+    // Extract at commit 1 (playhead = 1)
+    let series1 = DashboardSeriesData::extract(&hist, 1, 86400 * 15, 86400 * 45, 4);
+    assert_eq!(series1.total_lines, 140); // 100 + 50 + 20 - 30 = 140
+    assert_eq!(series1.total_files, 2);
+    assert_eq!(series1.lines_sparkline.len(), 4);
+    assert_eq!(series1.files_sparkline.len(), 4);
+    assert_eq!(series1.diff_bars.len(), 4);
+    assert_eq!(series1.commits_per_period.len(), 4);
+    assert!(!series1.top_editors.is_empty());
+    assert_eq!(series1.theseus_cohorts.samples.len(), 4);
+    assert!(!series1.theseus_cohorts.cohort_labels.is_empty());
+    assert!(series1.theseus_cohorts.churn_rate > 0.0);
+
+    // Extract with max_samples = 1 to test single step sample logic
+    let series_single = DashboardSeriesData::extract(&hist, 2, 86400 * 30, 86400 * 60, 1);
+    assert_eq!(series_single.lines_sparkline.len(), 1);
+    assert_eq!(series_single.files_sparkline.len(), 1);
+    assert_eq!(series_single.total_lines, 90); // 140 - 50 = 90
+    assert_eq!(series_single.total_files, 1);
+}
+
+#[test]
+fn test_scrubber_state_playback_and_clipping() {
+    let mut scrubber = ScrubberState::new();
+    assert_eq!(scrubber.playhead_commit_idx, 0);
+    assert_eq!(scrubber.playhead_fraction, 0.0);
+    assert_eq!(scrubber.playback_direction, PlaybackDirection::Forward);
+    assert!(!scrubber.dragging);
+    assert_eq!(scrubber.clip_in, None);
+    assert_eq!(scrubber.clip_out, None);
+
+    // Toggle direction
+    scrubber.toggle_direction();
+    assert_eq!(scrubber.playback_direction, PlaybackDirection::Reverse);
+    scrubber.toggle_direction();
+    assert_eq!(scrubber.playback_direction, PlaybackDirection::Forward);
+
+    // Fraction setting with 0 commits
+    scrubber.set_fraction(0.5, 0);
+    assert_eq!(scrubber.playhead_commit_idx, 0);
+    assert_eq!(scrubber.playhead_fraction, 0.5);
+
+    // Fraction setting with 10 commits
+    scrubber.set_fraction(0.5, 10);
+    assert_eq!(scrubber.playhead_commit_idx, 5); // 0.5 * 9 = 4.5 -> round = 5
+    assert_eq!(scrubber.playhead_fraction, 0.5);
+
+    // Stepping forward and backward
+    scrubber.step_forward(10);
+    assert_eq!(scrubber.playhead_commit_idx, 6);
+    assert!((scrubber.playhead_fraction - 6.0 / 9.0).abs() < 1e-4);
+
+    scrubber.step_backward(10);
+    assert_eq!(scrubber.playhead_commit_idx, 5);
+
+    // Setting clip in and out
+    scrubber.set_clip_in(0.2);
+    assert_eq!(scrubber.clip_in, Some(0.2));
+    scrubber.set_clip_out(0.8);
+    assert_eq!(scrubber.clip_out, Some(0.8));
+
+    // Clamp check
+    assert_eq!(scrubber.clamp_fraction(0.1), 0.2);
+    assert_eq!(scrubber.clamp_fraction(0.9), 0.8);
+    assert_eq!(scrubber.clamp_fraction(0.5), 0.5);
+
+    // Setting clip in higher than current playhead moves playhead
+    scrubber.set_fraction(0.3, 10);
+    scrubber.set_clip_in(0.4);
+    assert_eq!(scrubber.playhead_fraction, 0.4);
+
+    // Setting clip out lower than current playhead moves playhead
+    scrubber.set_fraction(0.7, 10);
+    scrubber.set_clip_out(0.6);
+    assert_eq!(scrubber.playhead_fraction, 0.6);
+
+    // Stepping respects clip boundaries
+    scrubber.set_fraction(0.6, 10);
+    scrubber.step_forward(10); // should not exceed clip_out = 0.6
+    assert_eq!(scrubber.playhead_fraction, 0.6);
+
+    scrubber.set_fraction(0.4, 10);
+    scrubber.step_backward(10); // should not fall below clip_in = 0.4
+    assert_eq!(scrubber.playhead_fraction, 0.4);
+
+    // Step at boundaries (0 or total_commits - 1)
+    scrubber.clear_clips();
+    scrubber.set_fraction(0.0, 10);
+    assert_eq!(scrubber.playhead_commit_idx, 0);
+    scrubber.step_backward(10);
+    assert_eq!(scrubber.playhead_commit_idx, 0);
+
+    scrubber.set_fraction(1.0, 10);
+    assert_eq!(scrubber.playhead_commit_idx, 9);
+    scrubber.step_forward(10);
+    assert_eq!(scrubber.playhead_commit_idx, 9);
+
+    // Step with 0 commits
+    scrubber.step_forward(0);
+    scrubber.step_backward(0);
+}

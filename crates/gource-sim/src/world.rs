@@ -1187,7 +1187,7 @@ impl World {
 
         // 4. Files
         if !settings.hide_files {
-            self.draw_files_recursive(self.root, list, proj, textures.file);
+            self.draw_files_recursive(self.root, list, proj, textures.file, settings);
         }
 
         // C++ `updateVBOs`: `--fixed-user-size` keeps users the same size on
@@ -1425,6 +1425,7 @@ impl World {
         list: &mut DrawList,
         proj: &Projection,
         file_tex: TextureId,
+        settings: &GourceSettings,
     ) {
         let dir = &self.dirs[dir_id];
         if dir.in_frustum {
@@ -1435,9 +1436,20 @@ impl World {
                 }
                 let world_pos = file.absolute_pos(dir.pos);
                 let screen_pos = proj.to_screen(world_pos);
+
+                // Render pulse ring if active
+                if let Some((ring_size, ring_col)) = file.pulse_visual() {
+                    let rdims = Vec2::splat(proj.to_screen_len(ring_size));
+                    list.rect(file_tex, screen_pos - rdims * 0.5, rdims, ring_col);
+                }
+
                 let screen_size = proj.to_screen_len(file.pawn.size);
                 let dims = Vec2::new(screen_size, screen_size * file.pawn.graphic_ratio);
-                let c = file.colour();
+                let c = if settings.file_colour_mode == gource_settings::FileColourMode::Extension {
+                    file.colour()
+                } else {
+                    file.display_colour(settings.file_colour_mode, 0)
+                };
                 let alpha = file.alpha();
                 let col = Vec4::new(c.x, c.y, c.z, alpha);
                 list.rect(file_tex, screen_pos - dims * 0.5, dims, col);
@@ -1445,7 +1457,7 @@ impl World {
         }
 
         for &cid in &dir.children {
-            self.draw_files_recursive(cid, list, proj, file_tex);
+            self.draw_files_recursive(cid, list, proj, file_tex, settings);
         }
     }
 
@@ -1639,6 +1651,161 @@ impl World {
 
         for &cid in &dir.children {
             self.draw_file_names_recursive(cid, list, gfx, settings, file_font, _selected_only);
+        }
+    }
+
+    /// Reconstructs the complete world state from a historical [`gource_history::TreeSnapshot`].
+    /// Clears existing tree and files, reconstructs active directories and files with their metrics,
+    /// positions users near their active working areas, and runs settle steps of simulation physics.
+    pub fn materialize_from_snapshot(
+        &mut self,
+        snap: &gource_history::TreeSnapshot,
+        history: &gource_history::History,
+        settings: &GourceSettings,
+        settle_steps: usize,
+    ) {
+        // Reset dirs and files, keeping only the root
+        self.files.clear();
+        self.files_by_path.clear();
+        self.removed_files.clear();
+        self.users.clear();
+        self.users_by_name.clear();
+        self.users_by_tag.clear();
+        self.new_users.clear();
+        self.user_tree = None;
+        self.dir_tree = None;
+
+        self.dirs.clear();
+        self.dir_map.clear();
+        let root_node = DirNode::new("/", self.tuning.file_diameter, self.tuning.dir_padding);
+        self.root = self.dirs.insert(root_node);
+        self.dir_map.insert("/".to_string(), self.root);
+
+        // Track last-touched file position for each active user to place them accurately
+        let mut user_last_file_path: BTreeMap<String, String> = BTreeMap::new();
+
+        // Materialize live files
+        for live in &snap.files {
+            let fullpath = match history.paths.resolve(live.path) {
+                Some(p) => p.to_string(),
+                None => continue,
+            };
+
+            let colour = history
+                .paths
+                .get(live.path)
+                .map(|e| e.colour)
+                .unwrap_or(Vec3::ONE);
+
+            let cf = CommitFile {
+                filename: fullpath.clone(),
+                action: FileAction::Add,
+                colour,
+            };
+
+            let fid = match self.add_file(&cf, settings) {
+                Some(id) => id,
+                None => continue,
+            };
+
+            // Find dominant cohort color if present
+            let dominant_cohort_colour = live
+                .cohorts
+                .buckets
+                .iter()
+                .max_by_key(|(_, lines)| *lines)
+                .and_then(|(cid, _)| history.cohorts.get(*cid))
+                .map(|label| self.hasher.colour_hash(label));
+
+            let (dir_id, was_hidden) = {
+                let file = &mut self.files[fid];
+                file.lines = live.lines;
+                file.byte_size = live.byte_size;
+                file.touch_count = live.touch_count;
+                file.created_timestamp = live.created_timestamp;
+                file.dominant_cohort_colour = dominant_cohort_colour;
+
+                // Touch to make the file visible in the simulation
+                let was_hidden = file.pawn.is_hidden();
+                file.touch(live.last_timestamp, colour);
+
+                // If a file size metric is enabled, set target weight and snap initial size
+                let weight = match settings.file_size_metric {
+                    gource_settings::FileSizeMetric::None => 0.0,
+                    gource_settings::FileSizeMetric::Size => live.byte_size as f32,
+                    gource_settings::FileSizeMetric::Lines => live.lines as f32,
+                    gource_settings::FileSizeMetric::Diff => (live.lines.max(1)) as f32,
+                    gource_settings::FileSizeMetric::Churn => {
+                        live.cohorts.total_churn_removed as f32
+                    }
+                };
+                if weight > 0.0 {
+                    let ref_weight = match settings.file_size_metric {
+                        gource_settings::FileSizeMetric::Size => 1024.0,
+                        gource_settings::FileSizeMetric::Lines => 100.0,
+                        gource_settings::FileSizeMetric::Diff => 50.0,
+                        gource_settings::FileSizeMetric::Churn => 100.0,
+                        _ => 100.0,
+                    };
+                    file.set_weight_target(weight, ref_weight, self.tuning.file_diameter);
+                    file.pawn.size = file.target_size;
+                    file.radius = file.target_size * 0.5;
+                    file.pawn.dims = Vec2::splat(file.target_size);
+                }
+
+                (file.dir, was_hidden)
+            };
+
+            if let Some(did) = dir_id {
+                if was_hidden {
+                    self.dirs[did].add_visible();
+                }
+                self.dirs[did].since_last_file_change = 0.0;
+                self.on_node_updated(did, true);
+            }
+
+            if let Some(user_name) = history.users.get(live.last_user) {
+                user_last_file_path.insert(user_name.to_string(), fullpath);
+            }
+        }
+
+        // Apply weighted layout if a file size metric is active
+        if settings.file_size_metric != gource_settings::FileSizeMetric::None {
+            let dir_ids: Vec<DirId> = self.dir_map.values().copied().collect();
+            for did in dir_ids {
+                self.dirs[did]
+                    .update_weighted_file_positions(self.tuning.file_diameter, &mut self.files);
+                let children_areas = self.children_areas(did);
+                self.dirs[did].calc_weighted_radius(
+                    self.tuning.dir_padding,
+                    children_areas,
+                    &self.files,
+                );
+            }
+        }
+
+        // Materialize active users and position them near their touched files
+        for (username, path) in user_last_file_path {
+            let uid = self.add_user(&username, settings);
+            if let Some(&fid) = self.files_by_path.get(&path)
+                && let Some(file) = self.files.get(fid)
+            {
+                let dir_pos = file
+                    .dir
+                    .and_then(|d| self.dirs.get(d))
+                    .map(|d| d.pos)
+                    .unwrap_or(Vec2::ZERO);
+                let file_pos = file.absolute_pos(dir_pos);
+                let nudge = random_direction(&mut self.rng) * self.tuning.action_dist * 0.5;
+                self.users[uid].pawn.set_pos(file_pos + nudge);
+            }
+        }
+
+        // Settle layout simulation physics
+        for _ in 0..settle_steps {
+            self.update_bounds();
+            self.interact_dirs();
+            self.update_dirs(1.0 / 60.0, settings.elasticity, 0.0);
         }
     }
 }

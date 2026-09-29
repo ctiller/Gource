@@ -19,10 +19,15 @@ pub mod conffile;
 pub mod display;
 pub mod gource;
 pub mod help;
+pub mod patch;
 
 pub use conffile::{ConfEntry, ConfFile, ConfSection};
 pub use display::DisplaySettings;
-pub use gource::{CameraMode, GourceSettings, LogLevel};
+pub use gource::{
+    CameraMode, DashboardPanel, DashboardPeriod, FileColourMode, FileSizeMetric, GourceSettings,
+    LogLevel,
+};
+pub use patch::*;
 
 use std::path::Path;
 
@@ -290,6 +295,19 @@ fn get_option_type(opt: &str) -> Option<&'static str> {
         "filename-time" => Some("float"),
 
         "dir-name-depth" => Some("int"),
+
+        // Evolution settings
+        "file-size-metric" => Some("string"),
+        "file-pulse" => Some("float"),
+        "file-colour-mode" => Some("string"),
+        "dashboard" => Some("string"),
+        "dashboard-period" => Some("string"),
+        "dashboard-window" => Some("string"),
+        "hide-dashboards" => Some("bool"),
+        "output-stats" => Some("string"),
+        "cache-dir" => Some("string"),
+        "no-cache" => Some("bool"),
+        "seed" => Some("int"),
 
         _ => None,
     }

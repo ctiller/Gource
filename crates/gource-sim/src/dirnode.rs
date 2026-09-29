@@ -340,6 +340,81 @@ impl DirNode {
         }
     }
 
+    /// Weighted radius calculation based on actual file sizes (`file.radius` or `file.target_size`).
+    pub fn calc_weighted_radius(
+        &mut self,
+        dir_padding: f32,
+        children_areas: impl IntoIterator<Item = f32>,
+        files: &SlotMap<FileId, File>,
+    ) {
+        let mut total_file_area = 0.0f32;
+        for &fid in &self.files {
+            if let Some(file) = files.get(fid)
+                && !file.pawn.is_hidden()
+            {
+                let r = file.radius;
+                let area = ((r * r) as f64 * CPP_PI) as f32;
+                total_file_area += area;
+            }
+        }
+        let mut dir_area = total_file_area;
+        for area in children_areas {
+            dir_area += area;
+        }
+        self.dir_area = dir_area;
+        self.dir_radius = 1.0f32.max(self.dir_area.sqrt()) * dir_padding;
+        self.parent_radius = 1.0f32.max(total_file_area.sqrt() * dir_padding);
+    }
+
+    /// Variable-radius ring packing for files with diverse sizes.
+    pub fn update_weighted_file_positions(
+        &mut self,
+        base_diameter: f32,
+        files: &mut SlotMap<FileId, File>,
+    ) {
+        let mut max_files = 1;
+        let mut diameter = 1;
+        let mut file_no = 0;
+        let mut d = 0.0f32;
+        let mut max_size_in_ring = base_diameter;
+
+        let mut files_left = self.visible_count;
+
+        for &fid in &self.files {
+            if let Some(file) = files.get_mut(fid) {
+                if file.pawn.is_hidden() {
+                    file.dest = Vec2::ZERO;
+                    file.distance = 0.0;
+                    continue;
+                }
+
+                if file.pawn.size > max_size_in_ring {
+                    max_size_in_ring = file.pawn.size;
+                }
+
+                let dest = Self::calc_file_dest(max_files, file_no);
+                file.dest = dest;
+                file.distance = d;
+
+                files_left = files_left.saturating_sub(1);
+                file_no += 1;
+
+                if file_no >= max_files {
+                    diameter += 1;
+                    d += max_size_in_ring.max(base_diameter);
+                    max_size_in_ring = base_diameter;
+                    max_files = (1.0f64.max((diameter as f64) * CPP_PI)) as usize;
+
+                    if files_left < max_files {
+                        max_files = files_left;
+                    }
+
+                    file_no = 0;
+                }
+            }
+        }
+    }
+
     /// Port of `RDirNode::distanceToParent()`.
     pub fn distance_to_parent(&self, parent: &DirNode) -> f32 {
         let posd = (parent.pos - self.pos).length();

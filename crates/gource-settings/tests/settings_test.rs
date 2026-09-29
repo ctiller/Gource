@@ -1,6 +1,6 @@
 use glam::{Vec2, Vec3, Vec4};
 use gource_settings::{
-    CliAction, GOURCE_VERSION,
+    CliAction, DashboardPanel, DashboardPeriod, FileColourMode, FileSizeMetric, GOURCE_VERSION,
     conffile::{ConfEntry, ConfFile, ConfSection},
     display::DisplaySettings,
     gource::{CameraMode, GourceSettings, LogLevel},
@@ -1195,4 +1195,69 @@ fn test_additional_gource_settings_and_conffile_coverage() {
     let sec = conf.add_section("gource");
     sec.add_entry("caption-colour", "invalid-color");
     assert!(GourceSettings::import(&conf, None).is_err());
+}
+
+#[test]
+fn test_evolution_cli_and_settings() {
+    let args = vec![
+        "--file-size-metric".to_string(),
+        "lines".to_string(),
+        "--file-pulse".to_string(),
+        "1.5".to_string(),
+        "--file-colour-mode".to_string(),
+        "churn".to_string(),
+        "--dashboard".to_string(),
+        "all".to_string(),
+        "--dashboard-period".to_string(),
+        "month".to_string(),
+        "--dashboard-window".to_string(),
+        "14d".to_string(),
+        "--hide-dashboards".to_string(),
+        "--output-stats".to_string(),
+        "stats.json".to_string(),
+        "--cache-dir".to_string(),
+        "/var/tmp/gource".to_string(),
+        "--no-cache".to_string(),
+        "--seed".to_string(),
+        "12345".to_string(),
+        ".".to_string(),
+    ];
+    let action = parse_command_line(&args).unwrap();
+    match action {
+        CliAction::Run(cfg) => {
+            assert_eq!(cfg.gource.file_size_metric, FileSizeMetric::Lines);
+            assert_eq!(cfg.gource.file_pulse, 1.5);
+            assert_eq!(cfg.gource.file_colour_mode, FileColourMode::Churn);
+            assert_eq!(
+                cfg.gource.dashboards,
+                vec![
+                    DashboardPanel::Lines,
+                    DashboardPanel::Diff,
+                    DashboardPanel::Editors,
+                    DashboardPanel::Commits,
+                    DashboardPanel::Theseus,
+                    DashboardPanel::Churn,
+                ]
+            );
+            assert_eq!(cfg.gource.dashboard_period, DashboardPeriod::Month);
+            assert_eq!(cfg.gource.dashboard_window_days, 14);
+            assert!(cfg.gource.hide_dashboards);
+            assert_eq!(cfg.gource.output_stats_filename, "stats.json");
+            assert_eq!(cfg.gource.cache_dir, "/var/tmp/gource");
+            assert!(cfg.gource.no_cache);
+            assert_eq!(cfg.gource.seed, Some(12345));
+        }
+        _ => panic!("expected Run"),
+    }
+
+    // Test import with explicit section Option::Some(&sec)
+    let mut conf = ConfFile::new();
+    let sec = conf.add_section("gource");
+    sec.add_entry("path", ".");
+    sec.add_entry("dashboard", "diff,commits");
+    let s = GourceSettings::import(&conf, conf.section("gource")).unwrap();
+    assert_eq!(
+        s.dashboards,
+        vec![DashboardPanel::Diff, DashboardPanel::Commits]
+    );
 }

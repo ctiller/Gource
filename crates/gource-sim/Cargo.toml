@@ -12,6 +12,7 @@ gource-draw = { workspace = true }
 gource-settings = { workspace = true }
 gource-vcs = { workspace = true }
 gource-widgets = { workspace = true }
+gource-history = { path = "../gource-history" }
 glam = { workspace = true }
 slotmap = { workspace = true }
 fastrand = { workspace = true }

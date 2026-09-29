@@ -38,6 +38,19 @@ pub struct File {
     pub path: String,
     pub fullpath: String,
     pub ext: String,
+
+    pub lines: u32,
+    pub byte_size: u64,
+    pub touch_count: u32,
+    pub target_size: f32,
+    pub pulse_timer: f32,
+    pub pulse_max_time: f32,
+    pub pulse_delta: i32,
+    pub pulse_scale: f32,
+    pub total_added: u64,
+    pub total_removed: u64,
+    pub created_timestamp: i64,
+    pub dominant_cohort_colour: Option<Vec3>,
 }
 
 impl File {
@@ -65,6 +78,7 @@ impl File {
 
         let (path, name, ext) = Self::parse_path(fullpath, file_extension_fallback);
         pawn.name = name;
+        let target_size = pawn.size;
 
         Self {
             pawn,
@@ -83,6 +97,18 @@ impl File {
             path,
             fullpath: fullpath.to_string(),
             ext,
+            lines: 0,
+            byte_size: 0,
+            touch_count: 0,
+            target_size,
+            pulse_timer: 0.0,
+            pulse_max_time: 0.4,
+            pulse_delta: 0,
+            pulse_scale: 0.0,
+            total_added: 0,
+            total_removed: 0,
+            created_timestamp: 0,
+            dominant_cohort_colour: None,
         }
     }
 
@@ -190,6 +216,7 @@ impl File {
 
         let was_expired = self.expired;
         self.expired = false;
+        self.touch_count = self.touch_count.saturating_add(1);
 
         self.pawn.show_name();
         self.pawn.set_hidden(false);
@@ -212,6 +239,15 @@ impl File {
         self.pawn.pos += accel2;
         self.pawn.accel = Vec2::ZERO;
 
+        if (self.pawn.size - self.target_size).abs() > 1e-4 {
+            self.pawn.size += (self.target_size - self.pawn.size) * (dt * 6.0).min(1.0);
+            self.radius = self.pawn.size * 0.5;
+            self.pawn.dims = Vec2::splat(self.pawn.size);
+        }
+        if self.pulse_timer > 0.0 {
+            self.pulse_timer = (self.pulse_timer - dt).max(0.0);
+        }
+
         if self.fade_start < 0.0
             && file_idle_time > 0.0
             && (self.pawn.elapsed - self.last_action) > file_idle_time
@@ -230,6 +266,99 @@ impl File {
         }
 
         just_expired
+    }
+
+    /// Update lines count, lifetime added/removed, and trigger pulse animation if configured.
+    pub fn apply_line_delta(
+        &mut self,
+        added: Option<u32>,
+        removed: Option<u32>,
+        pulse_setting: f32,
+    ) {
+        let add = added.unwrap_or(0);
+        let rem = removed.unwrap_or(0);
+        self.lines = (self.lines as i64 + add as i64 - rem as i64).max(0) as u32;
+        self.total_added = self.total_added.saturating_add(add as u64);
+        self.total_removed = self.total_removed.saturating_add(rem as u64);
+        if pulse_setting > 0.0 && (add > 0 || rem > 0) {
+            self.pulse_delta = add as i32 - rem as i32;
+            self.pulse_timer = self.pulse_max_time;
+            self.pulse_scale = (1.0 + (add + rem) as f32).ln() * pulse_setting;
+        }
+    }
+
+    /// Set target diameter based on weight relative to a reference weight.
+    pub fn set_weight_target(&mut self, weight: f32, ref_weight: f32, base_diameter: f32) {
+        let factor = (weight.max(1.0) / ref_weight.max(1.0))
+            .sqrt()
+            .clamp(0.5, 4.0);
+        self.target_size = (base_diameter as f64 * 1.05) as f32 * factor;
+    }
+
+    /// Compute active pulse ring size and color (if currently pulsing).
+    pub fn pulse_visual(&self) -> Option<(f32, glam::Vec4)> {
+        if self.pulse_timer > 0.0 && self.pulse_scale > 0.0 {
+            let progress = 1.0 - (self.pulse_timer / self.pulse_max_time).clamp(0.0, 1.0);
+            let ring_size =
+                self.pawn.size * (1.0 + progress * (0.6 + 0.3 * self.pulse_scale.min(4.0)));
+            let alpha = (1.0 - progress) * 0.65 * self.alpha();
+            let col = if self.pulse_delta >= 0 {
+                glam::Vec4::new(0.25, 0.95, 0.45, alpha)
+            } else {
+                glam::Vec4::new(0.95, 0.3, 0.3, alpha)
+            };
+            Some((ring_size, col))
+        } else {
+            None
+        }
+    }
+
+    /// Ratio of lines removed to total lifetime touched lines (0.0 to 1.0).
+    pub fn churn_ratio(&self) -> f32 {
+        let total = self.total_added + self.total_removed;
+        if total == 0 {
+            0.0
+        } else {
+            self.total_removed as f32 / total as f32
+        }
+    }
+
+    /// Compute file display colour depending on active colour mode.
+    pub fn display_colour(
+        &self,
+        mode: gource_settings::FileColourMode,
+        current_timestamp: i64,
+    ) -> Vec3 {
+        let base_col = match mode {
+            gource_settings::FileColourMode::Extension => self.file_colour,
+            gource_settings::FileColourMode::Churn => {
+                let churn = self.churn_ratio();
+                let cool = Vec3::new(0.2, 0.65, 0.95);
+                let hot = Vec3::new(1.0, 0.25, 0.15);
+                cool.lerp(hot, churn)
+            }
+            gource_settings::FileColourMode::Age => {
+                let age_days =
+                    ((current_timestamp - self.created_timestamp).max(0) as f32) / 86400.0;
+                let t = (age_days / 365.0).clamp(0.0, 1.0);
+                let fresh = Vec3::new(0.1, 0.9, 0.7);
+                let ancient = Vec3::new(0.85, 0.4, 0.7);
+                fresh.lerp(ancient, t)
+            }
+            gource_settings::FileColourMode::Cohort => {
+                self.dominant_cohort_colour.unwrap_or(self.file_colour)
+            }
+        };
+
+        if self.pawn.selected {
+            return Vec3::ONE;
+        }
+        let lc = self.pawn.elapsed - self.last_action;
+        if lc < 1.0 {
+            self.touch_colour * (1.0 - lc) + base_col * lc
+        } else {
+            base_col
+        }
     }
 
     /// Label display text (extension or full name).

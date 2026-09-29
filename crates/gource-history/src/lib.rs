@@ -5,6 +5,7 @@ pub mod intern;
 pub mod metrics;
 pub mod snapshot;
 pub mod theseus;
+pub mod timeline;
 pub mod worker;
 
 pub use cache::{CACHE_MAGIC, CacheError, fnv1a_64};
@@ -12,6 +13,10 @@ pub use intern::{CohortId, CohortTable, PathEntry, PathId, PathTable, UserId, Us
 pub use metrics::{CommitMetricsPoint, EditorActivity, WindowSummary};
 pub use snapshot::{LiveFileState, SNAPSHOT_STRIDE, TreeSnapshot};
 pub use theseus::{ChurnDecayModel, CohortMode, FileCohorts, SurvivalPoint, estimate_half_life};
+pub use timeline::{
+    DashboardSeriesData, MarkerKind, PlaybackDirection, ScrubberState, TheseusDashboardData,
+    TimelineBucket, TimelineHoverInfo, TimelineIndex, TimelineMarker,
+};
 pub use worker::{HistoryWorker, HistoryWorkerConfig, WorkerStatus};
 
 /// Operation performed on a file in a commit.
