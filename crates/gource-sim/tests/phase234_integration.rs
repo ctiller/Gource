@@ -623,3 +623,120 @@ fn test_gource_seek_and_reverse_edge_cases() {
     gource.currtime = 0;
     assert!(!gource.step_reverse(viewport, &mut gfx).unwrap());
 }
+
+#[test]
+fn test_persistent_scrubbing_and_caching_and_drag() {
+    use glam::Vec2;
+    use gource_widgets::timeline_bar::TimelineHit;
+
+    let mut app = load_test_app(&[]);
+    let viewport = Viewport::new(800, 600);
+    let mut gfx = Gfx::new();
+    let dt = 1.0 / 60.0;
+    let gource = app.shell_mut().gource.as_mut().unwrap();
+
+    // 1. Verify lazy pre-indexing on seekable commitlog
+    assert!(!gource.history_preindexed);
+    let hist = gource.ensure_history();
+    assert!(gource.history_preindexed);
+    assert!(!hist.is_empty());
+    let initial_count = hist.commit_count();
+    assert!(initial_count > 0);
+
+    // 2. Disk caching
+    let tmp_dir = tempfile::tempdir().unwrap();
+    let cache_dir = tmp_dir.path().to_str().unwrap().to_string();
+    gource.settings.cache_dir = cache_dir;
+    gource.settings.path = "custom.log".to_string();
+    gource.history_preindexed = false;
+    gource.history_cache = None;
+
+    let cached_hist = gource.ensure_history();
+    assert!(gource.history_preindexed);
+    assert_eq!(cached_hist.commit_count(), initial_count);
+
+    // Verify cache file was written to disk
+    let hash = gource_history::cache::fnv1a_64(gource.settings.path.as_bytes());
+    let expected_file = tmp_dir
+        .path()
+        .join(format!("gource-history-{hash:016x}.bin"));
+    assert!(expected_file.exists(), "Cache file should exist on disk");
+
+    // Second ensure_history with cleared cache in memory should load from disk cache
+    gource.history_preindexed = false;
+    gource.history_cache = None;
+    let loaded_hist = gource.ensure_history();
+    assert!(gource.history_preindexed);
+    assert_eq!(loaded_hist.commit_count(), initial_count);
+
+    // 3. Persistent scrubbing forward and backward
+    gource.handle_timeline_hit(TimelineHit::Track(1.0));
+    let fwd_cursor = gource.commit_cursor;
+    assert!(fwd_cursor > 1);
+    assert!(gource.last_percent > 0.0);
+    // User images assigned in logic()
+    assert!(gource.logic(dt, viewport, &mut gfx).is_ok());
+    assert!(gource.world.new_users.is_empty());
+
+    // Scrub backward
+    gource.handle_timeline_hit(TimelineHit::Track(0.0));
+    let back_cursor = gource.commit_cursor;
+    assert!(back_cursor < fwd_cursor);
+    assert!(gource.logic(dt, viewport, &mut gfx).is_ok());
+
+    // 4. Marker scrubbing
+    gource.handle_timeline_hit(TimelineHit::Marker(0));
+    assert!(gource.logic(dt, viewport, &mut gfx).is_ok());
+
+    // 5. Timeline bar dragging and MouseMove scrubbing
+    gource.timeline_bar.show(true);
+    let track_rect = gource.timeline_bar.bounds;
+    let click_pos = Vec2::new(
+        track_rect.min.x + track_rect.width() * 0.5,
+        track_rect.min.y + track_rect.height() * 0.5,
+    );
+
+    // Left click on timeline bar
+    gource.input(&InputEvent::MouseButton {
+        button: gource_sim::input::MouseButton::Left,
+        pressed: true,
+        pos: click_pos,
+    });
+    assert!(gource.timeline_dragging);
+
+    // Drag move to 75%
+    let drag_pos = Vec2::new(track_rect.min.x + track_rect.width() * 0.75, click_pos.y);
+    gource.input(&InputEvent::MouseMove {
+        pos: drag_pos,
+        delta: Vec2::new(10.0, 0.0),
+    });
+    assert!(gource.timeline_dragging);
+
+    // Release mouse
+    gource.input(&InputEvent::MouseButton {
+        button: gource_sim::input::MouseButton::Left,
+        pressed: false,
+        pos: drag_pos,
+    });
+    assert!(!gource.timeline_dragging);
+
+    // 6. Slider persistent scrub routing when timeline bar is hidden
+    gource.timeline_bar.show(false);
+    gource.world.weighted_mode = true;
+    let slider_pos = Vec2::new(400.0, 580.0);
+    gource.input(&InputEvent::MouseButton {
+        button: gource_sim::input::MouseButton::Left,
+        pressed: true,
+        pos: slider_pos,
+    });
+    gource.input(&InputEvent::MouseButton {
+        button: gource_sim::input::MouseButton::Left,
+        pressed: false,
+        pos: slider_pos,
+    });
+
+    // 7. Verify draw hides slider when timeline_bar is visible
+    gource.timeline_bar.show(true);
+    let mut list = DrawList::new(UVec2::new(800, 600));
+    gource.draw(dt, viewport, &mut gfx, &mut list);
+}

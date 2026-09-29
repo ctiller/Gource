@@ -296,10 +296,12 @@ pub struct Gource {
 
     pub history_builder: HistoryBuilder,
     pub history_dirty: bool,
+    pub history_preindexed: bool,
     pub history_cache: Option<std::sync::Arc<History>>,
     pub scrubber: SimScrubber,
     pub dashboards: DashboardStack,
     pub timeline_bar: TimelineBarWidget,
+    pub timeline_dragging: bool,
     pub tuning_panel: TuningPanelWidget,
     pub tuning_settings: TuningSettings,
     pub tuning_tab: TuningTab,
@@ -484,10 +486,12 @@ impl Gource {
             pending_requests: Vec::new(),
             history_builder,
             history_dirty: false,
+            history_preindexed: false,
             history_cache: None,
             scrubber,
             dashboards,
             timeline_bar,
+            timeline_dragging: false,
             tuning_panel,
             tuning_settings,
             tuning_tab: TuningTab::Visual,
@@ -586,6 +590,8 @@ impl Gource {
         self.mouse_dragged = false;
         self.last_percent = 0.0;
         self.commit_cursor = 0;
+        self.history_preindexed = false;
+        self.timeline_dragging = false;
 
         // The C++ rand() stream and string hash seed are globals that a
         // reset leaves alone.
@@ -674,8 +680,85 @@ impl Gource {
         String::new()
     }
 
+    /// Convert a VCS Commit to History CommitInput.
+    pub(crate) fn commit_to_input(commit: &Commit) -> CommitInput {
+        let files = commit
+            .files
+            .iter()
+            .map(|cf| {
+                let op = match cf.action {
+                    FileAction::Add => ChangeOp::Add,
+                    FileAction::Modify => ChangeOp::Modify,
+                    FileAction::Delete => ChangeOp::Delete,
+                    _ => ChangeOp::Modify,
+                };
+                FileChangeInput {
+                    path: cf.filename.clone(),
+                    op,
+                    lines_added: cf.lines_added.unwrap_or(0),
+                    lines_removed: cf.lines_removed.unwrap_or(0),
+                    byte_size: None,
+                    is_binary: false,
+                }
+            })
+            .collect();
+        CommitInput {
+            timestamp: commit.timestamp,
+            username: commit.username.clone(),
+            files,
+        }
+    }
+
     /// Returns a shared reference-counted historical index snapshot, re-indexing if changes arrived.
     pub fn ensure_history(&mut self) -> std::sync::Arc<History> {
+        if !self.history_preindexed && self.commitlog.as_ref().is_some_and(|l| l.is_seekable()) {
+            let cache_path = if !self.settings.no_cache && !self.settings.cache_dir.is_empty() {
+                let _ = std::fs::create_dir_all(&self.settings.cache_dir);
+                let hash = gource_history::cache::fnv1a_64(self.settings.path.as_bytes());
+                Some(
+                    Path::new(&self.settings.cache_dir)
+                        .join(format!("gource-history-{hash:016x}.bin")),
+                )
+            } else {
+                None
+            };
+
+            let mut loaded_from_cache = false;
+            if let Some(ref path) = cache_path
+                && let Ok(cached_hist) = History::load_from_path(path, &self.settings.path)
+            {
+                let snap = std::sync::Arc::new(cached_hist);
+                self.scrubber.set_history(&snap, 64);
+                self.history_cache = Some(snap);
+                self.history_preindexed = true;
+                self.history_dirty = false;
+                loaded_from_cache = true;
+            }
+
+            if !loaded_from_cache {
+                self.history_builder =
+                    HistoryBuilder::new(CohortMode::Year, ChurnDecayModel::LifoYoungestFirst);
+                if let Some(ref mut log) = self.commitlog {
+                    log.seek_to(0.0);
+                    while let Some(c) = log.next_commit() {
+                        self.history_builder.add_commit(Self::commit_to_input(&c));
+                    }
+                    log.seek_to(0.0);
+                    for _ in 0..self.commit_cursor {
+                        let _ = log.next_commit();
+                    }
+                }
+                let snap = std::sync::Arc::new(self.history_builder.snapshot());
+                if let Some(ref path) = cache_path {
+                    let _ = snap.save_to_path(path, &self.settings.path);
+                }
+                self.scrubber.set_history(&snap, 64);
+                self.history_cache = Some(snap);
+                self.history_preindexed = true;
+                self.history_dirty = false;
+            }
+        }
+
         if !self.history_dirty
             && let Some(ref snap) = self.history_cache
         {
@@ -991,6 +1074,16 @@ impl Gource {
                         self.commitqueue.clear();
                         self.stop_position_reached = false;
                         self.idle_time = 0.0;
+                        if let Some(ref mut log) = self.commitlog
+                            && log.is_seekable()
+                        {
+                            log.seek_to(0.0);
+                            for _ in 0..self.commit_cursor {
+                                let _ = log.next_commit();
+                            }
+                            self.last_percent = log.percent();
+                            self.slider.set_percent(self.last_percent);
+                        }
                     }
                 }
             }
@@ -1025,6 +1118,16 @@ impl Gource {
                             self.commitqueue.clear();
                             self.stop_position_reached = false;
                             self.idle_time = 0.0;
+                            if let Some(ref mut log) = self.commitlog
+                                && log.is_seekable()
+                            {
+                                log.seek_to(0.0);
+                                for _ in 0..self.commit_cursor {
+                                    let _ = log.next_commit();
+                                }
+                                self.last_percent = log.percent();
+                                self.slider.set_percent(self.last_percent);
+                            }
                         }
                     }
                 }
@@ -1537,6 +1640,14 @@ impl Gource {
                     return;
                 }
 
+                if self.timeline_bar.is_visible() && self.timeline_dragging {
+                    self.mouse_pos = *pos;
+                    self.cursor.update_pos(*pos);
+                    let frac = self.timeline_bar.frac_at_x(pos.x);
+                    self.handle_timeline_hit(TimelineHit::Track(frac));
+                    return;
+                }
+
                 let right_mouse = self.cursor.right_button_pressed();
 
                 if self.mouse_dragged || right_mouse {
@@ -1570,7 +1681,8 @@ impl Gource {
 
                 self.timeline_bar.hovered = self.timeline_bar.bounds.contains(*pos);
 
-                if !self.settings.hide_progress
+                if !self.timeline_bar.is_visible()
+                    && !self.settings.hide_progress
                     && let Some(p) = self.slider.mouse_over(*pos)
                 {
                     let date = self.date_at_position(p);
@@ -1613,15 +1725,26 @@ impl Gource {
                             let timeline_data = self.build_timeline_bar_data();
                             let hit = self.timeline_bar.hit_test(*pos, Some(&timeline_data));
                             if !matches!(hit, TimelineHit::None) {
+                                if matches!(hit, TimelineHit::Track(_)) {
+                                    self.timeline_dragging = true;
+                                }
                                 self.handle_timeline_hit(hit);
                                 return;
                             }
                         }
 
-                        if !self.settings.hide_progress
+                        if !self.timeline_bar.is_visible()
+                            && !self.settings.hide_progress
                             && let Some(p) = self.slider.click(*pos)
                         {
-                            self.seek_to(p);
+                            if self.world.weighted_mode
+                                || !self.settings.dashboards.is_empty()
+                                || !self.settings.cache_dir.is_empty()
+                            {
+                                self.handle_timeline_hit(TimelineHit::Track(p));
+                            } else {
+                                self.seek_to(p);
+                            }
                             return;
                         }
 
@@ -1641,6 +1764,7 @@ impl Gource {
                         self.cursor.set_right_click(true);
                     }
                 } else if *button == MouseButton::Left {
+                    self.timeline_dragging = false;
                     self.mouse_dragged = false;
                     self.set_grab_mouse(false);
                 }
@@ -1688,32 +1812,11 @@ impl Gource {
                 self.stop_position_reached = true;
                 break;
             }
-            let files_input: Vec<FileChangeInput> = commit
-                .files
-                .iter()
-                .map(|cf| {
-                    let op = match cf.action {
-                        FileAction::Add => ChangeOp::Add,
-                        FileAction::Modify => ChangeOp::Modify,
-                        FileAction::Delete => ChangeOp::Delete,
-                        _ => ChangeOp::Modify,
-                    };
-                    FileChangeInput {
-                        path: cf.filename.clone(),
-                        op,
-                        lines_added: cf.lines_added.unwrap_or(0),
-                        lines_removed: cf.lines_removed.unwrap_or(0),
-                        byte_size: None,
-                        is_binary: false,
-                    }
-                })
-                .collect();
-            self.history_builder.add_commit(CommitInput {
-                timestamp: commit.timestamp,
-                username: commit.username.clone(),
-                files: files_input,
-            });
-            self.history_dirty = true;
+            if !self.history_preindexed {
+                self.history_builder
+                    .add_commit(Self::commit_to_input(&commit));
+                self.history_dirty = true;
+            }
             self.commit_cursor += 1;
             self.commitqueue.push_back(commit);
         }
@@ -1830,6 +1933,11 @@ impl Gource {
     }
 
     pub fn logic(&mut self, dt: f32, viewport: Viewport, gfx: &mut Gfx) -> Result<(), AppError> {
+        let pending_uids = std::mem::take(&mut self.world.new_users);
+        for uid in pending_uids {
+            let _ = self.assign_user_image(uid, gfx);
+        }
+
         if self.is_finished {
             return Ok(());
         }
@@ -2490,7 +2598,7 @@ impl Gource {
         self.file_key.draw(gfx, list);
 
         // Position slider
-        if self.can_seek() {
+        if self.can_seek() && !self.timeline_bar.is_visible() {
             self.slider
                 .draw(gfx, list, viewport.width as f32, self.settings.font_scale);
         }
@@ -2813,6 +2921,16 @@ impl Gource {
             self.commitqueue.clear();
             self.stop_position_reached = false;
             self.idle_time = 0.0;
+            if let Some(ref mut log) = self.commitlog
+                && log.is_seekable()
+            {
+                log.seek_to(0.0);
+                for _ in 0..self.commit_cursor {
+                    let _ = log.next_commit();
+                }
+                self.last_percent = log.percent();
+                self.slider.set_percent(self.last_percent);
+            }
 
             // Rebuild file_key counts from world.files
             self.file_key.clear();
