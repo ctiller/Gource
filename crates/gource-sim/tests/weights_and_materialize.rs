@@ -154,12 +154,16 @@ fn test_dirnode_weighted_radius_and_file_positions() {
 
     // Test update_weighted_file_positions
     dir.update_weighted_file_positions(8.0, &mut files);
-    assert_eq!(
-        files[fid1].dest,
-        gource_sim::dirnode::DirNode::calc_file_dest(1, 0)
+    // Under tight circle packing, visible files are packed touching each other
+    let pos1 = files[fid1].dest * files[fid1].distance;
+    let pos2 = files[fid2].dest * files[fid2].distance;
+    let dist_12 = (pos1 - pos2).length();
+    let r1 = (files[fid1].pawn.size * 0.5).max(8.0 * 0.25);
+    let r2 = (files[fid2].pawn.size * 0.5).max(8.0 * 0.25);
+    assert!(
+        (dist_12 - (r1 + r2)).abs() < 1e-2,
+        "two files should be tangent"
     );
-    // The second file moves to ring 1 and ring advance uses max file size in ring
-    assert!(files[fid2].distance > 0.0);
 
     // Test hidden file skipped in weighted file positions & radius
     let fid_hidden = files.insert(File::new(
@@ -180,6 +184,255 @@ fn test_dirnode_weighted_radius_and_file_positions() {
     // Test calc_weighted_radius with children areas
     dir.calc_weighted_radius(1.5, [100.0, 50.0], &files);
     assert!(dir.dir_radius > 10.0);
+}
+
+#[test]
+fn test_tight_circle_packing_non_overlapping_and_tightness() {
+    let mut files = SlotMap::with_key();
+    let base_diameter = 8.0;
+    let mut dir = gource_sim::dirnode::DirNode::new("/cluster/", base_diameter, 1.5);
+
+    // Create 20 files with wildly varying sizes (radii 2.0 to 16.0)
+    let radii = [
+        2.0, 16.0, 4.0, 12.0, 6.0, 14.0, 3.0, 10.0, 8.0, 5.0, 15.0, 7.0, 11.0, 9.0, 13.0, 2.5, 8.5,
+        6.5, 11.5, 4.5,
+    ];
+    let base_diameter = 8.0;
+
+    for (i, &r) in radii.iter().enumerate() {
+        let fid = files.insert(File::new(
+            &format!("/cluster/file_{i}.rs"),
+            Vec3::ONE,
+            Vec2::ZERO,
+            i as i32,
+            base_diameter,
+            4.0,
+            false,
+        ));
+        files[fid].pawn.set_hidden(false);
+        files[fid].pawn.size = r * 2.0;
+        files[fid].radius = r;
+        files[fid].target_size = r * 2.0;
+        dir.files.push(fid);
+    }
+    dir.visible_count = radii.len();
+
+    dir.update_weighted_file_positions(base_diameter, &mut files);
+
+    let positions: Vec<(Vec2, f32)> = dir
+        .files
+        .iter()
+        .map(|&fid| {
+            let f = &files[fid];
+            let pos = f.dest * f.distance;
+            let r = (f.pawn.size * 0.5).max(base_diameter * 0.25);
+            (pos, r)
+        })
+        .collect();
+
+    // 1. Non-overlapping guarantee: every pair (a, b) has ||p_a - p_b|| >= (r_a + r_b) - 1e-2
+    for i in 0..positions.len() {
+        for j in i + 1..positions.len() {
+            let (p_a, r_a) = positions[i];
+            let (p_b, r_b) = positions[j];
+            let dist = (p_a - p_b).length();
+            assert!(
+                dist >= (r_a + r_b) - 1e-2,
+                "overlap detected between file {i} and {j}: dist = {dist}, r_a + r_b = {}",
+                r_a + r_b
+            );
+        }
+    }
+
+    // 2. Tightness guarantee: every file (N >= 2) is tangent (within 1e-2) to at least one neighbor
+    for (i, &(p_a, r_a)) in positions.iter().enumerate() {
+        let mut min_gap = f32::INFINITY;
+        for (j, &(p_b, r_b)) in positions.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            let gap = ((p_a - p_b).length() - (r_a + r_b)).abs();
+            if gap < min_gap {
+                min_gap = gap;
+            }
+        }
+        assert!(
+            min_gap <= 1e-2,
+            "file {i} is not tangent to any neighbor: min gap = {min_gap}"
+        );
+    }
+
+    // Compactness: packing efficiency sum(pi * r^2) / (pi * R_bound^2) > 0.55
+    let total_file_area: f32 = radii.iter().map(|&r| std::f32::consts::PI * r * r).sum();
+    let r_bound = positions
+        .iter()
+        .map(|(p, r)| p.length() + r)
+        .fold(0.0f32, f32::max);
+    let bound_area = std::f32::consts::PI * r_bound * r_bound;
+    let efficiency = total_file_area / bound_area;
+    assert!(
+        efficiency > 0.55,
+        "packing efficiency too low: {efficiency} (expected > 0.55)"
+    );
+
+    // 3. Test calc_weighted_radius encloses packed cluster
+    dir.calc_weighted_radius(1.5, [], &files);
+    assert!(
+        dir.parent_radius >= r_bound * 1.5 - 1e-3,
+        "dir.parent_radius ({}) must be at least r_bound * dir_padding ({})",
+        dir.parent_radius,
+        r_bound * 1.5
+    );
+}
+
+#[test]
+fn test_tight_circle_packing_large_directory() {
+    let mut files = SlotMap::with_key();
+    let base_diameter = 8.0;
+    let mut dir = gource_sim::dirnode::DirNode::new("/big_cluster/", base_diameter, 1.5);
+
+    // 60 files to exercise k > 48 branch and frontier pruning
+    for i in 0..60 {
+        let r = 2.0 + ((i * 7) % 15) as f32;
+        let fid = files.insert(File::new(
+            &format!("/big_cluster/file_{i}.rs"),
+            Vec3::ONE,
+            Vec2::ZERO,
+            i,
+            base_diameter,
+            4.0,
+            false,
+        ));
+        files[fid].pawn.set_hidden(false);
+        files[fid].pawn.size = r * 2.0;
+        files[fid].radius = r;
+        files[fid].target_size = r * 2.0;
+        dir.files.push(fid);
+    }
+    dir.visible_count = 60;
+
+    dir.update_weighted_file_positions(base_diameter, &mut files);
+
+    let positions: Vec<(Vec2, f32)> = dir
+        .files
+        .iter()
+        .map(|&fid| {
+            let f = &files[fid];
+            let pos = f.dest * f.distance;
+            let r = (f.pawn.size * 0.5).max(base_diameter * 0.25);
+            (pos, r)
+        })
+        .collect();
+
+    // Verify non-overlapping
+    for i in 0..positions.len() {
+        for j in i + 1..positions.len() {
+            let (p_a, r_a) = positions[i];
+            let (p_b, r_b) = positions[j];
+            let dist = (p_a - p_b).length();
+            assert!(
+                dist >= (r_a + r_b) - 1e-2,
+                "overlap in 60-file cluster: dist = {dist}, r_a + r_b = {}",
+                r_a + r_b
+            );
+        }
+    }
+}
+
+#[test]
+fn test_directory_contact_model_resolution() {
+    let mut world = World::new(42, 31);
+    let d1 = world
+        .dirs
+        .insert(gource_sim::dirnode::DirNode::new("/src/", 8.0, 1.5));
+    world.dir_map.insert("/src/".to_string(), d1);
+    world.add_node_to_dir(world.root, d1);
+
+    let d2 = world
+        .dirs
+        .insert(gource_sim::dirnode::DirNode::new("/tests/", 8.0, 1.5));
+    world.dir_map.insert("/tests/".to_string(), d2);
+    world.add_node_to_dir(world.root, d2);
+
+    // Add files to d1 and d2 so they have non-zero radius
+    let f1 = world.files.insert(File::new(
+        "/src/lib.rs",
+        Vec3::ONE,
+        Vec2::ZERO,
+        1,
+        8.0,
+        4.0,
+        false,
+    ));
+    world.files[f1].pawn.set_hidden(false);
+    world.files[f1].pawn.size = 20.0;
+    world.files[f1].radius = 10.0;
+    world.dirs[d1].files.push(f1);
+    world.dirs[d1].visible_count = 1;
+
+    let f2 = world.files.insert(File::new(
+        "/tests/test.rs",
+        Vec3::ONE,
+        Vec2::ZERO,
+        2,
+        8.0,
+        4.0,
+        false,
+    ));
+    world.files[f2].pawn.set_hidden(false);
+    world.files[f2].pawn.size = 20.0;
+    world.files[f2].radius = 10.0;
+    world.dirs[d2].files.push(f2);
+    world.dirs[d2].visible_count = 1;
+
+    // Place d1 and d2 right on top of each other
+    world.dirs[d1].pos = Vec2::ZERO;
+    world.dirs[d2].pos = Vec2::new(1.0, 0.0);
+
+    world.update_weighted_layout();
+
+    // Verify d1 and d2 are pushed apart so their dir_radius circles do not overlap
+    let r1 = world.dirs[d1].dir_radius;
+    let r2 = world.dirs[d2].dir_radius;
+    let dist = (world.dirs[d1].pos - world.dirs[d2].pos).length();
+    assert!(
+        dist >= (r1 + r2) - 1e-2,
+        "directories should not overlap: dist = {dist}, r1 + r2 = {}",
+        r1 + r2
+    );
+}
+
+#[test]
+fn test_tight_circle_packing_single_file_and_empty() {
+    let mut files = SlotMap::with_key();
+    let mut dir = gource_sim::dirnode::DirNode::new("/single/", 8.0, 1.5);
+
+    // Empty dir
+    dir.update_weighted_file_positions(8.0, &mut files);
+    assert_eq!(dir.visible_count, 0);
+
+    // 1 visible file
+    let fid = files.insert(File::new(
+        "/single/one.rs",
+        Vec3::ONE,
+        Vec2::ZERO,
+        1,
+        8.0,
+        4.0,
+        false,
+    ));
+    files[fid].pawn.set_hidden(false);
+    files[fid].pawn.size = 12.0;
+    files[fid].radius = 6.0;
+    dir.files.push(fid);
+    dir.visible_count = 1;
+
+    dir.update_weighted_file_positions(8.0, &mut files);
+    assert_eq!(files[fid].dest, Vec2::ZERO);
+    assert_eq!(files[fid].distance, 0.0);
+
+    dir.calc_weighted_radius(1.5, [], &files);
+    assert!(dir.dir_radius >= 6.0 * 1.5 - 1e-3);
 }
 
 #[test]

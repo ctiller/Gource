@@ -920,10 +920,11 @@ impl World {
     }
 
     /// Walk directories and invoke [`DirNode::calc_weighted_radius`] and
-    /// [`DirNode::update_weighted_file_positions`] for variable-sized file packing.
+    /// [`DirNode::update_weighted_file_positions`] for variable-sized file packing,
+    /// and resolve directory circle-edge collisions so directories do not overlap.
     pub fn update_weighted_layout(&mut self) {
         let dir_ids: Vec<DirId> = self.dir_map.values().copied().collect();
-        for did in dir_ids {
+        for &did in &dir_ids {
             self.dirs[did]
                 .update_weighted_file_positions(self.tuning.file_diameter, &mut self.files);
             let children_areas = self.children_areas(did);
@@ -932,6 +933,64 @@ impl World {
                 children_areas,
                 &self.files,
             );
+        }
+        self.resolve_directory_contacts();
+    }
+
+    /// Resolve directory circle-edge contacts so overlapping directories push apart.
+    pub fn resolve_directory_contacts(&mut self) {
+        let dir_ids: Vec<DirId> = self.dir_map.values().copied().collect();
+        let n = dir_ids.len();
+        if n < 2 {
+            return;
+        }
+
+        // Run 8 relaxation iterations
+        for _ in 0..8 {
+            for (i, &id_a) in dir_ids.iter().enumerate() {
+                let is_a_empty = self.dirs[id_a].is_empty();
+                for (j_offset, &id_b) in dir_ids[i + 1..].iter().enumerate() {
+                    let j = i + 1 + j_offset;
+                    if is_a_empty && self.dirs[id_b].is_empty() {
+                        continue;
+                    }
+
+                    let is_anc = self.is_ancestor(id_a, id_b) || self.is_ancestor(id_b, id_a);
+                    let min_dist = if is_anc {
+                        self.dirs[id_a].parent_radius + self.dirs[id_b].parent_radius
+                    } else {
+                        self.dirs[id_a].dir_radius + self.dirs[id_b].dir_radius
+                    };
+
+                    let delta = self.dirs[id_b].pos - self.dirs[id_a].pos;
+                    let dist = delta.length();
+
+                    if dist < min_dist {
+                        let overlap = min_dist - dist;
+                        let norm = if dist > 1e-5 {
+                            delta / dist
+                        } else {
+                            let angle = ((i * 31 + j * 17) as f32) * 0.1;
+                            Vec2::new(angle.cos(), angle.sin())
+                        };
+
+                        let a_is_root = id_a == self.root;
+                        let b_is_root = id_b == self.root;
+
+                        if a_is_root {
+                            self.dirs[id_b].pos += norm * overlap;
+                        } else if b_is_root {
+                            self.dirs[id_a].pos -= norm * overlap;
+                        } else {
+                            self.dirs[id_a].pos -= norm * (overlap * 0.5);
+                            self.dirs[id_b].pos += norm * (overlap * 0.5);
+                        }
+
+                        self.dirs[id_a].update_quad_item_bounds();
+                        self.dirs[id_b].update_quad_item_bounds();
+                    }
+                }
+            }
         }
     }
 

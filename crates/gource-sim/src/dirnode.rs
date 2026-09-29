@@ -340,7 +340,8 @@ impl DirNode {
         }
     }
 
-    /// Weighted radius calculation based on actual file sizes (`file.radius` or `file.target_size`).
+    /// Weighted radius calculation based on actual file sizes (`file.radius` or `file.target_size`)
+    /// and the actual packed extent of tightly packed files, enforcing a minimum directory radius.
     pub fn calc_weighted_radius(
         &mut self,
         dir_padding: f32,
@@ -348,6 +349,7 @@ impl DirNode {
         files: &SlotMap<FileId, File>,
     ) {
         let mut total_file_area = 0.0f32;
+        let mut max_extent = 0.0f32;
         for &fid in &self.files {
             if let Some(file) = files.get(fid)
                 && !file.pawn.is_hidden()
@@ -355,63 +357,219 @@ impl DirNode {
                 let r = file.radius;
                 let area = ((r * r) as f64 * CPP_PI) as f32;
                 total_file_area += area;
+                let file_extent = file.distance + file.radius;
+                if file_extent > max_extent {
+                    max_extent = file_extent;
+                }
             }
         }
+        let packed_area = ((max_extent * max_extent) as f64 * CPP_PI) as f32;
+        total_file_area = total_file_area.max(packed_area);
+
         let mut dir_area = total_file_area;
         for area in children_areas {
             dir_area += area;
         }
         self.dir_area = dir_area;
-        self.dir_radius = 1.0f32.max(self.dir_area.sqrt()) * dir_padding;
-        self.parent_radius = 1.0f32.max(total_file_area.sqrt() * dir_padding);
+
+        // Default floor of 10.0 for min_dir_size
+        let min_dir_size = 10.0f32;
+        self.dir_radius = min_dir_size.max(1.0f32.max(self.dir_area.sqrt()) * dir_padding);
+        self.parent_radius = min_dir_size
+            .max(1.0f32.max(total_file_area.sqrt() * dir_padding))
+            .max(max_extent * dir_padding);
+        self.dir_radius = self.dir_radius.max(self.parent_radius);
     }
 
-    /// Variable-radius ring packing for files with diverse sizes.
+    /// Deterministic tight tangent circle packing with central attraction and edge collision simulation.
     pub fn update_weighted_file_positions(
         &mut self,
         base_diameter: f32,
         files: &mut SlotMap<FileId, File>,
     ) {
-        let mut max_files = 1;
-        let mut diameter = 1;
-        let mut file_no = 0;
-        let mut d = 0.0f32;
-        let mut max_size_in_ring = base_diameter;
+        struct FileItem {
+            fid: FileId,
+            radius: f32,
+            target_key: i32,
+            orig_idx: usize,
+        }
 
-        let mut files_left = self.visible_count;
-
-        for &fid in &self.files {
+        let mut visible = Vec::new();
+        for (orig_idx, &fid) in self.files.iter().enumerate() {
             if let Some(file) = files.get_mut(fid) {
                 if file.pawn.is_hidden() {
                     file.dest = Vec2::ZERO;
                     file.distance = 0.0;
-                    continue;
-                }
-
-                if file.pawn.size > max_size_in_ring {
-                    max_size_in_ring = file.pawn.size;
-                }
-
-                let dest = Self::calc_file_dest(max_files, file_no);
-                file.dest = dest;
-                file.distance = d;
-
-                files_left = files_left.saturating_sub(1);
-                file_no += 1;
-
-                if file_no >= max_files {
-                    diameter += 1;
-                    d += max_size_in_ring.max(base_diameter);
-                    max_size_in_ring = base_diameter;
-                    max_files = (1.0f64.max((diameter as f64) * CPP_PI)) as usize;
-
-                    if files_left < max_files {
-                        max_files = files_left;
-                    }
-
-                    file_no = 0;
+                    file.pawn.pos = Vec2::ZERO;
+                } else {
+                    let r = (file.pawn.size * 0.5).max(base_diameter * 0.25);
+                    let target_key = (file.target_size * 4.0).round() as i32;
+                    visible.push(FileItem {
+                        fid,
+                        radius: r,
+                        target_key,
+                        orig_idx,
+                    });
                 }
             }
+        }
+
+        if visible.is_empty() {
+            return;
+        }
+
+        if visible.len() == 1 {
+            let f = &mut files[visible[0].fid];
+            f.dest = Vec2::ZERO;
+            f.distance = 0.0;
+            f.pawn.pos = Vec2::ZERO;
+            return;
+        }
+
+        // Sort visible files by (Reverse(target_key), orig_idx)
+        visible.sort_by(|a, b| {
+            b.target_key
+                .cmp(&a.target_key)
+                .then_with(|| a.orig_idx.cmp(&b.orig_idx))
+        });
+
+        let n = visible.len();
+        let mut placed: Vec<(Vec2, f32)> = Vec::with_capacity(n);
+        let mut buried: Vec<bool> = vec![false; n];
+
+        // Place circle 0 at origin
+        placed.push((Vec2::ZERO, visible[0].radius));
+
+        // Place circle 1 tangent to circle 0
+        placed.push((
+            Vec2::new(visible[0].radius + visible[1].radius, 0.0),
+            visible[1].radius,
+        ));
+
+        for (k, item) in visible.iter().enumerate().skip(2) {
+            let r_k = item.radius;
+            let mut best_candidate: Option<Vec2> = None;
+            let mut best_score = f32::INFINITY;
+
+            // Search over active placed circles
+            let candidate_indices: Vec<usize> = if k > 48 {
+                let mut unburied: Vec<usize> = (0..k).filter(|&idx| !buried[idx]).collect();
+                if unburied.len() > 48 {
+                    // Pick the 48 closest to the outer frontier (highest length + radius)
+                    unburied.sort_by(|&a, &b| {
+                        let score_a = placed[a].0.length() + placed[a].1;
+                        let score_b = placed[b].0.length() + placed[b].1;
+                        score_b
+                            .partial_cmp(&score_a)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                    unburied.truncate(48);
+                }
+                unburied
+            } else {
+                (0..k).filter(|&idx| !buried[idx]).collect()
+            };
+
+            for (ci_idx, &i) in candidate_indices.iter().enumerate() {
+                let (p_i, r_i) = placed[i];
+                for &j in &candidate_indices[ci_idx + 1..] {
+                    let (p_j, r_j) = placed[j];
+                    let diff = p_j - p_i;
+                    let d = diff.length();
+                    let d_ik = r_i + r_k;
+                    let d_jk = r_j + r_k;
+
+                    if d > 1e-5 && d <= d_ik + d_jk {
+                        let u = diff / d;
+                        let normal = Vec2::new(-u.y, u.x);
+                        let a = (d_ik * d_ik - d_jk * d_jk + d * d) / (2.0 * d);
+                        let h_sq = d_ik * d_ik - a * a;
+                        let h = h_sq.max(0.0).sqrt();
+
+                        let c_pos = p_i + u * a + normal * h;
+                        let c_neg = p_i + u * a - normal * h;
+
+                        for c in [c_pos, c_neg] {
+                            // Validate against all placed circles 0..k
+                            let mut valid = true;
+                            for (m, &(p_m, r_m)) in placed.iter().enumerate() {
+                                if m == i || m == j {
+                                    continue;
+                                }
+                                let min_dist = r_m + r_k - 1e-3;
+                                if (c - p_m).length_squared() < min_dist * min_dist {
+                                    valid = false;
+                                    break;
+                                }
+                            }
+
+                            if valid {
+                                let score = c.length() + r_k;
+                                if score < best_score - 1e-5
+                                    || ((score - best_score).abs() <= 1e-5
+                                        && (best_candidate.is_none()
+                                            || c.x < best_candidate.unwrap().x
+                                            || ((c.x - best_candidate.unwrap().x).abs() <= 1e-5
+                                                && c.y < best_candidate.unwrap().y)))
+                                {
+                                    best_score = score;
+                                    best_candidate = Some(c);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let p_k = if let Some(c) = best_candidate {
+                c
+            } else {
+                // Fallback placement
+                let max_extent = placed
+                    .iter()
+                    .map(|(p, r)| p.length() + r)
+                    .fold(0.0f32, f32::max);
+                Vec2::new(max_extent + r_k, 0.0)
+            };
+
+            placed.push((p_k, r_k));
+
+            // Check if any circle is now buried (completely surrounded)
+            for i in 0..k {
+                if !buried[i] {
+                    let (p_i, r_i) = placed[i];
+                    let mut surrounded_count = 0;
+                    for (m, &(p_m, r_m)) in placed.iter().enumerate() {
+                        if m != i && (p_m - p_i).length() <= (r_i + r_m) + 0.1 {
+                            surrounded_count += 1;
+                        }
+                    }
+                    if surrounded_count >= 6 {
+                        buried[i] = true;
+                    }
+                }
+            }
+        }
+
+        // Recenter cluster bounding box to (0, 0)
+        let mut min_b = Vec2::splat(f32::INFINITY);
+        let mut max_b = Vec2::splat(-f32::INFINITY);
+        for &(p, r) in &placed {
+            min_b = min_b.min(p - Vec2::splat(r));
+            max_b = max_b.max(p + Vec2::splat(r));
+        }
+        let center = (min_b + max_b) * 0.5;
+
+        // Assign dest, distance, and pawn.pos to visible files
+        for (i, item) in visible.iter().enumerate() {
+            let p = placed[i].0 - center;
+            let dist = p.length();
+            let dest = if dist > 1e-5 { p / dist } else { Vec2::ZERO };
+
+            let f = &mut files[item.fid];
+            f.distance = dist;
+            f.dest = dest;
+            f.pawn.pos = p;
         }
     }
 
