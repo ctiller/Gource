@@ -302,6 +302,7 @@ pub struct Gource {
     pub dashboards: DashboardStack,
     pub timeline_bar: TimelineBarWidget,
     pub timeline_dragging: bool,
+    pub slider_dragging: bool,
     pub tuning_panel: TuningPanelWidget,
     pub tuning_settings: TuningSettings,
     pub tuning_tab: TuningTab,
@@ -492,6 +493,7 @@ impl Gource {
             dashboards,
             timeline_bar,
             timeline_dragging: false,
+            slider_dragging: false,
             tuning_panel,
             tuning_settings,
             tuning_tab: TuningTab::Visual,
@@ -592,6 +594,7 @@ impl Gource {
         self.commit_cursor = 0;
         self.history_preindexed = false;
         self.timeline_dragging = false;
+        self.slider_dragging = false;
 
         // The C++ rand() stream and string hash seed are globals that a
         // reset leaves alone.
@@ -671,6 +674,16 @@ impl Gource {
 
     /// Peek date string under mouse cursor at position percent.
     pub fn date_at_position(&mut self, percent: f32) -> String {
+        if self.history_preindexed
+            || self.world.weighted_mode
+            || !self.settings.dashboards.is_empty()
+            || !self.settings.cache_dir.is_empty()
+        {
+            let _ = self.ensure_history();
+            if let Some(ref tl) = self.scrubber.timeline {
+                return datetime::format_local(tl.fraction_to_time(percent), "%A, %d %B, %Y");
+            }
+        }
         if percent < 1.0
             && let Some(ref mut log) = self.commitlog
             && let Some(commit) = log.commit_at(percent)
@@ -1059,17 +1072,20 @@ impl Gource {
                 self.scrubber.state.toggle_direction();
             }
             TimelineHit::Track(frac) => {
+                let frac = frac.clamp(0.0, 1.0);
                 let hist = self.ensure_history();
                 let total_commits = hist.commit_count();
                 self.scrubber.state.set_fraction(frac, total_commits);
                 if let Some(ref tl) = self.scrubber.timeline {
-                    let target_ts = tl.fraction_to_time(frac);
+                    let min_commit_ts = hist.commits.first().map(|c| c.timestamp).unwrap_or(0);
+                    let target_ts = tl.fraction_to_time(frac).max(min_commit_ts);
                     if let Some(tree_snap) = hist.state_at_timestamp(target_ts) {
                         self.world
                             .materialize_from_snapshot(&tree_snap, &hist, &self.settings, 30);
                         self.currtime = target_ts;
                         self.lasttime = target_ts;
                         self.subseconds = 0.0;
+                        self.scrubber.sync_playhead_from_time(self.currtime);
                         self.commit_cursor = tree_snap.commit_index + 1;
                         self.commitqueue.clear();
                         self.stop_position_reached = false;
@@ -1081,9 +1097,9 @@ impl Gource {
                             for _ in 0..self.commit_cursor {
                                 let _ = log.next_commit();
                             }
-                            self.last_percent = log.percent();
-                            self.slider.set_percent(self.last_percent);
                         }
+                        self.last_percent = frac;
+                        self.slider.set_percent(frac);
                     }
                 }
             }
@@ -1098,12 +1114,13 @@ impl Gource {
             TimelineHit::Marker(idx) => {
                 let timeline_data = self.build_timeline_bar_data();
                 if let Some(m) = timeline_data.markers.get(idx) {
-                    let frac = m.frac;
+                    let frac = m.frac.clamp(0.0, 1.0);
                     let hist = self.ensure_history();
                     let total_commits = hist.commit_count();
                     self.scrubber.state.set_fraction(frac, total_commits);
                     if let Some(ref tl) = self.scrubber.timeline {
-                        let target_ts = tl.fraction_to_time(frac);
+                        let min_commit_ts = hist.commits.first().map(|c| c.timestamp).unwrap_or(0);
+                        let target_ts = tl.fraction_to_time(frac).max(min_commit_ts);
                         if let Some(tree_snap) = hist.state_at_timestamp(target_ts) {
                             self.world.materialize_from_snapshot(
                                 &tree_snap,
@@ -1114,6 +1131,7 @@ impl Gource {
                             self.currtime = target_ts;
                             self.lasttime = target_ts;
                             self.subseconds = 0.0;
+                            self.scrubber.sync_playhead_from_time(self.currtime);
                             self.commit_cursor = tree_snap.commit_index + 1;
                             self.commitqueue.clear();
                             self.stop_position_reached = false;
@@ -1125,9 +1143,9 @@ impl Gource {
                                 for _ in 0..self.commit_cursor {
                                     let _ = log.next_commit();
                                 }
-                                self.last_percent = log.percent();
-                                self.slider.set_percent(self.last_percent);
                             }
+                            self.last_percent = frac;
+                            self.slider.set_percent(frac);
                         }
                     }
                 }
@@ -1648,6 +1666,16 @@ impl Gource {
                     return;
                 }
 
+                if !self.timeline_bar.is_visible() && self.slider_dragging {
+                    self.mouse_pos = *pos;
+                    self.cursor.update_pos(*pos);
+                    let b = self.slider.bounds();
+                    let denom = (b.max.x - b.min.x).max(1.0);
+                    let p = ((pos.x - b.min.x) / denom).clamp(0.0, 1.0);
+                    self.handle_timeline_hit(TimelineHit::Track(p));
+                    return;
+                }
+
                 let right_mouse = self.cursor.right_button_pressed();
 
                 if self.mouse_dragged || right_mouse {
@@ -1740,7 +1768,9 @@ impl Gource {
                             if self.world.weighted_mode
                                 || !self.settings.dashboards.is_empty()
                                 || !self.settings.cache_dir.is_empty()
+                                || self.history_preindexed
                             {
+                                self.slider_dragging = true;
                                 self.handle_timeline_hit(TimelineHit::Track(p));
                             } else {
                                 self.seek_to(p);
@@ -1765,6 +1795,7 @@ impl Gource {
                     }
                 } else if *button == MouseButton::Left {
                     self.timeline_dragging = false;
+                    self.slider_dragging = false;
                     self.mouse_dragged = false;
                     self.set_grab_mouse(false);
                 }
@@ -1826,7 +1857,7 @@ impl Gource {
         }
         self.first_read = false;
 
-        if !log.is_finished() && log.is_seekable() {
+        if !self.history_preindexed && !log.is_finished() && log.is_seekable() {
             self.last_percent = log.percent();
             self.slider.set_percent(self.last_percent);
         }
@@ -2115,6 +2146,12 @@ impl Gource {
         // C++ resizes the slider to the display every tick.
         self.slider
             .resize(viewport.width as f32, viewport.height as f32, 35.0);
+        self.timeline_bar.resize(
+            viewport.width,
+            viewport.height,
+            self.fonts.slider,
+            self.settings.font_scale,
+        );
 
         // Captions logic
         let caption_height = gfx.fonts.max_height(self.fonts.caption);
@@ -2188,6 +2225,12 @@ impl Gource {
             }
         } else {
             self.display_date.clear();
+        }
+
+        self.scrubber.sync_playhead_from_time(self.currtime);
+        if self.history_preindexed {
+            self.last_percent = self.scrubber.state.playhead_fraction;
+            self.slider.set_percent(self.last_percent);
         }
 
         Ok(())

@@ -62,6 +62,10 @@ pub fn map_key(code: KeyCode, logical: &BevyKey, shift: bool) -> Key {
         KeyCode::ArrowDown => return Key::Down,
         KeyCode::ArrowLeft => return Key::Left,
         KeyCode::ArrowRight => return Key::Right,
+        KeyCode::F1 => return Key::F1,
+        KeyCode::F2 => return Key::F2,
+        KeyCode::F3 => return Key::F3,
+        KeyCode::F4 => return Key::F4,
         KeyCode::F5 => return Key::F5,
         KeyCode::F11 => return Key::F11,
         KeyCode::F12 => return Key::F12,
@@ -81,6 +85,13 @@ pub fn map_key(code: KeyCode, logical: &BevyKey, shift: bool) -> Key {
         BevyKey::Enter => Key::Return,
         BevyKey::Escape => Key::Escape,
         BevyKey::Tab => Key::Tab,
+        BevyKey::F1 => Key::F1,
+        BevyKey::F2 => Key::F2,
+        BevyKey::F3 => Key::F3,
+        BevyKey::F4 => Key::F4,
+        BevyKey::F5 => Key::F5,
+        BevyKey::F11 => Key::F11,
+        BevyKey::F12 => Key::F12,
         _ => Key::Other,
     }
 }
@@ -226,7 +237,14 @@ mod tests {
             map_key(KeyCode::NumpadEnter, &BevyKey::Enter, false),
             Key::Return
         );
+        assert_eq!(map_key(KeyCode::F1, &BevyKey::F1, false), Key::F1);
+        assert_eq!(map_key(KeyCode::F2, &BevyKey::F2, false), Key::F2);
+        assert_eq!(map_key(KeyCode::F3, &BevyKey::F3, false), Key::F3);
+        assert_eq!(map_key(KeyCode::F4, &BevyKey::F4, false), Key::F4);
+        assert_eq!(map_key(KeyCode::F5, &BevyKey::F5, false), Key::F5);
         assert_eq!(map_key(KeyCode::F11, &BevyKey::F11, false), Key::F11);
+        assert_eq!(map_key(KeyCode::F12, &BevyKey::F12, false), Key::F12);
+        assert_eq!(map_key(KeyCode::Fn, &BevyKey::F2, false), Key::F2);
         assert_eq!(
             map_key(KeyCode::NumpadAdd, &ch("+"), false),
             Key::KeypadPlus
