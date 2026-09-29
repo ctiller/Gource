@@ -1091,7 +1091,8 @@ impl World {
         self.prepare_dirs_recursive(self.root, proj, &v_bounds, settings);
 
         for (_, user) in &mut self.users {
-            let screen = proj.to_screen(user.pawn.pos);
+            let top = Vec2::new(user.pawn.pos.x, user.pawn.pos.y - user.pawn.dims.y * 0.5);
+            let screen = proj.to_screen(top);
             user.pawn.screenpos = Vec3::new(screen.x, screen.y, 0.0);
         }
     }
@@ -1123,7 +1124,12 @@ impl World {
         for &fid in &dir.files {
             if let Some(file) = self.files.get_mut(fid) {
                 let abs_pos = file.absolute_pos(dir.pos);
-                let screen = proj.to_screen(abs_pos);
+                let offset = if file.pawn.is_selected() {
+                    Vec2::new(5.5, -2.0)
+                } else {
+                    Vec2::new(5.5, -1.0)
+                };
+                let screen = proj.to_screen(abs_pos + offset);
                 file.pawn.screenpos = Vec3::new(screen.x, screen.y, 0.0);
             }
         }
@@ -1553,13 +1559,14 @@ impl World {
             && let Some(file) = self.files.get(fid)
         {
             let font_id = fonts.file_selected;
-            let text_pos = Vec2::new(file.pawn.screenpos.x + 5.5, file.pawn.screenpos.y - 2.0);
+            let text_pos = file.pawn.screenpos.truncate();
+            let label = file.display_name(settings.file_extensions);
             let col = settings.selection_colour;
             let style = TextStyle::default()
                 .with_colour(Vec4::new(col.x, col.y, col.z, 1.0))
                 .with_shadow(true)
                 .with_round(false);
-            gfx.draw_text(list, font_id, text_pos, &file.pawn.name, &style);
+            gfx.draw_text(list, font_id, text_pos, label, &style);
         }
     }
 
@@ -1587,6 +1594,7 @@ impl World {
                 let label_pos = dir.spline.label_pos();
                 let style = TextStyle::default()
                     .with_colour(Vec4::new(col.x, col.y, col.z, alpha))
+                    .with_shadow(true)
                     .with_round(false);
                 gfx.draw_text(list, dir_font, label_pos, &dir.path_token, &style);
             }
@@ -1618,7 +1626,7 @@ impl World {
                     continue;
                 }
                 let col = settings.filename_colour;
-                let text_pos = Vec2::new(file.pawn.screenpos.x + 5.5, file.pawn.screenpos.y - 1.0);
+                let text_pos = file.pawn.screenpos.truncate();
                 let style = TextStyle::default()
                     .with_colour(Vec4::new(col.x, col.y, col.z, alpha))
                     .with_shadow(true)

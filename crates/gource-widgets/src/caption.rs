@@ -105,7 +105,10 @@ impl RCaption {
             return;
         }
         let text_colour = Vec4::new(self.colour.x, self.colour.y, self.colour.z, self.alpha);
-        let style = TextStyle::new(text_colour);
+        let style = TextStyle::new(text_colour)
+            .with_shadow(true)
+            .with_round(false)
+            .with_align_top(false);
         gfx.draw_text(list, self.font, self.pos, &self.caption, &style);
     }
 }
@@ -203,8 +206,13 @@ mod tests {
         // Verify batch and text vertices produced
         let total_verts = list.vertex_count();
         assert!(total_verts > 0);
-        // Alpha at 1.0s is 1.0 / 2.0 = 0.5. Verify text quad vertex alpha is 0.5
-        assert!((list.batches[0].vertices[0].colour.w - 0.5).abs() < 1e-4);
+        // Alpha at 1.0s is 1.0 / 2.0 = 0.5. With shadow=true, shadow quad alpha is 0.5 * 0.7 = 0.35,
+        // and text quad alpha is 0.5. Verify shadow quad alpha and text quad alpha.
+        let verts = &list.batches[0].vertices;
+        let shadow_alpha = verts[0].colour.w;
+        assert!((shadow_alpha - 0.5 * 0.7).abs() < 1e-4);
+        let text_alpha = verts[verts.len() - 1].colour.w;
+        assert!((text_alpha - 0.5).abs() < 1e-4);
 
         // Alpha <= 0 caption should not draw
         let cap_zero = RCaption::with_duration("ZeroAlpha", 100, font, 10.0);

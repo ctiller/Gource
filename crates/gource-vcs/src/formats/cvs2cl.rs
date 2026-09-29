@@ -68,17 +68,10 @@ where
         Err(_) => return false,
     };
 
-    let entry = match doc.root_element().tag_name().name() {
-        "entry" => doc.root_element(),
-        _ => match doc
-            .root_element()
-            .children()
-            .find(|n| n.has_tag_name("entry"))
-        {
-            Some(node) => node,
-            None => return false,
-        },
-    };
+    let entry = doc.root_element();
+    if !entry.has_tag_name("entry") {
+        return false;
+    }
 
     // Date
     let date_str = match entry
@@ -139,32 +132,26 @@ where
         .children()
         .find(|n| n.has_tag_name("author"))
         .and_then(|n| n.text())
+        .filter(|s| !s.is_empty())
         .unwrap_or("Unknown");
-    commit.username = if author.is_empty() {
-        "Unknown".to_string()
-    } else {
-        author.to_string()
-    };
+    commit.username = author.to_string();
 
     // Files
     for file_elem in entry.children().filter(|n| n.has_tag_name("file")) {
         let state = file_elem
             .children()
             .find(|n| n.has_tag_name("cvsstate"))
-            .and_then(|n| n.text());
+            .and_then(|n| n.text())
+            .filter(|s| !s.is_empty());
         let name = file_elem
             .children()
             .find(|n| n.has_tag_name("name"))
-            .and_then(|n| n.text());
+            .and_then(|n| n.text())
+            .filter(|s| !s.is_empty());
 
-        let (state_text, name_text) = match (state, name) {
-            (Some(s), Some(n)) => (s, n),
-            _ => continue,
-        };
-
-        if state_text.is_empty() || name_text.is_empty() {
+        let (Some(state_text), Some(name_text)) = (state, name) else {
             continue;
-        }
+        };
 
         let status = if state_text == "dead" { "D" } else { "M" };
         commit.add_file(name_text, status, options);

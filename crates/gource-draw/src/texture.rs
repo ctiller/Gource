@@ -164,23 +164,6 @@ fn decode_file(path: &Path) -> Result<(u32, u32, Vec<u8>), TextureError> {
         source: e,
     })?;
 
-    // If format couldn't be guessed from magic bytes (common for TGA), guess from extension
-    let reader = if reader.format().is_none() {
-        if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-            if let Some(fmt) = image::ImageFormat::from_extension(ext) {
-                let mut r = reader;
-                r.set_format(fmt);
-                r
-            } else {
-                reader
-            }
-        } else {
-            reader
-        }
-    } else {
-        reader
-    };
-
     let img = reader.decode().map_err(|e| TextureError::Decode {
         name,
         message: e.to_string(),

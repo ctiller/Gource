@@ -40,6 +40,8 @@ pub struct GourceFonts {
     pub caption: FontId,
     pub base: FontId,
     pub dirname: FontId,
+    pub textbox: FontId,
+    pub slider: FontId,
     pub scene: SceneFonts,
 }
 
@@ -61,6 +63,8 @@ impl GourceFonts {
         let caption_size = (settings.caption_size as u32).max(1);
         let base_size = ((14.0 * settings.font_scale) as u32).max(1);
         let dirname_size = (settings.scaled_dirname_font_size as u32).max(1);
+        let textbox_size = ((18.0 * settings.font_scale) as u32).max(1);
+        let slider_size = ((16.0 * settings.font_scale) as u32).max(1);
         let user_size = (settings.scaled_user_font_size as u32).max(1);
         let file_size = (settings.scaled_filename_font_size as u32).max(1);
 
@@ -71,6 +75,8 @@ impl GourceFonts {
         let caption = gfx.fonts.font(face_id, caption_size);
         let base = gfx.fonts.font(face_id, base_size);
         let dirname = gfx.fonts.font(face_id, dirname_size);
+        let textbox = gfx.fonts.font(face_id, textbox_size);
+        let slider = gfx.fonts.font(face_id, slider_size);
 
         let scene = SceneFonts {
             file: gfx.fonts.font(face_id, file_size),
@@ -86,6 +92,8 @@ impl GourceFonts {
             caption,
             base,
             dirname,
+            textbox,
+            slider,
             scene,
         })
     }
@@ -298,7 +306,7 @@ impl Gource {
         let track_users = settings.camera_mode == CameraMode::Track;
 
         let mut slider = PositionSlider::new(0.0);
-        slider.set_font(fonts.caption);
+        slider.set_font(fonts.slider);
         slider.resize(viewport.width as f32, viewport.height as f32, 35.0);
 
         if !recording && settings.repo_count <= 1 {
@@ -314,7 +322,7 @@ impl Gource {
         file_key.set_show(settings.show_key);
 
         let mut textbox = TextBox::new();
-        textbox.set_font(fonts.large, 18.0 * settings.font_scale);
+        textbox.set_font(fonts.textbox, 18.0 * settings.font_scale);
         textbox.set_brightness(0.5);
         textbox.show();
 
@@ -415,6 +423,46 @@ impl Gource {
     /// step repositions the active captions.
     pub fn reload(&mut self) {
         self.reloaded = true;
+    }
+
+    /// Resize display: re-evaluate font scaling on default font scale, reload fonts,
+    /// resize widgets, and update caption fonts.
+    pub fn resize(&mut self, viewport: Viewport, gfx: &mut Gfx) {
+        self.reload();
+
+        if self.settings.default_font_scale {
+            if viewport.dpi_ratio > 1.0 {
+                self.settings.font_scale = viewport.dpi_ratio;
+            } else {
+                let threshold = 1600;
+                self.settings.font_scale = (1 + (viewport.height as i32 / threshold).max(0)) as f32;
+            }
+            self.settings.set_scaled_font_sizes();
+        }
+
+        if let Ok(fonts) = GourceFonts::load(gfx, &self.settings) {
+            self.fonts = fonts;
+        }
+
+        self.slider.set_font(self.fonts.slider);
+        self.slider
+            .resize(viewport.width as f32, viewport.height as f32, 35.0);
+
+        self.file_key.set_font(
+            self.fonts.medium,
+            self.settings.scaled_font_size as f32,
+            self.settings.font_scale,
+        );
+
+        self.textbox
+            .set_font(self.fonts.textbox, 18.0 * self.settings.font_scale);
+
+        for cap in &mut self.captions {
+            cap.font = self.fonts.caption;
+        }
+        for cap in &mut self.active_captions {
+            cap.font = self.fonts.caption;
+        }
     }
 
     /// Reset simulation state for seeking / restarting.
@@ -1657,7 +1705,7 @@ impl Gource {
                 splash_col,
             );
 
-            let style = TextStyle::new(Vec4::ONE).with_shadow(true);
+            let style = TextStyle::new(Vec4::ONE).with_shadow(true).with_round(true);
             let title_pos = Vec2::new(
                 (viewport.width as f32) * 0.5 - 80.0 * self.settings.font_scale,
                 (viewport.height as f32) * 0.5 - 30.0 * self.settings.font_scale,
@@ -1753,10 +1801,10 @@ impl Gource {
                 display_path.remove(0);
             }
             self.textbox.clear();
-            let name_w = gfx.text_width(self.fonts.large, &file.pawn.name);
+            let name_w = gfx.text_width(self.fonts.textbox, &file.pawn.name);
             self.textbox.set_text(&file.pawn.name, name_w);
             if !display_path.is_empty() {
-                let path_w = gfx.text_width(self.fonts.large, &display_path);
+                let path_w = gfx.text_width(self.fonts.textbox, &display_path);
                 self.textbox.add_line(display_path, path_w);
             }
             self.textbox.set_colour(file.colour());
@@ -1772,7 +1820,7 @@ impl Gource {
             && let Some(user) = self.world.users.get(uid)
         {
             self.textbox.clear();
-            let name_w = gfx.text_width(self.fonts.large, user.name());
+            let name_w = gfx.text_width(self.fonts.textbox, user.name());
             self.textbox.set_text(user.name(), name_w);
             self.textbox.set_colour(user.colour());
             self.textbox.set_pos(
@@ -1786,7 +1834,7 @@ impl Gource {
 
         // HUD message
         if self.message_timer > 0.0 && !self.message.is_empty() {
-            let style = TextStyle::new(Vec4::ONE).with_shadow(true);
+            let style = TextStyle::new(Vec4::ONE).with_shadow(true).with_round(true);
             gfx.draw_text(
                 list,
                 self.fonts.base,

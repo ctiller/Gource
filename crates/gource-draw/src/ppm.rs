@@ -172,13 +172,14 @@ impl PpmExporter {
             let flush_res = ack_rx.recv().unwrap_or(Ok(()));
             drop(sender);
 
-            let join_res = if let Some(handle) = self.handle.take() {
-                handle
-                    .join()
-                    .unwrap_or_else(|_| Err(io::Error::other("writer thread panicked")))
-            } else {
-                Ok(())
-            };
+            let join_res = self
+                .handle
+                .take()
+                .map(|h| {
+                    h.join()
+                        .unwrap_or_else(|_| Err(io::Error::other("writer thread panicked")))
+                })
+                .unwrap_or(Ok(()));
 
             flush_res.and(join_res)
         } else {

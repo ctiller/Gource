@@ -239,7 +239,9 @@ impl FileKeyEntry {
         list.quad_colours(TextureId::WHITE, corners, QUAD_UVS, colours);
 
         // 3. Extension text (no shadow)
-        let text_style = TextStyle::new(Vec4::new(1.0, 1.0, 1.0, self.alpha)).with_shadow(false);
+        let text_style = TextStyle::new(Vec4::new(1.0, 1.0, 1.0, self.alpha))
+            .with_shadow(false)
+            .with_round(false);
         let ext_pos = Vec2::new(
             (self.pos.x as i32 + 2) as f32,
             (self.pos.y as i32 + 3) as f32,
@@ -247,7 +249,9 @@ impl FileKeyEntry {
         gfx.draw_text(list, font, ext_pos, &self.display_ext, &text_style);
 
         // 4. Count text (with shadow)
-        let count_style = TextStyle::new(Vec4::new(1.0, 1.0, 1.0, self.alpha)).with_shadow(true);
+        let count_style = TextStyle::new(Vec4::new(1.0, 1.0, 1.0, self.alpha))
+            .with_shadow(true)
+            .with_round(false);
         let count_str = self.count.to_string();
         let count_pos = Vec2::new(
             (self.pos.x as i32 + self.width as i32 + 4) as f32,

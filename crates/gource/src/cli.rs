@@ -62,12 +62,10 @@ pub fn handle_command_line(args: &[String]) -> Outcome {
     match action {
         CliAction::Help { extended } => Outcome::success(help_text(extended)),
         // `SDLAppInfo(logCommand())`.
-        CliAction::PrintLogCommand { vcs } => match gource_vcs::log_command(&vcs) {
-            Some(command) => Outcome::success(format!("{command}\n")),
-            // The settings parser only accepts known names, so this is
-            // unreachable in practice; the C++ silently continues.
-            None => Outcome::quit(&format!("unknown log-command {vcs}")),
-        },
+        CliAction::PrintLogCommand { vcs } => {
+            let cmd = gource_vcs::log_command(&vcs).unwrap_or_default();
+            Outcome::success(format!("{cmd}\n"))
+        }
         CliAction::SaveConfig { path, config } => match config.conf.save(Path::new(&path)) {
             Ok(()) => Outcome::success(""),
             Err(error) => Outcome::quit(&error.0),
@@ -96,14 +94,15 @@ mod tests {
     }
 
     fn exit(outcome: Outcome) -> (String, String, u8) {
-        match outcome {
-            Outcome::Exit {
-                stdout,
-                stderr,
-                code,
-            } => (stdout, stderr, code),
-            Outcome::Run(_) => panic!("expected an exit"),
-        }
+        let Outcome::Exit {
+            stdout,
+            stderr,
+            code,
+        } = outcome
+        else {
+            unreachable!()
+        };
+        (stdout, stderr, code)
     }
 
     #[test]

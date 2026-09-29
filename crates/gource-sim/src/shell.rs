@@ -60,6 +60,7 @@ impl GourceShell {
         );
         let gource = shell.get_next(initial_viewport)?;
         shell.gource = gource;
+        shell.last_viewport = Some(initial_viewport);
 
         Ok(shell)
     }
@@ -202,7 +203,7 @@ impl GourceShell {
         if self.last_viewport.is_some_and(|v| v != viewport)
             && let Some(g) = self.gource.as_mut()
         {
-            g.reload();
+            g.resize(viewport, &mut self.gfx);
         }
         self.last_viewport = Some(viewport);
 

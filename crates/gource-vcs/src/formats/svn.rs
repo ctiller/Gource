@@ -90,17 +90,10 @@ where
         Err(_) => return false,
     };
 
-    let logentry = match doc.root_element().tag_name().name() {
-        "logentry" => doc.root_element(),
-        _ => match doc
-            .root_element()
-            .children()
-            .find(|n| n.has_tag_name("logentry"))
-        {
-            Some(node) => node,
-            None => return false,
-        },
-    };
+    let logentry = doc.root_element();
+    if !logentry.has_tag_name("logentry") {
+        return false;
+    }
 
     // Date
     let date_str = match logentry
