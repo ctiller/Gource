@@ -937,7 +937,7 @@ impl World {
         self.resolve_directory_contacts();
     }
 
-    /// Resolve directory circle-edge contacts so overlapping directories push apart.
+    /// Resolve directory circle-edge contacts so overlapping directories push apart via Rapier 2D.
     pub fn resolve_directory_contacts(&mut self) {
         let dir_ids: Vec<DirId> = self.dir_map.values().copied().collect();
         let n = dir_ids.len();
@@ -945,52 +945,37 @@ impl World {
             return;
         }
 
-        // Run 8 relaxation iterations
-        for _ in 0..8 {
-            for (i, &id_a) in dir_ids.iter().enumerate() {
-                let is_a_empty = self.dirs[id_a].is_empty();
-                for (j_offset, &id_b) in dir_ids[i + 1..].iter().enumerate() {
-                    let j = i + 1 + j_offset;
-                    if is_a_empty && self.dirs[id_b].is_empty() {
-                        continue;
-                    }
+        let mut descs = Vec::with_capacity(n);
+        let mut ancestor_pairs = Vec::new();
 
-                    let is_anc = self.is_ancestor(id_a, id_b) || self.is_ancestor(id_b, id_a);
-                    let min_dist = if is_anc {
-                        self.dirs[id_a].parent_radius + self.dirs[id_b].parent_radius
-                    } else {
-                        self.dirs[id_a].dir_radius + self.dirs[id_b].dir_radius
-                    };
+        for (i, &id_a) in dir_ids.iter().enumerate() {
+            let d = &self.dirs[id_a];
+            let parent_idx = d
+                .parent
+                .and_then(|p_id| dir_ids.iter().position(|&x| x == p_id));
+            descs.push(crate::physics2d::DirCircleDesc {
+                pos: d.pos,
+                dir_radius: d.dir_radius,
+                parent_radius: d.parent_radius,
+                parent_idx,
+                is_root: id_a == self.root,
+                is_empty: d.is_empty(),
+            });
 
-                    let delta = self.dirs[id_b].pos - self.dirs[id_a].pos;
-                    let dist = delta.length();
-
-                    if dist < min_dist {
-                        let overlap = min_dist - dist;
-                        let norm = if dist > 1e-5 {
-                            delta / dist
-                        } else {
-                            let angle = ((i * 31 + j * 17) as f32) * 0.1;
-                            Vec2::new(angle.cos(), angle.sin())
-                        };
-
-                        let a_is_root = id_a == self.root;
-                        let b_is_root = id_b == self.root;
-
-                        if a_is_root {
-                            self.dirs[id_b].pos += norm * overlap;
-                        } else if b_is_root {
-                            self.dirs[id_a].pos -= norm * overlap;
-                        } else {
-                            self.dirs[id_a].pos -= norm * (overlap * 0.5);
-                            self.dirs[id_b].pos += norm * (overlap * 0.5);
-                        }
-
-                        self.dirs[id_a].update_quad_item_bounds();
-                        self.dirs[id_b].update_quad_item_bounds();
-                    }
+            for (j_offset, &id_b) in dir_ids[i + 1..].iter().enumerate() {
+                let j = i + 1 + j_offset;
+                if self.is_ancestor(id_a, id_b) || self.is_ancestor(id_b, id_a) {
+                    ancestor_pairs.push((i, j));
                 }
             }
+        }
+
+        let resolved_positions =
+            crate::physics2d::resolve_directory_contacts_rapier(&descs, &ancestor_pairs, 15);
+
+        for (i, &id) in dir_ids.iter().enumerate() {
+            self.dirs[id].pos = resolved_positions[i];
+            self.dirs[id].update_quad_item_bounds();
         }
     }
 

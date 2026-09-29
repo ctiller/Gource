@@ -551,18 +551,12 @@ impl DirNode {
             }
         }
 
-        // Recenter cluster bounding box to (0, 0)
-        let mut min_b = Vec2::splat(f32::INFINITY);
-        let mut max_b = Vec2::splat(-f32::INFINITY);
-        for &(p, r) in &placed {
-            min_b = min_b.min(p - Vec2::splat(r));
-            max_b = max_b.max(p + Vec2::splat(r));
-        }
-        let center = (min_b + max_b) * 0.5;
+        // Central Attraction + Edge Collision Simulation via Rapier 2D
+        let sim_positions = crate::physics2d::step_directory_files_rapier(&placed, 20);
 
         // Assign dest, distance, and pawn.pos to visible files
         for (i, item) in visible.iter().enumerate() {
-            let p = placed[i].0 - center;
+            let p = sim_positions[i];
             let dist = p.length();
             let dest = if dist > 1e-5 { p / dist } else { Vec2::ZERO };
 

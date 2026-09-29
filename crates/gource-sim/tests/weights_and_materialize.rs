@@ -403,6 +403,62 @@ fn test_directory_contact_model_resolution() {
 }
 
 #[test]
+fn test_multi_directory_cluster_rapier_resolution() {
+    let mut world = World::new(42, 31);
+    let mut dir_ids = Vec::new();
+
+    // Create 4 overlapping child directories around root
+    for name in ["/a/", "/b/", "/c/", "/d/"] {
+        let d = world
+            .dirs
+            .insert(gource_sim::dirnode::DirNode::new(name, 8.0, 1.5));
+        world.dir_map.insert(name.to_string(), d);
+        world.add_node_to_dir(world.root, d);
+
+        // Add file
+        let f = world.files.insert(File::new(
+            &format!("{name}file.rs"),
+            Vec3::ONE,
+            Vec2::ZERO,
+            1,
+            8.0,
+            4.0,
+            false,
+        ));
+        world.files[f].pawn.set_hidden(false);
+        world.files[f].pawn.size = 24.0;
+        world.files[f].radius = 12.0;
+        world.dirs[d].files.push(f);
+        world.dirs[d].visible_count = 1;
+
+        // Position all clustered tightly at origin
+        world.dirs[d].pos = Vec2::new(dir_ids.len() as f32 * 0.5, (dir_ids.len() % 2) as f32 * 0.5);
+        dir_ids.push(d);
+    }
+
+    world.update_weighted_layout();
+
+    // Verify root is still at origin
+    assert_eq!(world.dirs[world.root].pos, Vec2::ZERO);
+
+    // Verify all pairwise directory circles do not overlap
+    for i in 0..dir_ids.len() {
+        for j in (i + 1)..dir_ids.len() {
+            let id_a = dir_ids[i];
+            let id_b = dir_ids[j];
+            let r_a = world.dirs[id_a].dir_radius;
+            let r_b = world.dirs[id_b].dir_radius;
+            let dist = (world.dirs[id_a].pos - world.dirs[id_b].pos).length();
+            assert!(
+                dist >= (r_a + r_b) - 1e-2,
+                "directories {i} and {j} overlap: dist = {dist}, r_a + r_b = {}",
+                r_a + r_b
+            );
+        }
+    }
+}
+
+#[test]
 fn test_tight_circle_packing_single_file_and_empty() {
     let mut files = SlotMap::with_key();
     let mut dir = gource_sim::dirnode::DirNode::new("/single/", 8.0, 1.5);

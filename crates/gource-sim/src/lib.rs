@@ -26,6 +26,7 @@ pub mod file;
 pub mod gource;
 pub mod input;
 pub mod pawn;
+pub mod physics2d;
 pub mod platform;
 pub mod scrubber;
 pub mod shell;
