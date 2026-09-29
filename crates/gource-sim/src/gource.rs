@@ -2591,21 +2591,31 @@ impl Gource {
         }
 
         // Loading screen
-        if self.commitlog.is_none() {
+        if self.commitlog.is_none()
+            || (self.is_live_mode()
+                && self.ingested_commits.is_empty()
+                && self.commitqueue.is_empty()
+                && self.world.files.is_empty())
+        {
             let dots = match ((self.runtime * 3.0) as i32) % 4 {
                 1 => ".",
                 2 => "..",
                 3 => "...",
                 _ => "",
             };
-            let action = if !self.is_finished {
-                "Reading Log"
+            let action = if self.is_finished {
+                "Aborting".to_string()
+            } else if !self.settings.github.is_empty() {
+                format!("Connecting to GitHub ({})", self.settings.github)
+            } else if self.is_live_mode() {
+                "Waiting for Commits".to_string()
             } else {
-                "Aborting"
+                "Reading Log".to_string()
             };
             let text = format!("{action}{dots}");
+            let text_width = gfx.text_width(self.fonts.medium, &text);
             let text_pos = Vec2::new(
-                (viewport.width as f32) * 0.5 - 50.0,
+                (viewport.width as f32) * 0.5 - (text_width * 0.5),
                 (viewport.height as f32) * 0.5 - 10.0,
             );
             let style = TextStyle::new(Vec4::ONE).with_shadow(true);

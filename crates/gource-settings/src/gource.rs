@@ -1804,6 +1804,9 @@ impl GourceSettings {
                 return Err(conf.invalid_value_error(entry));
             }
             settings.github = entry.value.clone();
+            if settings.default_path {
+                settings.path = format!("github:{}", settings.github);
+            }
             if gource_settings.entry("live").is_none() {
                 settings.live = true;
             }

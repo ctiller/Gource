@@ -437,32 +437,37 @@ impl GitHubWatcher {
                                 // Process oldest to newest
                                 new_commits.reverse();
 
+                                let should_fetch_detail = token.is_some() || new_commits.len() <= 5;
                                 for item in new_commits {
                                     let sha = match item.get("sha").and_then(|s| s.as_str()) {
                                         Some(s) if is_valid_sha(s) => s,
                                         _ => continue,
                                     };
 
-                                    // Fetch commit detail for files
-                                    let detail_url =
-                                        format!("{base_url}/repos/{owner}/{repo}/commits/{sha}");
-                                    let mut detail_headers: Vec<(&str, &str)> =
-                                        vec![("Accept", "application/vnd.github+json")];
-                                    let detail_auth;
-                                    if let Some(tok) = &token {
-                                        detail_auth = format!("Bearer {tok}");
-                                        detail_headers.push(("Authorization", &detail_auth));
-                                    }
+                                    let files = if should_fetch_detail {
+                                        let detail_url = format!(
+                                            "{base_url}/repos/{owner}/{repo}/commits/{sha}"
+                                        );
+                                        let mut detail_headers: Vec<(&str, &str)> =
+                                            vec![("Accept", "application/vnd.github+json")];
+                                        let detail_auth;
+                                        if let Some(tok) = &token {
+                                            detail_auth = format!("Bearer {tok}");
+                                            detail_headers.push(("Authorization", &detail_auth));
+                                        }
 
-                                    let files = if let Ok(detail_resp) =
-                                        transport.get(&detail_url, &detail_headers)
-                                        && detail_resp.status == 200
-                                    {
-                                        serde_json::from_slice::<serde_json::Value>(
-                                            &detail_resp.body,
-                                        )
-                                        .ok()
-                                        .and_then(|v| v.get("files").cloned())
+                                        if let Ok(detail_resp) =
+                                            transport.get(&detail_url, &detail_headers)
+                                            && detail_resp.status == 200
+                                        {
+                                            serde_json::from_slice::<serde_json::Value>(
+                                                &detail_resp.body,
+                                            )
+                                            .ok()
+                                            .and_then(|v| v.get("files").cloned())
+                                        } else {
+                                            None
+                                        }
                                     } else {
                                         None
                                     };
@@ -614,28 +619,32 @@ impl GitHubWatcher {
                             // Process oldest to newest
                             push_commits.reverse();
 
+                            let should_fetch_detail = token.is_some() || push_commits.len() <= 5;
                             for (repo_full_name, sha, item) in push_commits {
-                                let detail_url =
-                                    format!("{base_url}/repos/{repo_full_name}/commits/{sha}");
-                                let mut detail_headers: Vec<(&str, &str)> =
-                                    vec![("Accept", "application/vnd.github+json")];
-                                let detail_auth;
-                                if let Some(tok) = &token {
-                                    detail_auth = format!("Bearer {tok}");
-                                    detail_headers.push(("Authorization", &detail_auth));
-                                }
-
                                 let mut detail_item = item;
                                 let mut files = None;
 
-                                if let Ok(detail_resp) = transport.get(&detail_url, &detail_headers)
-                                    && detail_resp.status == 200
-                                    && let Ok(v) = serde_json::from_slice::<serde_json::Value>(
-                                        &detail_resp.body,
-                                    )
-                                {
-                                    files = v.get("files").cloned();
-                                    detail_item = v;
+                                if should_fetch_detail {
+                                    let detail_url =
+                                        format!("{base_url}/repos/{repo_full_name}/commits/{sha}");
+                                    let mut detail_headers: Vec<(&str, &str)> =
+                                        vec![("Accept", "application/vnd.github+json")];
+                                    let detail_auth;
+                                    if let Some(tok) = &token {
+                                        detail_auth = format!("Bearer {tok}");
+                                        detail_headers.push(("Authorization", &detail_auth));
+                                    }
+
+                                    if let Ok(detail_resp) =
+                                        transport.get(&detail_url, &detail_headers)
+                                        && detail_resp.status == 200
+                                        && let Ok(v) = serde_json::from_slice::<serde_json::Value>(
+                                            &detail_resp.body,
+                                        )
+                                    {
+                                        files = v.get("files").cloned();
+                                        detail_item = v;
+                                    }
                                 }
 
                                 let repo_short_name =
