@@ -1,0 +1,15 @@
+[package]
+name = "gource-history"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gource-core = { path = "../gource-core" }
+glam.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

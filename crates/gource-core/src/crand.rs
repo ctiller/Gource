@@ -63,6 +63,12 @@ impl CRand {
         // The least random bit is dropped.
         (value >> 1) as i32
     }
+
+    /// Alias for [`CRand::rand`].
+    #[inline]
+    pub fn next_i32(&mut self) -> i32 {
+        self.rand()
+    }
 }
 
 impl Default for CRand {
@@ -112,6 +118,15 @@ mod tests {
         for _ in 0..10_000 {
             let v = rng.rand();
             assert!((0..=CRand::RAND_MAX).contains(&v));
+        }
+    }
+
+    #[test]
+    fn next_i32_matches_rand() {
+        let mut rng1 = CRand::new(42);
+        let mut rng2 = CRand::new(42);
+        for _ in 0..100 {
+            assert_eq!(rng1.next_i32(), rng2.rand());
         }
     }
 }

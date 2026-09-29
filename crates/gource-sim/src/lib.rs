@@ -20,6 +20,7 @@
 pub mod action;
 pub mod app;
 pub mod camera;
+pub mod checkpoint;
 pub mod dirnode;
 pub mod file;
 pub mod gource;
@@ -33,8 +34,10 @@ pub mod world;
 
 pub use action::{Action, ActionKind};
 pub use app::{AppError, AppOptions, GourceApp, vcs_options};
+pub use checkpoint::CheckpointStore;
 pub use dirnode::DirNode;
 pub use file::{DirId, File, FileId};
+pub use gource::SimSnapshot;
 pub use input::{InputEvent, Key, Modifiers, MouseButton};
 pub use pawn::Pawn;
 pub use platform::{PlatformRequest, Viewport};

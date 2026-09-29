@@ -273,6 +273,8 @@ pub struct Gource {
     pub quadtree_debug: bool,
     pub fps: f32,
 
+    pub commit_cursor: usize,
+
     pub pending_requests: Vec<PlatformRequest>,
 }
 
@@ -408,6 +410,7 @@ impl Gource {
             trace_debug: false,
             quadtree_debug: false,
             fps: 60.0,
+            commit_cursor: 0,
             pending_requests: Vec::new(),
         };
 
@@ -486,6 +489,7 @@ impl Gource {
         self.mouse_moved = false;
         self.mouse_dragged = false;
         self.last_percent = 0.0;
+        self.commit_cursor = 0;
 
         // The C++ rand() stream and string hash seed are globals that a
         // reset leaves alone.
@@ -1025,6 +1029,7 @@ impl Gource {
                 self.stop_position_reached = true;
                 break;
             }
+            self.commit_cursor += 1;
             self.commitqueue.push_back(commit);
         }
 
@@ -1894,4 +1899,190 @@ impl Gource {
         self.framecount += 1;
         Ok(())
     }
+
+    /// Capture a deterministic snapshot of the simulation state.
+    pub fn snapshot(&self) -> SimSnapshot {
+        SimSnapshot {
+            settings: self.settings.clone(),
+            world: self.world.clone(),
+            camera: self.camera.clone(),
+            slider: self.slider.clone(),
+            file_key: self.file_key.clone(),
+            textbox: self.textbox.clone(),
+            cursor: self.cursor.clone(),
+            captions: self.captions.clone(),
+            active_captions: self.active_captions.clone(),
+            commitqueue: self.commitqueue.clone(),
+            track_users: self.track_users,
+            manual_camera: self.manual_camera,
+            manual_zoom: self.manual_zoom,
+            manual_rotate: self.manual_rotate,
+            rotation_remaining_angle: self.rotation_remaining_angle,
+            rotate_angle: self.rotate_angle,
+            cursor_move: self.cursor_move,
+            selected_user: self.selected_user,
+            hover_user: self.hover_user,
+            selected_file: self.selected_file,
+            hover_file: self.hover_file,
+            grab_mouse: self.grab_mouse,
+            mouse_moved: self.mouse_moved,
+            mouse_clicked: self.mouse_clicked,
+            mouse_dragged: self.mouse_dragged,
+            mouse_pos: self.mouse_pos,
+            take_screenshot: self.take_screenshot,
+            recolour: self.recolour,
+            paused: self.paused,
+            first_read: self.first_read,
+            reloaded: self.reloaded,
+            stop_position_reached: self.stop_position_reached,
+            is_finished: self.is_finished,
+            last_percent: self.last_percent,
+            idle_time: self.idle_time,
+            currtime: self.currtime,
+            lasttime: self.lasttime,
+            subseconds: self.subseconds,
+            runtime: self.runtime,
+            max_tick_rate: self.max_tick_rate,
+            frameskip: self.frameskip,
+            framecount: self.framecount,
+            recording: self.recording,
+            splash: self.splash,
+            message: self.message.clone(),
+            message_timer: self.message_timer,
+            display_date: self.display_date.clone(),
+            date_x_offset: self.date_x_offset,
+            starting_z: self.starting_z,
+            debug: self.debug,
+            trace_debug: self.trace_debug,
+            quadtree_debug: self.quadtree_debug,
+            fps: self.fps,
+            commit_cursor: self.commit_cursor,
+        }
+    }
+
+    /// Restore simulation state from a snapshot.
+    pub fn restore(&mut self, snapshot: &SimSnapshot) {
+        self.settings = snapshot.settings.clone();
+        self.world = snapshot.world.clone();
+        self.camera = snapshot.camera.clone();
+        self.slider = snapshot.slider.clone();
+        self.file_key = snapshot.file_key.clone();
+        self.textbox = snapshot.textbox.clone();
+        self.cursor = snapshot.cursor.clone();
+        self.captions = snapshot.captions.clone();
+        self.active_captions = snapshot.active_captions.clone();
+        self.commitqueue = snapshot.commitqueue.clone();
+        self.track_users = snapshot.track_users;
+        self.manual_camera = snapshot.manual_camera;
+        self.manual_zoom = snapshot.manual_zoom;
+        self.manual_rotate = snapshot.manual_rotate;
+        self.rotation_remaining_angle = snapshot.rotation_remaining_angle;
+        self.rotate_angle = snapshot.rotate_angle;
+        self.cursor_move = snapshot.cursor_move;
+        self.selected_user = snapshot.selected_user;
+        self.hover_user = snapshot.hover_user;
+        self.selected_file = snapshot.selected_file;
+        self.hover_file = snapshot.hover_file;
+        self.grab_mouse = snapshot.grab_mouse;
+        self.mouse_moved = snapshot.mouse_moved;
+        self.mouse_clicked = snapshot.mouse_clicked;
+        self.mouse_dragged = snapshot.mouse_dragged;
+        self.mouse_pos = snapshot.mouse_pos;
+        self.take_screenshot = snapshot.take_screenshot;
+        self.recolour = snapshot.recolour;
+        self.paused = snapshot.paused;
+        self.first_read = snapshot.first_read;
+        self.reloaded = snapshot.reloaded;
+        self.stop_position_reached = snapshot.stop_position_reached;
+        self.is_finished = snapshot.is_finished;
+        self.last_percent = snapshot.last_percent;
+        self.idle_time = snapshot.idle_time;
+        self.currtime = snapshot.currtime;
+        self.lasttime = snapshot.lasttime;
+        self.subseconds = snapshot.subseconds;
+        self.runtime = snapshot.runtime;
+        self.max_tick_rate = snapshot.max_tick_rate;
+        self.frameskip = snapshot.frameskip;
+        self.framecount = snapshot.framecount;
+        self.recording = snapshot.recording;
+        self.splash = snapshot.splash;
+        self.message = snapshot.message.clone();
+        self.message_timer = snapshot.message_timer;
+        self.display_date = snapshot.display_date.clone();
+        self.date_x_offset = snapshot.date_x_offset;
+        self.starting_z = snapshot.starting_z;
+        self.debug = snapshot.debug;
+        self.trace_debug = snapshot.trace_debug;
+        self.quadtree_debug = snapshot.quadtree_debug;
+        self.fps = snapshot.fps;
+        self.commit_cursor = snapshot.commit_cursor;
+
+        if let Some(ref mut log) = self.commitlog
+            && log.is_seekable()
+        {
+            log.seek_to(0.0);
+            for _ in 0..snapshot.commit_cursor {
+                let _ = log.next_commit();
+            }
+        }
+    }
+}
+
+/// A deterministic snapshot of simulation state for rewind, fast-forward, and replay.
+#[derive(Clone)]
+pub struct SimSnapshot {
+    pub settings: GourceSettings,
+    pub world: World,
+    pub camera: ZoomCamera,
+    pub slider: PositionSlider,
+    pub file_key: FileKey,
+    pub textbox: TextBox,
+    pub cursor: MouseCursor,
+    pub captions: VecDeque<RCaption>,
+    pub active_captions: Vec<RCaption>,
+    pub commitqueue: VecDeque<Commit>,
+    pub track_users: bool,
+    pub manual_camera: bool,
+    pub manual_zoom: bool,
+    pub manual_rotate: bool,
+    pub rotation_remaining_angle: f32,
+    pub rotate_angle: f32,
+    pub cursor_move: Vec2,
+    pub selected_user: Option<UserId>,
+    pub hover_user: Option<UserId>,
+    pub selected_file: Option<FileId>,
+    pub hover_file: Option<FileId>,
+    pub grab_mouse: bool,
+    pub mouse_moved: bool,
+    pub mouse_clicked: bool,
+    pub mouse_dragged: bool,
+    pub mouse_pos: Vec2,
+    pub take_screenshot: bool,
+    pub recolour: bool,
+    pub paused: bool,
+    pub first_read: bool,
+    pub reloaded: bool,
+    pub stop_position_reached: bool,
+    pub is_finished: bool,
+    pub last_percent: f32,
+    pub idle_time: f32,
+    pub currtime: i64,
+    pub lasttime: i64,
+    pub subseconds: f32,
+    pub runtime: f32,
+    pub max_tick_rate: f32,
+    pub frameskip: usize,
+    pub framecount: usize,
+    pub recording: bool,
+    pub splash: f32,
+    pub message: String,
+    pub message_timer: f32,
+    pub display_date: String,
+    pub date_x_offset: f32,
+    pub starting_z: f32,
+    pub debug: bool,
+    pub trace_debug: bool,
+    pub quadtree_debug: bool,
+    pub fps: f32,
+    pub commit_cursor: usize,
 }

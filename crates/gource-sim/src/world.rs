@@ -130,6 +130,7 @@ pub struct DeletedUserInfo {
 }
 
 /// The entire visualizer scene and simulation state.
+#[derive(Clone)]
 pub struct World {
     pub dirs: SlotMap<DirId, DirNode>,
     pub files: SlotMap<FileId, File>,

@@ -2124,6 +2124,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gource-history"
+version = "0.57.0"
+dependencies = [
+ "chrono",
+ "glam",
+ "gource-core",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "gource-settings"
 version = "0.57.0"
 dependencies = [
