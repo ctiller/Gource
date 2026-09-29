@@ -10,8 +10,15 @@ use std::sync::LazyLock;
 static CUSTOM_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     // C++ matches the UTF-8 byte-order mark as bytes (\xEF\xBB\xBF); lines
     // are text here, so it's U+FEFF.
-    Regex::new(r"^(?:\x{FEFF})?([^|]+)\|([^|]*)\|([ADM]?)\|([^|]+)(?:\|#?([a-fA-F0-9]{6}))?")
-        .unwrap()
+    // Supports:
+    // 4 fields: timestamp|username|action|filepath
+    // 5 fields: timestamp|username|action|filepath|colour
+    // 6 fields: timestamp|username|action|filepath|added|removed
+    // 7 fields: timestamp|username|action|filepath|colour|added|removed
+    Regex::new(
+        r"^(?:\x{FEFF})?([^|]+)\|([^|]*)\|([ADM]?)\|([^|]+)(?:\|([^|]*))?(?:\|([^|]*))?(?:\|([^|]*))?$",
+    )
+    .unwrap()
 });
 
 /// Parse colour from a 6-digit hex string (e.g. `RRGGBB` or `#RRGGBB`).
@@ -127,12 +134,83 @@ impl CustomParser {
             return Ok(false); // belongs to next commit
         }
 
-        let colour = caps.get(5).and_then(|m| parse_colour(m.as_str()));
+        let f5 = caps.get(5).map(|m| m.as_str());
+        let f6 = caps.get(6).map(|m| m.as_str());
+        let f7 = caps.get(7).map(|m| m.as_str());
+
+        let mut colour = None;
+        let mut lines_added = None;
+        let mut lines_removed = None;
+        let mut is_binary = false;
+
+        let parse_stat = |s: &str| -> (Option<u32>, bool) {
+            if s == "-" {
+                (None, true)
+            } else {
+                (s.parse::<u32>().ok(), false)
+            }
+        };
+
+        match (f5, f6, f7) {
+            // 7 fields: |colour|added|removed
+            (Some(c), Some(a), Some(r)) => {
+                colour = parse_colour(c);
+                let (a_val, a_bin) = parse_stat(a);
+                let (r_val, r_bin) = parse_stat(r);
+                is_binary = a_bin && r_bin;
+                lines_added = a_val;
+                lines_removed = r_val;
+            }
+            // 6 fields: either |colour|added or |added|removed.
+            // If f5 parses as colour and f6 is a number or '-', it's |colour|added (removed None).
+            // But standard 6-field format without colour is |added|removed.
+            (Some(a), Some(b), None) => {
+                if let Some(col) = parse_colour(a) {
+                    colour = Some(col);
+                    let (val, bin) = parse_stat(b);
+                    lines_added = val;
+                    is_binary = bin;
+                } else {
+                    let (a_val, a_bin) = parse_stat(a);
+                    let (b_val, b_bin) = parse_stat(b);
+                    is_binary = a_bin && b_bin;
+                    lines_added = a_val;
+                    lines_removed = b_val;
+                }
+            }
+            // 5 fields: |colour or |added
+            (Some(a), None, None) => {
+                if let Some(col) = parse_colour(a) {
+                    colour = Some(col);
+                } else {
+                    let (val, bin) = parse_stat(a);
+                    lines_added = val;
+                    is_binary = bin;
+                }
+            }
+            // 4 fields or any other fallback
+            _ => {}
+        }
 
         if let Some(col) = colour {
-            commit.add_file_with_colour(file_path, action, col, options);
+            commit.add_file_with_colour_and_stats(
+                file_path,
+                action,
+                col,
+                lines_added,
+                lines_removed,
+                is_binary,
+                options,
+            );
         } else {
-            commit.add_file(file_path, action, options);
+            commit.add_file_with_stats(
+                file_path,
+                action,
+                lines_added,
+                lines_removed,
+                is_binary,
+                options,
+            );
         }
 
         Ok(true)

@@ -6,10 +6,14 @@ use crate::options::VcsOptions;
 use regex::Regex;
 use std::sync::LazyLock;
 
-/// Build the git log command string.
-/// Matches `GitCommitLog::logCommand()` in `src/formats/git.cpp`.
-pub fn log_command(options: &VcsOptions) -> String {
+/// Build the git log command string with explicit options.
+/// Appends ` --numstat` when `options.include_numstat` is true.
+pub fn log_command_with_options(options: &VcsOptions) -> String {
     let mut cmd = String::from("git log --reverse --raw --encoding=UTF-8 --no-renames");
+
+    if options.include_numstat {
+        cmd.push_str(" --numstat");
+    }
 
     // Check git version or default to including --no-show-signature.
     // Git on modern systems is >= 2.10.
@@ -42,6 +46,12 @@ pub fn log_command(options: &VcsOptions) -> String {
     }
 
     cmd
+}
+
+/// Build the git log command string.
+/// Matches `GitCommitLog::logCommand()` in `src/formats/git.cpp`.
+pub fn log_command(options: &VcsOptions) -> String {
+    log_command_with_options(options)
 }
 
 fn format_timestamp_date(timestamp: i64) -> String {
@@ -117,24 +127,101 @@ where
             continue;
         }
 
+        // Check if this is a numstat line: `<added>\t<removed>\t<path>`
+        let first_col = &line[..tab];
+        let second_part = &line[tab + 1..];
+        if let Some(second_tab) = second_part.find('\t') {
+            let added_str = first_col;
+            let removed_str = &second_part[..second_tab];
+            let raw_path = &second_part[second_tab + 1..];
+
+            let is_binary = added_str == "-" && removed_str == "-";
+            let lines_added = if is_binary {
+                None
+            } else {
+                added_str.parse::<u32>().ok()
+            };
+            let lines_removed = if is_binary {
+                None
+            } else {
+                removed_str.parse::<u32>().ok()
+            };
+
+            if is_binary || (lines_added.is_some() && lines_removed.is_some()) {
+                let resolved_path = parse_git_path(raw_path);
+                if resolved_path.is_empty() {
+                    continue;
+                }
+
+                // If this file was already added (e.g. by --raw), update its stats
+                let mut normalized = gource_core::utf8::filter_utf8(resolved_path.as_bytes());
+                if !normalized.starts_with('/') {
+                    normalized.insert(0, '/');
+                }
+
+                if let Some(existing) = commit.files.iter_mut().find(|f| f.filename == normalized) {
+                    existing.lines_added = lines_added;
+                    existing.lines_removed = lines_removed;
+                    existing.is_binary = is_binary;
+                } else {
+                    commit.add_file_with_stats(
+                        &resolved_path,
+                        "M",
+                        lines_added,
+                        lines_removed,
+                        is_binary,
+                        options,
+                    );
+                }
+                continue;
+            }
+        }
+
+        // Otherwise, handle as raw format line: `:100644 ... <status>\t<path>`
         // One byte, like C++'s substr(tab - 1, 1). Half of a multi-byte
         // character isn't a status; `get` avoids panicking on it.
         let status = line.get(tab - 1..tab).unwrap_or("");
-        // Non-empty: the tab isn't the last byte.
-        let mut file = &line[tab + 1..];
-
-        // Check for and remove double quotes
-        if file.starts_with('"') && file.ends_with('"') {
-            if file.len() <= 2 {
-                continue;
-            }
-            file = &file[1..file.len() - 1];
+        let raw_file = &line[tab + 1..];
+        let resolved_file = parse_git_path(raw_file);
+        if resolved_file.is_empty() {
+            continue;
         }
 
-        commit.add_file(file, status, options);
+        commit.add_file(&resolved_file, status, options);
     }
 
     !commit.username.is_empty()
+}
+
+/// Helper to parse git path (strips quotes and resolves rename `{old => new}`).
+fn parse_git_path(raw: &str) -> String {
+    let mut file = raw;
+    if file.starts_with('"') && file.ends_with('"') {
+        if file.len() <= 2 {
+            return String::new();
+        }
+        file = &file[1..file.len() - 1];
+    }
+
+    // Resolve git numstat renames like:
+    // "prefix/{old => new}/suffix" -> "prefix/new/suffix"
+    // "{old => new}/suffix" -> "new/suffix"
+    // "prefix/{old => new}" -> "prefix/new"
+    // "old => new" -> "new"
+    if let Some(arrow_idx) = file.find(" => ") {
+        if let (Some(brace_open), Some(brace_close)) = (file.find('{'), file.find('}'))
+            && brace_open < arrow_idx
+            && arrow_idx < brace_close
+        {
+            let prefix = &file[..brace_open];
+            let new_part = &file[arrow_idx + 4..brace_close];
+            let suffix = &file[brace_close + 1..];
+            return format!("{prefix}{new_part}{suffix}");
+        }
+        return file[arrow_idx + 4..].to_string();
+    }
+
+    file.to_string()
 }
 
 #[cfg(test)]

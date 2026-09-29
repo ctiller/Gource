@@ -285,6 +285,7 @@ fn test_world_drawing_and_frustum() {
         filename: "/sub/file.rs".to_string(),
         action: FileAction::Add,
         colour: Vec3::new(0.8, 0.2, 0.1),
+        ..Default::default()
     };
     let fid = world.add_file(&cf, &settings).unwrap();
 
@@ -364,11 +365,13 @@ fn test_world_edge_cases() {
         filename: "/a.txt".to_string(),
         action: FileAction::Add,
         colour: Vec3::ONE,
+        ..Default::default()
     };
     let cf2 = CommitFile {
         filename: "/b.txt".to_string(),
         action: FileAction::Add,
         colour: Vec3::ONE,
+        ..Default::default()
     };
     assert!(world.add_file(&cf1, &settings).is_some());
     assert!(world.add_file(&cf2, &settings).is_none());
@@ -378,12 +381,14 @@ fn test_world_edge_cases() {
         filename: "/a.txt".to_string(),
         action: FileAction::Add,
         colour: Vec3::ONE,
+        ..Default::default()
     };
     // Already exists as file, but is_dir checks if filename + "/" is dir
     let cf_sub = CommitFile {
         filename: "/a.txt/nested.txt".to_string(),
         action: FileAction::Add,
         colour: Vec3::ONE,
+        ..Default::default()
     };
     settings.max_files = 10;
     let sub_id = world.add_file(&cf_sub, &settings).unwrap();
@@ -559,16 +564,19 @@ fn test_world_comprehensive_coverage() {
         filename: "/src/core/engine.rs".to_string(),
         action: FileAction::Add,
         colour: Vec3::new(1.0, 0.0, 0.0),
+        ..Default::default()
     };
     let cf2 = CommitFile {
         filename: "/src/core/render.rs".to_string(),
         action: FileAction::Add,
         colour: Vec3::new(0.0, 1.0, 0.0),
+        ..Default::default()
     };
     let cf3 = CommitFile {
         filename: "/src/net/socket.rs".to_string(),
         action: FileAction::Add,
         colour: Vec3::new(0.0, 0.0, 1.0),
+        ..Default::default()
     };
     let fid1 = world.add_file(&cf1, &settings).unwrap();
     let fid2 = world.add_file(&cf2, &settings).unwrap();
@@ -584,11 +592,13 @@ fn test_world_comprehensive_coverage() {
                 filename: cf2.filename.clone(),
                 action: FileAction::Modify,
                 colour: Vec3::new(0.5, 0.5, 0.0),
+                ..Default::default()
             },
             CommitFile {
                 filename: cf3.filename.clone(),
                 action: FileAction::Delete,
                 colour: Vec3::new(1.0, 0.0, 0.0),
+                ..Default::default()
             },
         ],
     };
@@ -662,16 +672,19 @@ fn test_world_deep_tree_forces_and_reparenting() {
         filename: "/a/b/c/d/file1.txt".to_string(),
         action: FileAction::Add,
         colour: Vec3::new(1.0, 0.0, 0.0),
+        ..Default::default()
     };
     let cf_b = CommitFile {
         filename: "/a/b/c/e/file2.txt".to_string(),
         action: FileAction::Add,
         colour: Vec3::new(0.0, 1.0, 0.0),
+        ..Default::default()
     };
     let cf_c = CommitFile {
         filename: "/a/b/x/y/file3.txt".to_string(),
         action: FileAction::Add,
         colour: Vec3::new(0.0, 0.0, 1.0),
+        ..Default::default()
     };
     let f1 = world.add_file(&cf_a, &settings).unwrap();
     let f2 = world.add_file(&cf_b, &settings).unwrap();
@@ -726,6 +739,7 @@ fn test_world_common_path_refactoring_and_root_files() {
         filename: "/README.md".to_string(),
         action: FileAction::Add,
         colour: Vec3::ONE,
+        ..Default::default()
     };
     let rf = world.add_file(&cf_root, &settings).unwrap();
     assert_eq!(world.files[rf].path, "/");
@@ -735,11 +749,13 @@ fn test_world_common_path_refactoring_and_root_files() {
         filename: "/shared/sub1/a.txt".to_string(),
         action: FileAction::Add,
         colour: Vec3::ONE,
+        ..Default::default()
     };
     let cf2 = CommitFile {
         filename: "/shared/sub2/b.txt".to_string(),
         action: FileAction::Add,
         colour: Vec3::ONE,
+        ..Default::default()
     };
     let f1 = world.add_file(&cf1, &settings).unwrap();
     let f2 = world.add_file(&cf2, &settings).unwrap();

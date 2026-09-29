@@ -2092,6 +2092,7 @@ dependencies = [
  "glam",
  "gource-core",
  "gource-draw",
+ "gource-history",
  "gource-settings",
  "gource-sim",
  "gource-vcs",

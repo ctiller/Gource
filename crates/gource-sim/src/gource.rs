@@ -11,21 +11,38 @@ use gource_core::datetime;
 use gource_draw::font::{FontId, TextStyle};
 use gource_draw::list::DrawList;
 use gource_draw::{Gfx, Projection, TextureId};
-use gource_settings::{CameraMode, GourceSettings};
+use gource_history::{
+    ChangeOp, ChurnDecayModel, CohortMode, CommitInput, FileChangeInput, History, HistoryBuilder,
+};
+use gource_settings::{
+    CameraMode, DashboardPanel as SettingsDashboardPanel, FileColourMode, FileSizeMetric,
+    GourceSettings, SettingClass, SettingId, SettingValue, SettingsPatch, TuningSettings,
+};
 use gource_vcs::CommitLog;
 use gource_vcs::commit::{Commit, FileAction};
 use gource_vcs::logmill::LogMill;
 use gource_widgets::caption::RCaption;
 use gource_widgets::cursor::{MouseButtonKind, MouseCursor};
+use gource_widgets::dashboard::{
+    DashboardPanel, DashboardStack, EditorsLeaderboardPanel, SparklinePanel, StackedDiffBarsPanel,
+    TheseusCohortAreaPanel, format_compact_u64,
+};
 use gource_widgets::key::FileKey;
 use gource_widgets::slider::PositionSlider;
 use gource_widgets::textbox::TextBox;
+use gource_widgets::timeline_bar::{
+    TimelineBarData, TimelineBarMarker, TimelineBarWidget, TimelineHit, TimelineHoverCard,
+};
+use gource_widgets::tuning_panel::{
+    TuningHit, TuningPanelData, TuningPanelWidget, TuningRowView, TuningTab,
+};
 
 use crate::app::AppError;
 use crate::camera::{STARTING_Z, ZoomCamera};
 use crate::file::FileId;
 use crate::input::{InputEvent, Key, MouseButton};
 use crate::platform::{PlatformRequest, Viewport};
+use crate::scrubber::{SeekOutcome, SimScrubber};
 use crate::user::UserId;
 use crate::world::{SceneFonts, SceneTextures, World};
 
@@ -276,6 +293,18 @@ pub struct Gource {
     pub commit_cursor: usize,
 
     pub pending_requests: Vec<PlatformRequest>,
+
+    pub history_builder: HistoryBuilder,
+    pub history_dirty: bool,
+    pub history_cache: Option<std::sync::Arc<History>>,
+    pub scrubber: SimScrubber,
+    pub dashboards: DashboardStack,
+    pub timeline_bar: TimelineBarWidget,
+    pub tuning_panel: TuningPanelWidget,
+    pub tuning_settings: TuningSettings,
+    pub tuning_tab: TuningTab,
+    pub tuning_scroll: usize,
+    pub tuning_status: Option<String>,
 }
 
 impl Gource {
@@ -349,8 +378,48 @@ impl Gource {
             max_tick_rate = 1.0 / (gource_framerate as f32);
         }
 
-        // C++ never seeds rand(), so its sequence starts from seed 1.
-        let world = World::new(1, settings.hash_seed);
+        // Seed rand sequence: if settings.seed != 0 use settings.seed, else 1
+        let seed = match settings.seed {
+            Some(s) if s != 0 => s as u64,
+            _ => 1,
+        };
+        let world = World::new(seed, settings.hash_seed);
+        let tuning_settings = TuningSettings {
+            gravity: world.tuning.force_gravity,
+            min_dir_size: world.tuning.min_dir_size,
+            action_distance: world.tuning.action_dist,
+            personal_space: world.tuning.personal_space_dist,
+            beam_length: world.tuning.beam_dist,
+            dir_padding: world.tuning.dir_padding,
+            file_diameter: world.tuning.file_diameter,
+            shadow_strength: world.tuning.shadow_strength,
+            ..Default::default()
+        };
+
+        let history_builder =
+            HistoryBuilder::new(CohortMode::Year, ChurnDecayModel::LifoYoungestFirst);
+        let scrubber = SimScrubber::new(64);
+        let dashboards = DashboardStack::new();
+
+        let mut timeline_bar = TimelineBarWidget::new(fonts.slider, settings.font_scale);
+        timeline_bar.resize(
+            viewport.width,
+            viewport.height,
+            fonts.slider,
+            settings.font_scale,
+        );
+        timeline_bar.show(false);
+
+        let mut tuning_panel =
+            TuningPanelWidget::new(fonts.medium, fonts.slider, settings.font_scale);
+        tuning_panel.resize(
+            viewport.width,
+            viewport.height,
+            fonts.medium,
+            fonts.slider,
+            settings.font_scale,
+        );
+        tuning_panel.show(false);
 
         let mut g = Self {
             settings,
@@ -412,6 +481,17 @@ impl Gource {
             fps: 60.0,
             commit_cursor: 0,
             pending_requests: Vec::new(),
+            history_builder,
+            history_dirty: false,
+            history_cache: None,
+            scrubber,
+            dashboards,
+            timeline_bar,
+            tuning_panel,
+            tuning_settings,
+            tuning_tab: TuningTab::Visual,
+            tuning_scroll: 0,
+            tuning_status: None,
         };
 
         if !g.settings.caption_file.is_empty() {
@@ -459,6 +539,21 @@ impl Gource {
 
         self.textbox
             .set_font(self.fonts.textbox, 18.0 * self.settings.font_scale);
+
+        self.timeline_bar.resize(
+            viewport.width,
+            viewport.height,
+            self.fonts.slider,
+            self.settings.font_scale,
+        );
+
+        self.tuning_panel.resize(
+            viewport.width,
+            viewport.height,
+            self.fonts.medium,
+            self.fonts.slider,
+            self.settings.font_scale,
+        );
 
         for cap in &mut self.captions {
             cap.font = self.fonts.caption;
@@ -574,6 +669,193 @@ impl Gource {
             return datetime::format_local(commit.timestamp, "%A, %d %B, %Y");
         }
         String::new()
+    }
+
+    /// Returns a shared reference-counted historical index snapshot, re-indexing if changes arrived.
+    pub fn ensure_history(&mut self) -> std::sync::Arc<History> {
+        if !self.history_dirty
+            && let Some(ref snap) = self.history_cache
+        {
+            snap.clone()
+        } else {
+            let snap = std::sync::Arc::new(self.history_builder.snapshot());
+            self.scrubber.set_history(&snap, 64);
+            self.history_cache = Some(snap.clone());
+            self.history_dirty = false;
+            snap
+        }
+    }
+
+    /// Build the view model data payload for the tuning panel.
+    pub fn build_tuning_panel_data(&self) -> TuningPanelData {
+        let def_settings = GourceSettings::default();
+        let def_tuning = TuningSettings::default();
+        let mut rows = Vec::new();
+
+        for (idx, &id) in SettingId::all().iter().enumerate() {
+            let class_match = match self.tuning_tab {
+                TuningTab::Visual => id.class() == SettingClass::Visual,
+                TuningTab::Dynamics => id.class() == SettingClass::Dynamics,
+                TuningTab::Timeline => id.class() == SettingClass::Timeline,
+                TuningTab::Structural => id.class() == SettingClass::Structural,
+            };
+            if !class_match {
+                continue;
+            }
+
+            let val = id.read(&self.settings, &self.tuning_settings);
+            let def_val = id.read(&def_settings, &def_tuning);
+            let is_modified = val != def_val;
+            let cli_flag = id.cli_flag().unwrap_or("").to_string();
+            let label = id.name().to_string();
+
+            let row = if let Some((min, max, _)) = id.numeric_range() {
+                let cur_f32 = match val {
+                    SettingValue::F32(f) => f,
+                    SettingValue::U32(u) => u as f32,
+                    SettingValue::Usize(u) => u as f32,
+                    _ => 0.0,
+                };
+                let frac = if max > min {
+                    ((cur_f32 - min) / (max - min)).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                let val_str = format!("{cur_f32:.2}");
+                TuningRowView::new_slider(idx, label, cli_flag, val_str, frac, is_modified)
+            } else if let SettingValue::Bool(b) = val {
+                let val_str = if b {
+                    "true".to_string()
+                } else {
+                    "false".to_string()
+                };
+                TuningRowView::new_toggle(idx, label, cli_flag, val_str, b, is_modified)
+            } else {
+                let val_str = match val {
+                    SettingValue::Vec3(v) => format!("{:.2},{:.2},{:.2}", v.x, v.y, v.z),
+                    SettingValue::Vec4(v) => format!("{:.2},{:.2},{:.2},{:.2}", v.x, v.y, v.z, v.w),
+                    SettingValue::String(s) => s,
+                    SettingValue::OptionalString(s) => s.unwrap_or_default(),
+                    SettingValue::CameraMode(cm) => cm.as_str().to_string(),
+                    SettingValue::FileSizeMetric(m) => m.as_str().to_string(),
+                    SettingValue::FileColourMode(m) => m.as_str().to_string(),
+                    SettingValue::DashboardPeriod(p) => p.as_str().to_string(),
+                    _ => String::new(),
+                };
+                TuningRowView::new_cycle(idx, label, cli_flag, val_str, is_modified)
+            };
+
+            rows.push(row);
+        }
+
+        TuningPanelData {
+            active_tab: self.tuning_tab,
+            rows,
+            scroll_offset: self.tuning_scroll,
+            status_message: self.tuning_status.clone(),
+        }
+    }
+
+    /// Build the view model data payload for the timeline bar.
+    pub fn build_timeline_bar_data(&mut self) -> TimelineBarData {
+        let hist = self.ensure_history();
+        let mut buckets = Vec::new();
+        let mut markers = Vec::new();
+
+        if let Some(ref tl) = self.scrubber.timeline {
+            for b in &tl.buckets {
+                buckets.push((
+                    b.commits,
+                    (b.lines_added.saturating_add(b.lines_removed)) as u32,
+                ));
+            }
+            for m in &tl.markers {
+                let frac = tl.time_to_fraction(m.timestamp);
+                let col = match m.kind {
+                    gource_history::MarkerKind::Tag => Vec4::new(0.95, 0.75, 0.2, 1.0),
+                    gource_history::MarkerKind::Caption => Vec4::new(0.3, 0.7, 1.0, 1.0),
+                    gource_history::MarkerKind::Milestone => Vec4::new(0.85, 0.4, 0.9, 1.0),
+                };
+                markers.push(TimelineBarMarker::new(frac, &m.label, col));
+            }
+        }
+
+        let direction_label = match self.scrubber.state.playback_direction {
+            gource_history::PlaybackDirection::Forward => {
+                if self.paused {
+                    "⏸".to_string()
+                } else {
+                    format!("▶ {:.1}x", self.settings.time_scale)
+                }
+            }
+            gource_history::PlaybackDirection::Reverse => {
+                if self.paused {
+                    "⏸".to_string()
+                } else {
+                    format!("◀ {:.1}x", self.settings.time_scale)
+                }
+            }
+        };
+
+        let hover_info = if self.timeline_bar.hovered {
+            let mouse_x = self.mouse_pos.x;
+            let (t_min, t_max, _, _) = self.timeline_bar.track_rect();
+            if mouse_x >= t_min && mouse_x <= t_max {
+                let frac = self.timeline_bar.frac_at_x(mouse_x);
+                self.scrubber.timeline.as_ref().map(|tl| {
+                    let info = tl.hover_summary(&hist, frac);
+                    let card = TimelineHoverCard::new(
+                        frac,
+                        datetime::format_local(info.timestamp, "%Y-%m-%d"),
+                        info.bucket_commits,
+                    )
+                    .with_diff(info.bucket_lines_added, info.bucket_lines_removed);
+
+                    let top_eds: Vec<(String, Vec4, u32)> = info
+                        .top_editors
+                        .iter()
+                        .map(|(name, count)| {
+                            let c = self.world.hasher.colour_hash(name);
+                            (name.clone(), Vec4::new(c.x, c.y, c.z, 1.0), *count)
+                        })
+                        .collect();
+                    card.with_top_editors(&top_eds)
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        TimelineBarData {
+            buckets,
+            markers,
+            playhead_frac: self.scrubber.state.playhead_fraction,
+            seeking_target_frac: self.scrubber.state.target_fraction,
+            clip_in_frac: self.scrubber.state.clip_in.unwrap_or(0.0),
+            clip_out_frac: self.scrubber.state.clip_out.unwrap_or(1.0),
+            direction_label,
+            current_date: self.display_date.clone(),
+            hover_info,
+        }
+    }
+
+    /// Apply an interactive settings patch to the simulation, updating physics tuning,
+    /// dropping invalidated checkpoints, and rematerializing the scene tree if structural.
+    pub fn apply_settings_patch(
+        &mut self,
+        patch: &SettingsPatch,
+        viewport: Viewport,
+        gfx: &mut Gfx,
+    ) -> Vec<SettingClass> {
+        let classes = patch.apply(&mut self.settings, &mut self.tuning_settings);
+        self.world.apply_tuning(&self.tuning_settings);
+        self.scrubber.on_patch_applied(&classes, self.currtime);
+        if classes.contains(&SettingClass::Structural) {
+            let _ = self.seek_to_timestamp(self.currtime, 0, viewport, gfx);
+        }
+        classes
     }
 
     /// Select or deselect a user.
@@ -759,6 +1041,26 @@ impl Gource {
                     return;
                 }
 
+                if *key == Key::F1 && !*repeat {
+                    self.tuning_panel.toggle();
+                    return;
+                }
+
+                if *key == Key::F2 && !*repeat {
+                    self.timeline_bar.toggle();
+                    return;
+                }
+
+                if *key == Key::F3 && !*repeat {
+                    self.settings.hide_dashboards = !self.settings.hide_dashboards;
+                    return;
+                }
+
+                if *key == Key::F4 && !*repeat {
+                    self.scrubber.state.toggle_direction();
+                    return;
+                }
+
                 if *key == Key::F11 && !*repeat {
                     self.pending_requests.push(PlatformRequest::ToggleFrameless);
                     return;
@@ -931,6 +1233,8 @@ impl Gource {
                 self.mouse_moved = true;
                 self.cursor.update_pos(*pos);
 
+                self.timeline_bar.hovered = self.timeline_bar.bounds.contains(*pos);
+
                 if !self.settings.hide_progress
                     && let Some(p) = self.slider.mouse_over(*pos)
                 {
@@ -958,6 +1262,238 @@ impl Gource {
                     if *button == MouseButton::Left {
                         self.cursor.set_left_click(true);
                         self.mouse_clicked = true;
+
+                        // 1. Tuning Panel hit test
+                        if self.tuning_panel.is_visible() {
+                            let tuning_data = self.build_tuning_panel_data();
+                            let hit = self.tuning_panel.hit_test(*pos, &tuning_data);
+                            match hit {
+                                TuningHit::Close => {
+                                    self.tuning_panel.show(false);
+                                    return;
+                                }
+                                TuningHit::Tab(tab) => {
+                                    self.tuning_tab = tab;
+                                    self.tuning_scroll = 0;
+                                    return;
+                                }
+                                TuningHit::RowReset { setting_index } => {
+                                    if let Some(&id) = SettingId::all().get(setting_index) {
+                                        let def_s = GourceSettings::default();
+                                        let def_t = TuningSettings::default();
+                                        let def_val = id.read(&def_s, &def_t);
+                                        let mut patch = SettingsPatch::new();
+                                        patch.push(id, def_val);
+                                        let _ = patch
+                                            .apply(&mut self.settings, &mut self.tuning_settings);
+                                        self.world.apply_tuning(&self.tuning_settings);
+                                    }
+                                    return;
+                                }
+                                TuningHit::RowSlider {
+                                    setting_index,
+                                    frac,
+                                } => {
+                                    if let Some(&id) = SettingId::all().get(setting_index)
+                                        && let Some((min, max, _)) = id.numeric_range()
+                                    {
+                                        let new_f32 = min + frac * (max - min);
+                                        let val =
+                                            match id.read(&self.settings, &self.tuning_settings) {
+                                                SettingValue::U32(_) => {
+                                                    SettingValue::U32(new_f32.round() as u32)
+                                                }
+                                                SettingValue::Usize(_) => {
+                                                    SettingValue::Usize(new_f32.round() as usize)
+                                                }
+                                                _ => SettingValue::F32(new_f32),
+                                            };
+                                        let mut patch = SettingsPatch::new();
+                                        patch.push(id, val);
+                                        let _ = patch
+                                            .apply(&mut self.settings, &mut self.tuning_settings);
+                                        self.world.apply_tuning(&self.tuning_settings);
+                                    }
+                                    return;
+                                }
+                                TuningHit::RowToggle { setting_index } => {
+                                    if let Some(&id) = SettingId::all().get(setting_index) {
+                                        let cur =
+                                            match id.read(&self.settings, &self.tuning_settings) {
+                                                SettingValue::Bool(b) => b,
+                                                _ => false,
+                                            };
+                                        let mut patch = SettingsPatch::new();
+                                        patch.push(id, SettingValue::Bool(!cur));
+                                        let _ = patch
+                                            .apply(&mut self.settings, &mut self.tuning_settings);
+                                        self.world.apply_tuning(&self.tuning_settings);
+                                    }
+                                    return;
+                                }
+                                TuningHit::RowCycle { setting_index } => {
+                                    if let Some(&id) = SettingId::all().get(setting_index) {
+                                        let next_val = match id {
+                                            SettingId::CameraMode => {
+                                                let next = match self.settings.camera_mode {
+                                                    CameraMode::Overview => CameraMode::Track,
+                                                    CameraMode::Track => CameraMode::Overview,
+                                                };
+                                                Some(SettingValue::CameraMode(next))
+                                            }
+                                            SettingId::FileColourMode => {
+                                                let next = match self.settings.file_colour_mode {
+                                                    FileColourMode::Extension => {
+                                                        FileColourMode::Age
+                                                    }
+                                                    FileColourMode::Age => FileColourMode::Churn,
+                                                    FileColourMode::Churn => FileColourMode::Cohort,
+                                                    FileColourMode::Cohort => {
+                                                        FileColourMode::Extension
+                                                    }
+                                                };
+                                                Some(SettingValue::FileColourMode(next))
+                                            }
+                                            SettingId::FileSizeMetric => {
+                                                let next = match self.settings.file_size_metric {
+                                                    FileSizeMetric::None => FileSizeMetric::Size,
+                                                    FileSizeMetric::Size => FileSizeMetric::Lines,
+                                                    FileSizeMetric::Lines => FileSizeMetric::Diff,
+                                                    FileSizeMetric::Diff => FileSizeMetric::Churn,
+                                                    FileSizeMetric::Churn => FileSizeMetric::None,
+                                                };
+                                                Some(SettingValue::FileSizeMetric(next))
+                                            }
+                                            SettingId::DashboardPeriod => {
+                                                let next = match self.settings.dashboard_period {
+                                                    gource_settings::DashboardPeriod::Day => {
+                                                        gource_settings::DashboardPeriod::Week
+                                                    }
+                                                    gource_settings::DashboardPeriod::Week => {
+                                                        gource_settings::DashboardPeriod::Month
+                                                    }
+                                                    gource_settings::DashboardPeriod::Month => {
+                                                        gource_settings::DashboardPeriod::Year
+                                                    }
+                                                    gource_settings::DashboardPeriod::Year => {
+                                                        gource_settings::DashboardPeriod::Day
+                                                    }
+                                                };
+                                                Some(SettingValue::DashboardPeriod(next))
+                                            }
+                                            _ => None,
+                                        };
+                                        if let Some(val) = next_val {
+                                            let mut patch = SettingsPatch::new();
+                                            patch.push(id, val);
+                                            let _ = patch.apply(
+                                                &mut self.settings,
+                                                &mut self.tuning_settings,
+                                            );
+                                            self.world.apply_tuning(&self.tuning_settings);
+                                        }
+                                    }
+                                    return;
+                                }
+                                TuningHit::SaveConfig => {
+                                    self.tuning_status = Some("Saved configuration".to_string());
+                                    return;
+                                }
+                                TuningHit::CopyCli => {
+                                    let flags = self.settings.to_cli_args().join(" ");
+                                    self.tuning_status = Some(format!("Flags: {flags}"));
+                                    return;
+                                }
+                                TuningHit::ResetAll => {
+                                    self.settings = GourceSettings::default();
+                                    self.tuning_settings = TuningSettings::default();
+                                    self.world.apply_tuning(&self.tuning_settings);
+                                    self.tuning_status = Some("Reset all settings".to_string());
+                                    return;
+                                }
+                                TuningHit::PanelBackground => {
+                                    return;
+                                }
+                                TuningHit::None => {}
+                            }
+                        }
+
+                        // 2. Timeline Bar hit test
+                        if self.timeline_bar.is_visible() {
+                            let timeline_data = self.build_timeline_bar_data();
+                            let hit = self.timeline_bar.hit_test(*pos, Some(&timeline_data));
+                            match hit {
+                                TimelineHit::DirectionButton => {
+                                    self.scrubber.state.toggle_direction();
+                                    return;
+                                }
+                                TimelineHit::Track(frac) => {
+                                    let hist = self.ensure_history();
+                                    let total_commits = hist.commit_count();
+                                    self.scrubber.state.set_fraction(frac, total_commits);
+                                    if let Some(ref tl) = self.scrubber.timeline {
+                                        let target_ts = tl.fraction_to_time(frac);
+                                        if let Some(tree_snap) = hist.state_at_timestamp(target_ts)
+                                        {
+                                            self.world.materialize_from_snapshot(
+                                                &tree_snap,
+                                                &hist,
+                                                &self.settings,
+                                                30,
+                                            );
+                                            self.currtime = target_ts;
+                                            self.lasttime = target_ts;
+                                            self.subseconds = 0.0;
+                                            self.commit_cursor = tree_snap.commit_index + 1;
+                                            self.commitqueue.clear();
+                                            self.stop_position_reached = false;
+                                            self.idle_time = 0.0;
+                                        }
+                                    }
+                                    return;
+                                }
+                                TimelineHit::ClipInHandle => {
+                                    let frac = self.timeline_bar.frac_at_x(pos.x);
+                                    self.scrubber.state.set_clip_in(frac);
+                                    return;
+                                }
+                                TimelineHit::ClipOutHandle => {
+                                    let frac = self.timeline_bar.frac_at_x(pos.x);
+                                    self.scrubber.state.set_clip_out(frac);
+                                    return;
+                                }
+                                TimelineHit::Marker(idx) => {
+                                    if let Some(m) = timeline_data.markers.get(idx) {
+                                        let frac = m.frac;
+                                        let hist = self.ensure_history();
+                                        let total_commits = hist.commit_count();
+                                        self.scrubber.state.set_fraction(frac, total_commits);
+                                        if let Some(ref tl) = self.scrubber.timeline {
+                                            let target_ts = tl.fraction_to_time(frac);
+                                            if let Some(tree_snap) =
+                                                hist.state_at_timestamp(target_ts)
+                                            {
+                                                self.world.materialize_from_snapshot(
+                                                    &tree_snap,
+                                                    &hist,
+                                                    &self.settings,
+                                                    30,
+                                                );
+                                                self.currtime = target_ts;
+                                                self.lasttime = target_ts;
+                                                self.subseconds = 0.0;
+                                                self.commit_cursor = tree_snap.commit_index + 1;
+                                                self.commitqueue.clear();
+                                                self.stop_position_reached = false;
+                                                self.idle_time = 0.0;
+                                            }
+                                        }
+                                    }
+                                    return;
+                                }
+                                TimelineHit::None => {}
+                            }
+                        }
 
                         if !self.settings.hide_progress
                             && let Some(p) = self.slider.click(*pos)
@@ -1029,6 +1565,32 @@ impl Gource {
                 self.stop_position_reached = true;
                 break;
             }
+            let files_input: Vec<FileChangeInput> = commit
+                .files
+                .iter()
+                .map(|cf| {
+                    let op = match cf.action {
+                        FileAction::Add => ChangeOp::Add,
+                        FileAction::Modify => ChangeOp::Modify,
+                        FileAction::Delete => ChangeOp::Delete,
+                        _ => ChangeOp::Modify,
+                    };
+                    FileChangeInput {
+                        path: cf.filename.clone(),
+                        op,
+                        lines_added: cf.lines_added.unwrap_or(0),
+                        lines_removed: cf.lines_removed.unwrap_or(0),
+                        byte_size: None,
+                        is_binary: false,
+                    }
+                })
+                .collect();
+            self.history_builder.add_commit(CommitInput {
+                timestamp: commit.timestamp,
+                username: commit.username.clone(),
+                files: files_input,
+            });
+            self.history_dirty = true;
             self.commit_cursor += 1;
             self.commitqueue.push_back(commit);
         }
@@ -1204,6 +1766,8 @@ impl Gource {
 
         self.file_key.logic(dt, viewport.height as f32);
         self.slider.logic(dt);
+        self.timeline_bar.logic(dt);
+        self.tuning_panel.logic(dt);
 
         // Apply tree rotation
         if self.rotate_angle != 0.0 {
@@ -1224,6 +1788,10 @@ impl Gource {
             self.recolour = false;
         }
 
+        if self.settings.file_size_metric != FileSizeMetric::None {
+            self.world.update_weighted_layout();
+        }
+
         if self.paused {
             self.world.update_bounds();
             self.world.interact_users();
@@ -1231,6 +1799,16 @@ impl Gource {
             self.update_camera(dt, viewport);
             return Ok(());
         }
+
+        // Reverse playback branch
+        if self.scrubber.state.playback_direction == gource_history::PlaybackDirection::Reverse {
+            let _ = self.step_reverse(viewport, gfx);
+            return Ok(());
+        }
+
+        self.scrubber.push_reverse_frame(self.snapshot());
+        self.maybe_record_checkpoint();
+        self.scrubber.sync_playhead_from_time(self.currtime);
 
         // Fetch commits
         if self.commitqueue.is_empty() {
@@ -1849,6 +2427,143 @@ impl Gource {
             );
         }
 
+        // Dashboards stack
+        if !self.settings.hide_dashboards && !self.settings.dashboards.is_empty() {
+            self.dashboards.clear();
+            let hist = self.ensure_history();
+            let playhead_commit_idx = if hist.is_empty() {
+                0
+            } else {
+                match hist
+                    .commits
+                    .binary_search_by_key(&self.currtime, |c| c.timestamp)
+                {
+                    Ok(idx) => idx,
+                    Err(idx) => {
+                        if idx == 0 {
+                            0
+                        } else {
+                            idx - 1
+                        }
+                    }
+                }
+            };
+
+            let period_secs = match self.settings.dashboard_period {
+                gource_settings::DashboardPeriod::Day => 86400,
+                gource_settings::DashboardPeriod::Week => 7 * 86400,
+                gource_settings::DashboardPeriod::Month => 30 * 86400,
+                gource_settings::DashboardPeriod::Year => 365 * 86400,
+            };
+            let window_secs = (self.settings.dashboard_window_days as i64) * 86400;
+            let series_data = gource_history::DashboardSeriesData::extract(
+                &hist,
+                playhead_commit_idx,
+                period_secs,
+                window_secs,
+                20,
+            );
+
+            for panel_kind in &self.settings.dashboards {
+                match panel_kind {
+                    SettingsDashboardPanel::Lines => {
+                        let p = SparklinePanel::new(
+                            "Lines of Code",
+                            format_compact_u64(series_data.total_lines),
+                        )
+                        .with_values(&series_data.lines_sparkline)
+                        .with_delta(
+                            format!("{:+}", series_data.lines_delta_in_window),
+                            series_data.lines_delta_in_window >= 0,
+                        );
+                        self.dashboards.add_panel(DashboardPanel::Sparkline(p));
+                    }
+                    SettingsDashboardPanel::Diff => {
+                        let diffs: Vec<(u64, u64)> = series_data
+                            .diff_bars
+                            .iter()
+                            .map(|&(a, r)| (a as u64, r as u64))
+                            .collect();
+                        let p = StackedDiffBarsPanel::new(
+                            "Code Churn",
+                            format!(
+                                "+{} -{}",
+                                format_compact_u64(diffs.iter().map(|d| d.0).sum()),
+                                format_compact_u64(diffs.iter().map(|d| d.1).sum())
+                            ),
+                        )
+                        .with_diffs(&diffs);
+                        self.dashboards
+                            .add_panel(DashboardPanel::StackedDiffBars(p));
+                    }
+                    SettingsDashboardPanel::Theseus => {
+                        let cohort_colors: Vec<glam::Vec3> =
+                            (0..series_data.theseus_cohorts.cohort_labels.len())
+                                .map(DashboardStack::cohort_palette)
+                                .collect();
+                        let p = TheseusCohortAreaPanel::new("Git-of-Theseus")
+                            .with_cohorts(
+                                &series_data.theseus_cohorts.cohort_labels,
+                                &cohort_colors,
+                                &series_data.theseus_cohorts.samples,
+                            )
+                            .with_analytics(
+                                series_data.theseus_cohorts.half_life_days,
+                                Some(series_data.theseus_cohorts.churn_rate),
+                            );
+                        self.dashboards.add_panel(DashboardPanel::TheseusCohort(p));
+                    }
+                    SettingsDashboardPanel::Editors => {
+                        let p = EditorsLeaderboardPanel::new(
+                            "Top Contributors",
+                            series_data.active_editors_count,
+                        )
+                        .with_rows(&series_data.top_editors);
+                        self.dashboards
+                            .add_panel(DashboardPanel::EditorsLeaderboard(p));
+                    }
+                    SettingsDashboardPanel::Commits => {
+                        let p = SparklinePanel::new(
+                            "Commits",
+                            format_compact_u64(series_data.commits_in_window as u64),
+                        )
+                        .with_values(&series_data.commits_per_period)
+                        .with_line_colour(glam::Vec3::new(0.95, 0.65, 0.2));
+                        self.dashboards.add_panel(DashboardPanel::Sparkline(p));
+                    }
+                    SettingsDashboardPanel::Churn => {
+                        let p = SparklinePanel::new(
+                            "Files",
+                            format_compact_u64(series_data.total_files as u64),
+                        )
+                        .with_values(&series_data.files_sparkline)
+                        .with_line_colour(glam::Vec3::new(0.85, 0.4, 0.9));
+                        self.dashboards.add_panel(DashboardPanel::Sparkline(p));
+                    }
+                }
+            }
+
+            self.dashboards.draw(
+                gfx,
+                list,
+                Some(self.fonts.base),
+                viewport.width as f32,
+                self.settings.font_scale,
+            );
+        }
+
+        // Timeline Bar
+        if self.timeline_bar.is_visible() {
+            let timeline_data = self.build_timeline_bar_data();
+            self.timeline_bar.draw(&timeline_data, gfx, list);
+        }
+
+        // Tuning Panel
+        if self.tuning_panel.is_visible() {
+            let tuning_data = self.build_tuning_panel_data();
+            self.tuning_panel.draw(&tuning_data, gfx, list);
+        }
+
         self.mouse_moved = false;
         self.mouse_clicked = false;
 
@@ -2025,6 +2740,136 @@ impl Gource {
                 let _ = log.next_commit();
             }
         }
+    }
+
+    /// Captures a checkpoint if the runtime interval threshold has passed or if no checkpoints exist.
+    pub fn maybe_record_checkpoint(&mut self) {
+        if self.currtime > 0
+            && (self.scrubber.checkpoints.is_empty()
+                || (self.runtime - self.scrubber.last_checkpoint_runtime).abs()
+                    >= self.scrubber.checkpoint_interval_sim_secs)
+        {
+            self.scrubber.checkpoints.insert(self.snapshot());
+            self.scrubber.last_checkpoint_runtime = self.runtime;
+        }
+    }
+
+    /// Seeks the simulation to the specified timestamp.
+    ///
+    /// 1. Clears the reverse buffer.
+    /// 2. If a checkpoint exists before `target_ts` within `max_replay_ticks` of simulation logic,
+    ///    restores the checkpoint and fast-forwards through simulation ticks up to `target_ts`.
+    /// 3. Otherwise, if `history` is available, materializes the complete scene tree from a
+    ///    [`gource_history::TreeSnapshot`], clears commit queues, rebuilds file counts, and
+    ///    assigns user textures.
+    /// 4. Otherwise, falls back to legacy seek.
+    pub fn seek_to_timestamp(
+        &mut self,
+        target_ts: i64,
+        max_replay_ticks: usize,
+        viewport: Viewport,
+        gfx: &mut Gfx,
+    ) -> Result<SeekOutcome, AppError> {
+        self.scrubber.clear_reverse_buffer();
+
+        // 1. Try restoring from nearest checkpoint before target_ts
+        if let Some(cp) = self.scrubber.checkpoints.nearest_before_time(target_ts) {
+            let cp_ts = cp.currtime;
+            let days_per_second = self.settings.days_per_second.max(0.0001);
+            let time_diff = (target_ts - cp_ts).max(0);
+            let sim_secs = time_diff as f32 / (days_per_second * 86400.0);
+            let tick_rate = self.max_tick_rate.max(1.0 / 60.0);
+            let estimated_ticks = (sim_secs / tick_rate).ceil() as usize;
+
+            if cp_ts <= target_ts && estimated_ticks <= max_replay_ticks {
+                let cp_snapshot = cp.clone();
+                self.restore(&cp_snapshot);
+
+                let mut ticks_replayed = 0;
+                while self.currtime < target_ts
+                    && !self.is_finished
+                    && ticks_replayed < max_replay_ticks
+                {
+                    self.scrubber.push_reverse_frame(self.snapshot());
+                    self.logic(self.max_tick_rate, viewport, gfx)?;
+                    self.runtime += self.max_tick_rate;
+                    ticks_replayed += 1;
+                }
+
+                self.scrubber.sync_playhead_from_time(self.currtime);
+                return Ok(SeekOutcome::RestoredAndReplayed {
+                    checkpoint_ts: cp_ts,
+                    ticks_replayed,
+                });
+            }
+        }
+
+        // 2. Fall back to materializing from History TreeSnapshot
+        let hist = self.ensure_history();
+        if !hist.is_empty()
+            && let Some(tree_snap) = hist.state_at_timestamp(target_ts)
+        {
+            let commit_index = tree_snap.commit_index;
+            self.world
+                .materialize_from_snapshot(&tree_snap, &hist, &self.settings, 30);
+
+            self.currtime = target_ts;
+            self.lasttime = target_ts;
+            self.subseconds = 0.0;
+            self.commit_cursor = commit_index + 1;
+            self.commitqueue.clear();
+            self.stop_position_reached = false;
+            self.idle_time = 0.0;
+
+            // Rebuild file_key counts from world.files
+            self.file_key.clear();
+            for file in self.world.files.values() {
+                if !file.pawn.is_hidden() {
+                    let ext = file.ext.clone();
+                    let col = file.file_colour;
+                    let font_id = self.fonts.medium;
+                    self.file_key
+                        .inc(&ext, col, |text| gfx.text_width(font_id, text));
+                }
+            }
+
+            // Assign textures for newly materialized users
+            for uid in std::mem::take(&mut self.world.new_users) {
+                self.assign_user_image(uid, gfx)?;
+            }
+
+            let snap = self.snapshot();
+            self.scrubber.checkpoints.insert(snap);
+            self.scrubber.last_checkpoint_runtime = self.runtime;
+            self.scrubber.sync_playhead_from_time(self.currtime);
+
+            return Ok(SeekOutcome::MaterializedFromHistory { commit_index });
+        }
+
+        // 3. Fallback
+        Ok(SeekOutcome::FallbackLegacySeek)
+    }
+
+    /// Steps playback backward by one frame or seeks slightly backward.
+    pub fn step_reverse(&mut self, viewport: Viewport, gfx: &mut Gfx) -> Result<bool, AppError> {
+        if let Some(snap) = self.scrubber.pop_reverse_frame() {
+            self.restore(&snap);
+            self.scrubber.sync_playhead_from_time(self.currtime);
+            return Ok(true);
+        }
+
+        if self.currtime > 0 {
+            let days_per_second = self.settings.days_per_second.max(0.0001);
+            let time_delta =
+                ((self.max_tick_rate as f64 * 86400.0 * days_per_second as f64) as i64).max(1);
+            let target_ts = (self.currtime - time_delta).max(0);
+
+            let outcome = self.seek_to_timestamp(target_ts, 120, viewport, gfx)?;
+            let moved = !matches!(outcome, SeekOutcome::FallbackLegacySeek);
+            return Ok(moved);
+        }
+
+        Ok(false)
     }
 }
 

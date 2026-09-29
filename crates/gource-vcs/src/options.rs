@@ -52,4 +52,6 @@ pub struct VcsOptions {
     pub filters: CommitFilters,
     /// Seed for file colours derived from extensions.
     pub hasher: StringHasher,
+    /// Whether to include numstat when reading git logs.
+    pub include_numstat: bool,
 }

@@ -17,6 +17,7 @@ wayland = ["bevy/wayland"]
 bevy = { workspace = true }
 gource-core = { workspace = true }
 gource-draw = { workspace = true }
+gource-history = { path = "../gource-history" }
 gource-settings = { workspace = true }
 gource-sim = { workspace = true }
 gource-vcs = { workspace = true }

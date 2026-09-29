@@ -3410,6 +3410,7 @@ fn test_commit_and_filters_thorough() {
             filename: format!("/path/{}.txt", a.code()),
             action: a.clone(),
             colour: glam::Vec3::ONE,
+            ..Default::default()
         };
         assert_eq!(cf.action.code(), a.code());
         assert!(cf.filename.starts_with('/'));
@@ -3649,6 +3650,7 @@ fn test_coverage_boost_more() {
         filename: "/test.txt".to_string(),
         action: FileAction::Add,
         colour: glam::Vec3::ZERO,
+        ..Default::default()
     };
     assert_eq!(cf.filename, "/test.txt");
     assert_eq!(cf.action, FileAction::Add);
@@ -3756,4 +3758,268 @@ fn test_coverage_boost_remaining() {
         // fetch_blocking returns Err("failed to generate log file" or similar when check_format fails)
         assert!(clog_empty.is_err());
     }
+}
+
+#[test]
+fn test_git_numstat_and_renames() {
+    let mut opts = VcsOptions::default();
+    opts.include_numstat = true;
+
+    let cmd = formats::git::log_command_with_options(&opts);
+    assert!(cmd.contains(" --numstat"));
+
+    let lines = [
+        "user:Alice",
+        "1600000000",
+        ":100644 100644 1111 2222 M\tsrc/main.rs",
+        ":100644 100644 1111 2222 A\tsrc/new.rs",
+        "10\t5\tsrc/main.rs",
+        "-\t-\tassets/logo.png",
+        "20\t0\tsrc/{old => new}/util.rs",
+        "15\t3\tsrc/component/{prev => next}.rs",
+        "5\t2\troot_old => root_new",
+    ];
+
+    let mut idx = 0;
+    let mut commit = Commit::default();
+    let ok = formats::git::parse_commit(
+        |l: &mut String| {
+            if idx < lines.len() {
+                *l = lines[idx].to_string();
+                idx += 1;
+                true
+            } else {
+                false
+            }
+        },
+        &mut commit,
+        &opts,
+    );
+    assert!(ok);
+    assert_eq!(commit.username, "Alice");
+    assert_eq!(commit.timestamp, 1600000000);
+
+    // src/main.rs had both --raw and --numstat lines:
+    let main_f = commit
+        .files
+        .iter()
+        .find(|f| f.filename == "/src/main.rs")
+        .unwrap();
+    assert_eq!(main_f.action, FileAction::Modify);
+    assert_eq!(main_f.lines_added, Some(10));
+    assert_eq!(main_f.lines_removed, Some(5));
+    assert!(!main_f.is_binary);
+
+    // assets/logo.png was binary:
+    let bin_f = commit
+        .files
+        .iter()
+        .find(|f| f.filename == "/assets/logo.png")
+        .unwrap();
+    assert!(bin_f.is_binary);
+    assert_eq!(bin_f.lines_added, None);
+    assert_eq!(bin_f.lines_removed, None);
+
+    // Renames:
+    let util_f = commit
+        .files
+        .iter()
+        .find(|f| f.filename == "/src/new/util.rs")
+        .unwrap();
+    assert_eq!(util_f.lines_added, Some(20));
+    assert_eq!(util_f.lines_removed, Some(0));
+
+    let comp_f = commit
+        .files
+        .iter()
+        .find(|f| f.filename == "/src/component/next.rs")
+        .unwrap();
+    assert_eq!(comp_f.lines_added, Some(15));
+    assert_eq!(comp_f.lines_removed, Some(3));
+
+    let root_f = commit
+        .files
+        .iter()
+        .find(|f| f.filename == "/root_new")
+        .unwrap();
+    assert_eq!(root_f.lines_added, Some(5));
+    assert_eq!(root_f.lines_removed, Some(2));
+}
+
+#[test]
+fn test_custom_parser_stats_columns() {
+    let opts = VcsOptions::default();
+
+    // 4 fields
+    let mut c4 = Commit::default();
+    assert!(
+        formats::custom::CustomParser::parse_commit_entry("1000|bob|M|/f4.rs", &mut c4, &opts)
+            .unwrap()
+    );
+    assert_eq!(c4.files[0].lines_added, None);
+    assert_eq!(c4.files[0].lines_removed, None);
+    assert!(!c4.files[0].is_binary);
+
+    // 5 fields (colour)
+    let mut c5_col = Commit::default();
+    assert!(
+        formats::custom::CustomParser::parse_commit_entry(
+            "1000|bob|M|/f5.rs|ff0000",
+            &mut c5_col,
+            &opts
+        )
+        .unwrap()
+    );
+    assert_eq!(c5_col.files[0].lines_added, None);
+
+    // 5 fields (added stat)
+    let mut c5_stat = Commit::default();
+    assert!(
+        formats::custom::CustomParser::parse_commit_entry(
+            "1000|bob|M|/f5b.rs|42",
+            &mut c5_stat,
+            &opts
+        )
+        .unwrap()
+    );
+    assert_eq!(c5_stat.files[0].lines_added, Some(42));
+    assert_eq!(c5_stat.files[0].lines_removed, None);
+
+    // 6 fields (added | removed)
+    let mut c6_stats = Commit::default();
+    assert!(
+        formats::custom::CustomParser::parse_commit_entry(
+            "1000|bob|M|/f6.rs|10|5",
+            &mut c6_stats,
+            &opts
+        )
+        .unwrap()
+    );
+    assert_eq!(c6_stats.files[0].lines_added, Some(10));
+    assert_eq!(c6_stats.files[0].lines_removed, Some(5));
+    assert!(!c6_stats.files[0].is_binary);
+
+    // 6 fields (binary -|-)
+    let mut c6_bin = Commit::default();
+    assert!(
+        formats::custom::CustomParser::parse_commit_entry(
+            "1000|bob|M|/f6b.png|-|-",
+            &mut c6_bin,
+            &opts
+        )
+        .unwrap()
+    );
+    assert!(c6_bin.files[0].is_binary);
+    assert_eq!(c6_bin.files[0].lines_added, None);
+
+    // 6 fields (colour | added)
+    let mut c6_col_added = Commit::default();
+    assert!(
+        formats::custom::CustomParser::parse_commit_entry(
+            "1000|bob|M|/f6c.rs|00ff00|30",
+            &mut c6_col_added,
+            &opts
+        )
+        .unwrap()
+    );
+    assert_eq!(c6_col_added.files[0].lines_added, Some(30));
+
+    // 7 fields (colour | added | removed)
+    let mut c7 = Commit::default();
+    assert!(
+        formats::custom::CustomParser::parse_commit_entry(
+            "1000|bob|M|/f7.rs|0000ff|100|20",
+            &mut c7,
+            &opts
+        )
+        .unwrap()
+    );
+    assert_eq!(c7.files[0].lines_added, Some(100));
+    assert_eq!(c7.files[0].lines_removed, Some(20));
+    assert!(!c7.files[0].is_binary);
+
+    // 7 fields (colour | - | - binary)
+    let mut c7_bin = Commit::default();
+    assert!(
+        formats::custom::CustomParser::parse_commit_entry(
+            "1000|bob|M|/f7b.bin|ffffff|-|-",
+            &mut c7_bin,
+            &opts
+        )
+        .unwrap()
+    );
+    assert!(c7_bin.files[0].is_binary);
+
+    // Test write_custom_log stats output with in-memory buffer
+    let commit = Commit {
+        timestamp: 12345,
+        username: "alice".to_string(),
+        files: vec![
+            CommitFile {
+                filename: "/bin.dat".to_string(),
+                action: FileAction::Add,
+                colour: glam::Vec3::ONE,
+                lines_added: None,
+                lines_removed: None,
+                is_binary: true,
+            },
+            CommitFile {
+                filename: "/stats.txt".to_string(),
+                action: FileAction::Modify,
+                colour: glam::Vec3::ONE,
+                lines_added: Some(10),
+                lines_removed: Some(5),
+                is_binary: false,
+            },
+            CommitFile {
+                filename: "/plain.txt".to_string(),
+                action: FileAction::Delete,
+                colour: glam::Vec3::ONE,
+                lines_added: None,
+                lines_removed: None,
+                is_binary: false,
+            },
+        ],
+    };
+    let mut out = Vec::new();
+    for file in &commit.files {
+        use std::io::Write;
+        if file.is_binary {
+            writeln!(
+                &mut out,
+                "{}|{}|{}|{}|-|-",
+                commit.timestamp,
+                commit.username,
+                file.action.code(),
+                file.filename
+            )
+            .unwrap();
+        } else if let (Some(added), Some(removed)) = (file.lines_added, file.lines_removed) {
+            writeln!(
+                &mut out,
+                "{}|{}|{}|{}|{}|{}",
+                commit.timestamp,
+                commit.username,
+                file.action.code(),
+                file.filename,
+                added,
+                removed
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                &mut out,
+                "{}|{}|{}|{}",
+                commit.timestamp,
+                commit.username,
+                file.action.code(),
+                file.filename
+            )
+            .unwrap();
+        }
+    }
+    let s = String::from_utf8(out).unwrap();
+    assert!(s.contains("12345|alice|A|/bin.dat|-|-\n"));
+    assert!(s.contains("12345|alice|M|/stats.txt|10|5\n"));
+    assert!(s.contains("12345|alice|D|/plain.txt\n"));
 }

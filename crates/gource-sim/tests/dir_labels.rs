@@ -10,6 +10,7 @@ fn add(world: &mut World, settings: &GourceSettings, path: &str) {
         filename: path.to_string(),
         action: FileAction::Add,
         colour: Vec3::ONE,
+        ..Default::default()
     };
     world.add_file(&cf, settings).expect("file added");
 }

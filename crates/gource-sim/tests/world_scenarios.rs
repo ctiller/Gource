@@ -24,16 +24,19 @@ fn test_world_scenarios_and_harden() {
         filename: "/sub1/dirA/deep/file1.txt".to_string(),
         action: FileAction::Add,
         colour: Vec3::new(0.1, 0.2, 0.3),
+        ..Default::default()
     };
     let cf2 = CommitFile {
         filename: "/sub2/dirB/deep/file2.txt".to_string(),
         action: FileAction::Add,
         colour: Vec3::new(0.4, 0.5, 0.6),
+        ..Default::default()
     };
     let cf3 = CommitFile {
         filename: "/sub1/dirA/deep/file3.txt".to_string(),
         action: FileAction::Add,
         colour: Vec3::new(0.7, 0.8, 0.9),
+        ..Default::default()
     };
 
     let fid1 = world.add_file(&cf1, &settings).expect("file 1 added");

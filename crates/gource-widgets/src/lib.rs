@@ -12,3 +12,4 @@ pub mod key;
 pub mod slider;
 pub mod textbox;
 pub mod timeline_bar;
+pub mod tuning_panel;

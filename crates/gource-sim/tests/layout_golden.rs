@@ -13,6 +13,7 @@ fn test_single_file_touch_increments_visible_count() {
         filename: "/src/main.rs".to_string(),
         action: FileAction::Add,
         colour: Vec3::new(1.0, 0.0, 0.0),
+        ..Default::default()
     };
 
     let fid = world.add_file(&cf, &settings).expect("file added");
@@ -53,6 +54,7 @@ fn test_repeated_touch_does_not_inflate_visible_count() {
         filename: "/src/main.rs".to_string(),
         action: FileAction::Add,
         colour: Vec3::new(1.0, 0.0, 0.0),
+        ..Default::default()
     };
 
     let fid = world.add_file(&cf, &settings).expect("file added");
@@ -109,6 +111,7 @@ fn test_dir_radius_parity_after_multiple_commits() {
         filename: "/src/main.rs".to_string(),
         action: FileAction::Add,
         colour: Vec3::new(1.0, 0.0, 0.0),
+        ..Default::default()
     };
 
     let fid = world.add_file(&cf, &settings).expect("file added");

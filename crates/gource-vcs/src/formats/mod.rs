@@ -21,7 +21,7 @@ pub fn log_command(vcs: &str) -> Option<String> {
 /// The command line used to generate a log for a VCS with explicit options.
 pub fn log_command_with_options(vcs: &str, options: &VcsOptions) -> Option<String> {
     match vcs {
-        "git" => Some(git::log_command(options)),
+        "git" => Some(git::log_command_with_options(options)),
         "svn" => Some(svn::log_command(options)),
         "hg" => Some(hg::log_command(options)),
         "bzr" => Some(bzr::log_command(options)),

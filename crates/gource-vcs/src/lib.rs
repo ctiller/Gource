@@ -75,14 +75,36 @@ pub fn write_custom_log(path: &str, output: &str, options: &VcsOptions) -> Resul
         };
 
         for file in &commit.files {
-            writeln!(
-                out_writer,
-                "{}|{}|{}|{}",
-                commit.timestamp,
-                commit.username,
-                file.action.code(),
-                file.filename
-            )?;
+            if file.is_binary {
+                writeln!(
+                    out_writer,
+                    "{}|{}|{}|{}|-|-",
+                    commit.timestamp,
+                    commit.username,
+                    file.action.code(),
+                    file.filename
+                )?;
+            } else if let (Some(added), Some(removed)) = (file.lines_added, file.lines_removed) {
+                writeln!(
+                    out_writer,
+                    "{}|{}|{}|{}|{}|{}",
+                    commit.timestamp,
+                    commit.username,
+                    file.action.code(),
+                    file.filename,
+                    added,
+                    removed
+                )?;
+            } else {
+                writeln!(
+                    out_writer,
+                    "{}|{}|{}|{}",
+                    commit.timestamp,
+                    commit.username,
+                    file.action.code(),
+                    file.filename
+                )?;
+            }
         }
     }
 

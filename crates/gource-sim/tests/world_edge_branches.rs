@@ -130,6 +130,7 @@ fn test_world_uncovered_branches() {
         filename: "/test/file.rs".to_string(),
         action: FileAction::Add,
         colour: Vec3::ONE,
+        ..Default::default()
     };
     let fid = world.add_file(&cf, &settings).unwrap();
     world.change_colours(777);
@@ -139,6 +140,7 @@ fn test_world_uncovered_branches() {
         filename: "/test/sub/f.rs".to_string(),
         action: FileAction::Add,
         colour: Vec3::ONE,
+        ..Default::default()
     };
     let _ = world.add_file(&cf_sub, &settings);
     // Now "/test/sub/" is a dir! Trying to add a file named "/test/sub" should return None
@@ -146,6 +148,7 @@ fn test_world_uncovered_branches() {
         filename: "/test/sub".to_string(),
         action: FileAction::Add,
         colour: Vec3::ONE,
+        ..Default::default()
     };
     assert!(world.add_file(&cf_dir_conflict, &settings).is_none());
 
@@ -170,6 +173,7 @@ fn test_world_uncovered_branches() {
         filename: "/test/sub/deep/file.rs".to_string(),
         action: FileAction::Add,
         colour: Vec3::ONE,
+        ..Default::default()
     };
     let deep_fid = world.add_file(&cf_deep, &settings).unwrap();
     assert!(world.files.contains_key(deep_fid));
@@ -179,6 +183,7 @@ fn test_world_uncovered_branches() {
         filename: "/test/sub/deep/file2.rs".to_string(),
         action: FileAction::Add,
         colour: Vec3::ONE,
+        ..Default::default()
     };
     let deep_fid2 = world.add_file(&cf_deep2, &settings).unwrap();
     assert!(world.files.contains_key(deep_fid2));

@@ -7,9 +7,10 @@ use glam::Vec3;
 /// Parsers pass through whatever action code the log contains; the
 /// simulation treats `Delete` as removal, `Add` as creation and everything
 /// else as a modification.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub enum FileAction {
     /// "A"
+    #[default]
     Add,
     /// "M"
     Modify,
@@ -40,13 +41,16 @@ impl FileAction {
 }
 
 /// A file touched by a commit.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct CommitFile {
     /// UTF-8 filtered path, always starting with `/`.
     pub filename: String,
     pub action: FileAction,
     /// Colour from the log (custom format) or derived from the extension.
     pub colour: Vec3,
+    pub lines_added: Option<u32>,
+    pub lines_removed: Option<u32>,
+    pub is_binary: bool,
 }
 
 /// A commit: who, when, and which files.
@@ -82,6 +86,51 @@ impl Commit {
         colour: Vec3,
         options: &crate::options::VcsOptions,
     ) {
+        self.add_file_with_colour_and_stats(
+            raw_filename,
+            action,
+            colour,
+            None,
+            None,
+            false,
+            options,
+        );
+    }
+
+    /// Add a file with stats and derived colour.
+    pub fn add_file_with_stats(
+        &mut self,
+        raw_filename: &str,
+        action: &str,
+        lines_added: Option<u32>,
+        lines_removed: Option<u32>,
+        is_binary: bool,
+        options: &crate::options::VcsOptions,
+    ) {
+        let colour = file_colour(raw_filename, &options.hasher);
+        self.add_file_with_colour_and_stats(
+            raw_filename,
+            action,
+            colour,
+            lines_added,
+            lines_removed,
+            is_binary,
+            options,
+        );
+    }
+
+    /// Add a file with explicit colour and diff stats.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_file_with_colour_and_stats(
+        &mut self,
+        raw_filename: &str,
+        action: &str,
+        colour: Vec3,
+        lines_added: Option<u32>,
+        lines_removed: Option<u32>,
+        is_binary: bool,
+        options: &crate::options::VcsOptions,
+    ) {
         if !options.filters.allows_file(raw_filename) {
             return;
         }
@@ -95,6 +144,9 @@ impl Commit {
             filename: filtered,
             action: FileAction::from_code(action),
             colour,
+            lines_added,
+            lines_removed,
+            is_binary,
         });
     }
 

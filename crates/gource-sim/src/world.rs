@@ -220,6 +220,18 @@ impl World {
         }
     }
 
+    /// Apply physics tuning parameters from [`gource_settings::TuningSettings`].
+    pub fn apply_tuning(&mut self, tuning: &gource_settings::TuningSettings) {
+        self.tuning.dir_padding = tuning.dir_padding;
+        self.tuning.min_dir_size = tuning.min_dir_size;
+        self.tuning.file_diameter = tuning.file_diameter;
+        self.tuning.force_gravity = tuning.gravity.abs();
+        self.tuning.beam_dist = tuning.beam_length;
+        self.tuning.action_dist = tuning.action_distance;
+        self.tuning.personal_space_dist = tuning.personal_space;
+        self.tuning.shadow_strength = tuning.shadow_strength;
+    }
+
     /// Rotate world directories and users by angle (sin, cos), optionally around a centre point.
     pub fn rotate(&mut self, s: f32, c: f32, centre: Option<Vec2>) {
         self.rotate_dir_recursive(self.root, s, c, centre);
@@ -317,7 +329,7 @@ impl World {
         let tagid = self.tag_seq;
         self.tag_seq += 1;
 
-        let file = File::new(
+        let mut file = File::new(
             &cf.filename,
             cf.colour,
             Vec2::ZERO,
@@ -326,6 +338,7 @@ impl World {
             settings.filename_time,
             settings.file_extension_fallback,
         );
+        file.created_timestamp = 0;
 
         let file_id = self.files.insert(file);
         self.files_by_path.insert(cf.filename.clone(), file_id);
@@ -392,6 +405,38 @@ impl World {
         let action = Action::new(file_id, commit.timestamp, t, kind);
         if let Some(user) = self.users.get_mut(user_id) {
             user.add_action(action);
+        }
+
+        if let Some(file) = self.files.get_mut(file_id) {
+            if file.created_timestamp == 0 {
+                file.created_timestamp = commit.timestamp;
+            }
+            if cf.lines_added.is_some() || cf.lines_removed.is_some() {
+                file.apply_line_delta(cf.lines_added, cf.lines_removed, settings.file_pulse);
+                file.byte_size = (file.lines as u64) * 35;
+            }
+            if settings.file_size_metric != gource_settings::FileSizeMetric::None {
+                let (weight, ref_weight) = match settings.file_size_metric {
+                    gource_settings::FileSizeMetric::Lines => (file.lines.max(1) as f32, 100.0),
+                    gource_settings::FileSizeMetric::Size => (file.byte_size.max(1) as f32, 3500.0),
+                    gource_settings::FileSizeMetric::Diff => (
+                        (cf.lines_added.unwrap_or(0) + cf.lines_removed.unwrap_or(0)).max(1) as f32,
+                        50.0,
+                    ),
+                    gource_settings::FileSizeMetric::Churn => {
+                        ((file.total_added + file.total_removed).max(1) as f32, 100.0)
+                    }
+                    gource_settings::FileSizeMetric::None => (1.0, 1.0),
+                };
+                file.set_weight_target(weight, ref_weight, self.tuning.file_diameter);
+            }
+            if settings.file_colour_mode == gource_settings::FileColourMode::Cohort
+                && file.dominant_cohort_colour.is_none()
+            {
+                let cohort_label = gource_history::CohortMode::Year
+                    .cohort_label(commit.timestamp, &commit.username);
+                file.dominant_cohort_colour = Some(self.hasher.colour_hash(&cohort_label));
+            }
         }
     }
 
@@ -872,6 +917,22 @@ impl World {
             self.dir_tree = Some(tree);
         }
         self.logic_dirs_recursive(self.root, dt, elasticity, file_idle_time);
+    }
+
+    /// Walk directories and invoke [`DirNode::calc_weighted_radius`] and
+    /// [`DirNode::update_weighted_file_positions`] for variable-sized file packing.
+    pub fn update_weighted_layout(&mut self) {
+        let dir_ids: Vec<DirId> = self.dir_map.values().copied().collect();
+        for did in dir_ids {
+            self.dirs[did]
+                .update_weighted_file_positions(self.tuning.file_diameter, &mut self.files);
+            let children_areas = self.children_areas(did);
+            self.dirs[did].calc_weighted_radius(
+                self.tuning.dir_padding,
+                children_areas,
+                &self.files,
+            );
+        }
     }
 
     fn apply_dir_forces_recursive(&mut self, dir_id: DirId, tree: &QuadTree<DirId>) {
@@ -1701,6 +1762,7 @@ impl World {
                 filename: fullpath.clone(),
                 action: FileAction::Add,
                 colour,
+                ..Default::default()
             };
 
             let fid = match self.add_file(&cf, settings) {
@@ -1771,17 +1833,7 @@ impl World {
 
         // Apply weighted layout if a file size metric is active
         if settings.file_size_metric != gource_settings::FileSizeMetric::None {
-            let dir_ids: Vec<DirId> = self.dir_map.values().copied().collect();
-            for did in dir_ids {
-                self.dirs[did]
-                    .update_weighted_file_positions(self.tuning.file_diameter, &mut self.files);
-                let children_areas = self.children_areas(did);
-                self.dirs[did].calc_weighted_radius(
-                    self.tuning.dir_padding,
-                    children_areas,
-                    &self.files,
-                );
-            }
+            self.update_weighted_layout();
         }
 
         // Materialize active users and position them near their touched files
@@ -1826,6 +1878,7 @@ mod tests {
             filename: "/src/main.rs".to_string(),
             action: FileAction::Add,
             colour: Vec3::ONE,
+            ..Default::default()
         };
 
         let fid = world.add_file(&cf, &settings).expect("file added");
@@ -1881,6 +1934,7 @@ mod tests {
             filename: "/repo1/a.rs".to_string(),
             action: FileAction::Add,
             colour: Vec3::ONE,
+            ..Default::default()
         };
         let _ = world.add_file(&cf1, &settings);
 
@@ -1888,6 +1942,7 @@ mod tests {
             filename: "/repo2/b.rs".to_string(),
             action: FileAction::Add,
             colour: Vec3::ONE,
+            ..Default::default()
         };
         let _ = world.add_file(&cf2, &settings);
 
