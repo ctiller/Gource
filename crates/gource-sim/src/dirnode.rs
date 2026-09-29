@@ -381,6 +381,69 @@ impl DirNode {
         self.dir_radius = self.dir_radius.max(self.parent_radius);
     }
 
+    /// Incremental per-frame 2D physics stepping for files in this directory.
+    ///
+    /// Preserves existing positions and velocities, smoothly pulling files toward
+    /// the directory center and letting them swirl around each other without jitter.
+    pub fn step_weighted_files(
+        &mut self,
+        dt: f32,
+        base_diameter: f32,
+        files: &mut SlotMap<FileId, File>,
+    ) {
+        let mut visible_fids = Vec::new();
+        for &fid in &self.files {
+            if let Some(f) = files.get(fid)
+                && !f.pawn.is_hidden()
+            {
+                visible_fids.push(fid);
+            }
+        }
+
+        if visible_fids.is_empty() {
+            return;
+        }
+
+        if visible_fids.len() == 1 {
+            let f = &mut files[visible_fids[0]];
+            f.pawn.pos = Vec2::ZERO;
+            f.vel = Vec2::ZERO;
+            f.distance = 0.0;
+            f.dest = Vec2::ZERO;
+            return;
+        }
+
+        // Collect (pos, vel, radius)
+        let mut sim_files = Vec::with_capacity(visible_fids.len());
+        for (i, &fid) in visible_fids.iter().enumerate() {
+            let f = &files[fid];
+            let mut pos = f.pawn.pos;
+            // If sitting exactly at origin, nudge out by golden-angle offset
+            if pos.length_squared() < 1e-4 {
+                let angle = (i as f32) * 2.399_963_1;
+                pos = Vec2::new(angle.cos(), angle.sin()) * 0.5;
+            }
+            let r = (f.pawn.size * 0.5).max(base_diameter * 0.25);
+            sim_files.push((pos, f.vel, r));
+        }
+
+        crate::physics2d::step_directory_files_incremental(&mut sim_files, dt, 2);
+
+        for (i, &fid) in visible_fids.iter().enumerate() {
+            let (new_pos, new_vel, _) = sim_files[i];
+            let f = &mut files[fid];
+            f.pawn.pos = new_pos;
+            f.vel = new_vel;
+            let dist = new_pos.length();
+            f.distance = dist;
+            f.dest = if dist > 1e-5 {
+                new_pos / dist
+            } else {
+                Vec2::ZERO
+            };
+        }
+    }
+
     /// Deterministic tight tangent circle packing with central attraction and edge collision simulation.
     pub fn update_weighted_file_positions(
         &mut self,
@@ -395,6 +458,7 @@ impl DirNode {
         }
 
         let mut visible = Vec::new();
+        let mut any_placed = false;
         for (orig_idx, &fid) in self.files.iter().enumerate() {
             if let Some(file) = files.get_mut(fid) {
                 if file.pawn.is_hidden() {
@@ -402,6 +466,9 @@ impl DirNode {
                     file.distance = 0.0;
                     file.pawn.pos = Vec2::ZERO;
                 } else {
+                    if file.pawn.pos.length_squared() > 1e-4 {
+                        any_placed = true;
+                    }
                     let r = (file.pawn.size * 0.5).max(base_diameter * 0.25);
                     let target_key = (file.target_size * 4.0).round() as i32;
                     visible.push(FileItem {
@@ -423,6 +490,12 @@ impl DirNode {
             f.dest = Vec2::ZERO;
             f.distance = 0.0;
             f.pawn.pos = Vec2::ZERO;
+            return;
+        }
+
+        // If files already have active positions, incrementally step rather than re-packing from scratch
+        if any_placed {
+            self.step_weighted_files(0.016, base_diameter, files);
             return;
         }
 
@@ -551,12 +624,18 @@ impl DirNode {
             }
         }
 
-        // Central Attraction + Edge Collision Simulation via Rapier 2D
-        let sim_positions = crate::physics2d::step_directory_files_rapier(&placed, 20);
+        // Center the placed tangent-pack cluster
+        let mut min_b = Vec2::splat(f32::INFINITY);
+        let mut max_b = Vec2::splat(-f32::INFINITY);
+        for &(p, r) in &placed {
+            min_b = min_b.min(p - Vec2::splat(r));
+            max_b = max_b.max(p + Vec2::splat(r));
+        }
+        let center = (min_b + max_b) * 0.5;
 
         // Assign dest, distance, and pawn.pos to visible files
         for (i, item) in visible.iter().enumerate() {
-            let p = sim_positions[i];
+            let p = placed[i].0 - center;
             let dist = p.length();
             let dest = if dist > 1e-5 { p / dist } else { Vec2::ZERO };
 
@@ -564,6 +643,7 @@ impl DirNode {
             f.distance = dist;
             f.dest = dest;
             f.pawn.pos = p;
+            f.vel = Vec2::ZERO;
         }
     }
 

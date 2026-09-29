@@ -340,6 +340,17 @@ impl World {
         );
         file.created_timestamp = 0;
 
+        if settings.file_size_metric != gource_settings::FileSizeMetric::None {
+            file.pawn.size = 0.1;
+            file.radius = 0.05;
+            file.target_size = self.tuning.file_diameter;
+            let angle = (tagid as f32) * 2.399_963_1;
+            let init_pos = Vec2::new(angle.cos(), angle.sin()) * 0.5;
+            file.pawn.pos = init_pos;
+            file.distance = init_pos.length();
+            file.dest = init_pos.normalize_or_zero();
+        }
+
         let file_id = self.files.insert(file);
         self.files_by_path.insert(cf.filename.clone(), file_id);
 

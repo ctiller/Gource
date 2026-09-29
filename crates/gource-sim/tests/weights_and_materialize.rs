@@ -621,3 +621,100 @@ fn test_materialize_from_snapshot_and_settle() {
     assert!(world.dir_map.contains_key("/src/"));
     assert!(world.dir_map.contains_key("/docs/"));
 }
+
+#[test]
+fn test_no_jitter_on_file_edit_and_smooth_swirl() {
+    let mut world = World::new(42, 31);
+    let settings = GourceSettings {
+        file_size_metric: FileSizeMetric::Lines,
+        ..Default::default()
+    };
+
+    // Add 10 files to a directory
+    let mut fids = Vec::new();
+    for i in 0..10 {
+        let path = format!("/src/file_{i}.rs");
+        let fid = world
+            .add_file(
+                &gource_vcs::CommitFile {
+                    filename: path,
+                    colour: Vec3::ONE,
+                    action: gource_vcs::FileAction::Add,
+                    lines_added: Some(50 + (i * 20) as u32),
+                    lines_removed: None,
+                    is_binary: false,
+                },
+                &settings,
+            )
+            .unwrap();
+        world.files[fid].pawn.set_hidden(false);
+        world.files[fid].apply_line_delta(Some(50 + (i * 20) as u32), None, 0.0);
+        world.files[fid].set_weight_target((50 + i * 20) as f32, 100.0, 8.0);
+        fids.push(fid);
+    }
+
+    let dir_id = world.dir_map["/src/"];
+
+    // Settle layout
+    world.update_weighted_layout();
+    for _ in 0..30 {
+        world.dirs[dir_id].step_weighted_files(0.016, 8.0, &mut world.files);
+    }
+
+    // Now edit one file in the directory
+    let edited_fid = fids[3];
+    world.files[edited_fid].apply_line_delta(Some(500), None, 0.0);
+    world.files[edited_fid].set_weight_target(600.0, 100.0, 8.0);
+
+    // Step 10 frames of logic and verify per-frame position delta is small (< 5.0 px)
+    for _ in 0..10 {
+        let prev_positions: Vec<Vec2> = fids.iter().map(|&fid| world.files[fid].pawn.pos).collect();
+        world.update_weighted_layout();
+        for &fid in &fids {
+            world.files[fid].logic(0.016, 0.0);
+        }
+
+        for (idx, &fid) in fids.iter().enumerate() {
+            let delta = (world.files[fid].pawn.pos - prev_positions[idx]).length();
+            assert!(
+                delta < 5.0,
+                "file {idx} jumped by {delta} px (expected smooth swirl < 5.0 px)"
+            );
+        }
+    }
+
+    // Test adding a new file starts near zero size and grows smoothly
+    let new_fid = world
+        .add_file(
+            &gource_vcs::CommitFile {
+                filename: "/src/new_file.rs".to_string(),
+                colour: Vec3::ONE,
+                action: gource_vcs::FileAction::Add,
+                lines_added: Some(100),
+                lines_removed: None,
+                is_binary: false,
+            },
+            &settings,
+        )
+        .unwrap();
+    assert!(
+        world.files[new_fid].pawn.size <= 0.2,
+        "new file should start near zero size"
+    );
+    let initial_size = world.files[new_fid].pawn.size;
+    world.files[new_fid].logic(0.1, 0.0);
+    assert!(
+        world.files[new_fid].pawn.size > initial_size,
+        "new file should grow smoothly"
+    );
+
+    // Test removing a file shrinks its size toward zero
+    let removed_fid = fids[0];
+    world.files[removed_fid].removing = true;
+    let size_before = world.files[removed_fid].pawn.size;
+    world.files[removed_fid].logic(0.1, 0.0);
+    assert!(
+        world.files[removed_fid].pawn.size < size_before,
+        "removing file should shrink smoothly toward zero"
+    );
+}

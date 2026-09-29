@@ -29,14 +29,14 @@ pub fn step_directory_files_rapier(files: &[(Vec2, f32)], steps: usize) -> Vec<V
     for &(pos, r) in files {
         let rb = RigidBodyBuilder::dynamic()
             .translation(vector![pos.x, pos.y])
-            .linear_damping(10.0)
+            .linear_damping(14.0)
             .lock_rotations()
             .build();
         let handle = rigid_body_set.insert(rb);
 
-        let col = ColliderBuilder::ball(r)
+        let col = ColliderBuilder::ball(r.max(0.05))
             .restitution(0.0)
-            .friction(0.02)
+            .friction(0.0)
             .density(1.0)
             .build();
         collider_set.insert_with_parent(col, handle, &mut rigid_body_set);
@@ -54,7 +54,7 @@ pub fn step_directory_files_rapier(files: &[(Vec2, f32)], steps: usize) -> Vec<V
     let mut ccd_solver = CCDSolver::new();
 
     for _ in 0..steps {
-        // Apply central attraction toward (0, 0)
+        // Apply central attraction acceleration toward (0, 0)
         for &handle in &body_handles {
             if let Some(rb) = rigid_body_set.get_mut(handle) {
                 let p = rb.translation();
@@ -62,8 +62,7 @@ pub fn step_directory_files_rapier(files: &[(Vec2, f32)], steps: usize) -> Vec<V
                 if dist > 1e-4 {
                     let dir_x = -p.x / dist;
                     let dir_y = -p.y / dist;
-                    // Attraction strength scales with distance and radius
-                    let speed = (dist * 5.0).min(50.0);
+                    let speed = (dist * 6.0).min(50.0);
                     rb.set_linvel(vector![dir_x * speed, dir_y * speed], true);
                 } else {
                     rb.set_linvel(vector![0.0, 0.0], true);
@@ -97,19 +96,6 @@ pub fn step_directory_files_rapier(files: &[(Vec2, f32)], steps: usize) -> Vec<V
         })
         .collect();
 
-    // Recenter cluster bounding box to (0, 0)
-    let mut min_b = Vec2::splat(f32::INFINITY);
-    let mut max_b = Vec2::splat(-f32::INFINITY);
-    for (i, &p) in result.iter().enumerate() {
-        let r = files[i].1;
-        min_b = min_b.min(p - Vec2::splat(r));
-        max_b = max_b.max(p + Vec2::splat(r));
-    }
-    let center = (min_b + max_b) * 0.5;
-    for p in &mut result {
-        *p -= center;
-    }
-
     // Final position projection passes so ||p_b - p_a|| >= r_a + r_b holds strictly
     for _ in 0..64 {
         let mut any_overlap = false;
@@ -139,60 +125,117 @@ pub fn step_directory_files_rapier(files: &[(Vec2, f32)], steps: usize) -> Vec<V
         }
     }
 
-    // Tightness pass: pull circles inward toward their closest neighbor until tangent contact
-    for i in 0..n {
-        let r_i = files[i].1;
-        let mut closest_j = None;
-        let mut min_gap = f32::INFINITY;
-        for j in 0..n {
-            if i == j {
-                continue;
-            }
-            let r_j = files[j].1;
-            let gap = (result[j] - result[i]).length() - (r_i + r_j);
-            if gap >= -1e-4 && gap < min_gap {
-                min_gap = gap;
-                closest_j = Some(j);
-            }
-        }
-        if let Some(j) = closest_j
-            && min_gap > 1e-3
-            && min_gap < 1.0
-        {
-            let r_j = files[j].1;
-            let delta = result[j] - result[i];
-            let dist = delta.length();
-            if dist > 1e-5 {
-                let dir = delta / dist;
-                let target_pos = result[j] - dir * (r_i + r_j);
-                // Check if target_pos doesn't overlap any third circle
-                let mut can_move = true;
-                for m in 0..n {
-                    if m == i || m == j {
-                        continue;
-                    }
-                    let r_m = files[m].1;
-                    if (target_pos - result[m]).length() < (r_i + r_m) - 1e-3 {
-                        can_move = false;
-                        break;
-                    }
-                }
-                if can_move {
-                    result[i] = target_pos;
-                }
-            }
-        }
+    result
+}
+
+/// Steps file circle physics incrementally across frames using Rapier 2D.
+///
+/// Modifies in-place `(pos, vel, radius)`.
+/// Does NOT recenter by bounding box, and does not snap positions across gaps,
+/// allowing files to smoothly swirl around growing/shrinking files with zero jitter.
+pub fn step_directory_files_incremental(files: &mut [(Vec2, Vec2, f32)], dt: f32, substeps: usize) {
+    let n = files.len();
+    if n == 0 {
+        return;
+    }
+    if n == 1 {
+        files[0].0 = Vec2::ZERO;
+        files[0].1 = Vec2::ZERO;
+        return;
     }
 
-    // Final check for zero overlap
+    let mut rigid_body_set = RigidBodySet::new();
+    let mut collider_set = ColliderSet::new();
+    let mut body_handles = Vec::with_capacity(n);
+
+    for &(pos, vel, r) in files.iter() {
+        let rb = RigidBodyBuilder::dynamic()
+            .translation(vector![pos.x, pos.y])
+            .linvel(vector![vel.x, vel.y])
+            .linear_damping(14.0)
+            .lock_rotations()
+            .build();
+        let handle = rigid_body_set.insert(rb);
+
+        let col = ColliderBuilder::ball(r.max(0.05))
+            .restitution(0.0)
+            .friction(0.0)
+            .density(1.0)
+            .build();
+        collider_set.insert_with_parent(col, handle, &mut rigid_body_set);
+        body_handles.push(handle);
+    }
+
+    let gravity = vector![0.0, 0.0];
+    let mut integration_parameters = IntegrationParameters::default();
+    let step_dt = (dt / substeps.max(1) as f32).clamp(0.001, 0.05);
+    integration_parameters.dt = step_dt;
+
+    let mut physics_pipeline = PhysicsPipeline::new();
+    let mut island_manager = IslandManager::new();
+    let mut broad_phase = DefaultBroadPhase::new();
+    let mut narrow_phase = NarrowPhase::new();
+    let mut impulse_joint_set = ImpulseJointSet::new();
+    let mut multibody_joint_set = MultibodyJointSet::new();
+    let mut ccd_solver = CCDSolver::new();
+
+    for _ in 0..substeps {
+        // Apply smooth central attraction acceleration toward (0, 0)
+        for &handle in &body_handles {
+            if let Some(rb) = rigid_body_set.get_mut(handle) {
+                let p = rb.translation();
+                let v = rb.linvel();
+                let to_center_x = -p.x;
+                let to_center_y = -p.y;
+                let pull_x = to_center_x * 6.0;
+                let pull_y = to_center_y * 6.0;
+                let mut new_vx = v.x * 0.85 + pull_x * step_dt;
+                let mut new_vy = v.y * 0.85 + pull_y * step_dt;
+                let speed_sq = new_vx * new_vx + new_vy * new_vy;
+                if speed_sq > 60.0 * 60.0 {
+                    let speed = speed_sq.sqrt();
+                    new_vx = (new_vx / speed) * 60.0;
+                    new_vy = (new_vy / speed) * 60.0;
+                }
+                rb.set_linvel(vector![new_vx, new_vy], true);
+            }
+        }
+
+        physics_pipeline.step(
+            &gravity,
+            &integration_parameters,
+            &mut island_manager,
+            &mut broad_phase,
+            &mut narrow_phase,
+            &mut rigid_body_set,
+            &mut collider_set,
+            &mut impulse_joint_set,
+            &mut multibody_joint_set,
+            &mut ccd_solver,
+            None,
+            &(),
+            &(),
+        );
+    }
+
+    // Read back positions and velocities
+    for (i, &handle) in body_handles.iter().enumerate() {
+        let rb = &rigid_body_set[handle];
+        let t = rb.translation();
+        let v = rb.linvel();
+        files[i].0 = Vec2::new(t.x, t.y);
+        files[i].1 = Vec2::new(v.x, v.y);
+    }
+
+    // Gentle overlap resolution pass without recentering
     for _ in 0..32 {
         let mut any_overlap = false;
         for i in 0..n {
-            let r_i = files[i].1;
+            let r_i = files[i].2;
             for j in (i + 1)..n {
-                let r_j = files[j].1;
+                let r_j = files[j].2;
                 let min_dist = r_i + r_j;
-                let delta = result[j] - result[i];
+                let delta = files[j].0 - files[i].0;
                 let dist = delta.length();
                 if dist < min_dist {
                     any_overlap = true;
@@ -203,8 +246,8 @@ pub fn step_directory_files_rapier(files: &[(Vec2, f32)], steps: usize) -> Vec<V
                         let angle = ((i * 31 + j * 17) as f32) * 0.1;
                         Vec2::new(angle.cos(), angle.sin())
                     };
-                    result[i] -= norm * (overlap * 0.501);
-                    result[j] += norm * (overlap * 0.501);
+                    files[i].0 -= norm * (overlap * 0.501);
+                    files[j].0 += norm * (overlap * 0.501);
                 }
             }
         }
@@ -213,7 +256,12 @@ pub fn step_directory_files_rapier(files: &[(Vec2, f32)], steps: usize) -> Vec<V
         }
     }
 
-    result
+    // Zero out tiny velocities to eliminate micro-jitter in settled clusters
+    for item in files.iter_mut() {
+        if item.1.length_squared() < 0.05 * 0.05 {
+            item.1 = Vec2::ZERO;
+        }
+    }
 }
 
 /// Descriptor for directory circles in multi-body contact resolution.
@@ -405,6 +453,43 @@ mod tests {
         let single = step_directory_files_rapier(&[(Vec2::new(5.0, 5.0), 3.0)], 10);
         assert_eq!(single.len(), 1);
         assert_eq!(single[0], Vec2::ZERO);
+
+        let mut empty_inc = Vec::new();
+        step_directory_files_incremental(&mut empty_inc, 0.016, 2);
+        assert!(empty_inc.is_empty());
+
+        let mut single_inc = vec![(Vec2::new(5.0, 5.0), Vec2::new(1.0, 1.0), 3.0)];
+        step_directory_files_incremental(&mut single_inc, 0.016, 2);
+        assert_eq!(single_inc[0].0, Vec2::ZERO);
+        assert_eq!(single_inc[0].1, Vec2::ZERO);
+    }
+
+    #[test]
+    fn test_rapier_incremental_stepping() {
+        let mut files = vec![
+            (Vec2::new(-10.0, 0.0), Vec2::ZERO, 5.0),
+            (Vec2::new(10.0, 0.0), Vec2::ZERO, 5.0),
+            (Vec2::new(0.0, 10.0), Vec2::ZERO, 5.0),
+        ];
+        step_directory_files_incremental(&mut files, 0.016, 4);
+        assert_eq!(files.len(), 3);
+        for i in 0..files.len() {
+            for j in (i + 1)..files.len() {
+                let dist = (files[i].0 - files[j].0).length();
+                let min_dist = files[i].2 + files[j].2;
+                assert!(dist >= min_dist - 1e-2);
+            }
+        }
+    }
+
+    #[test]
+    fn test_rapier_incremental_velocity_damping_and_clamp() {
+        let mut files = vec![
+            (Vec2::new(100.0, 100.0), Vec2::new(100.0, 100.0), 2.0),
+            (Vec2::new(0.01, 0.01), Vec2::new(0.001, 0.001), 2.0),
+        ];
+        step_directory_files_incremental(&mut files, 0.016, 2);
+        assert_eq!(files[1].1, Vec2::ZERO);
     }
 
     #[test]
@@ -414,9 +499,11 @@ mod tests {
             (Vec2::new(20.0, 0.0), 5.0),
             (Vec2::new(0.0, 15.0), 8.0),
             (Vec2::new(0.0, -15.0), 6.0),
+            (Vec2::ZERO, 8.0),
+            (Vec2::new(1.0, 0.0), 8.0),
         ];
         let positions = step_directory_files_rapier(&files, 20);
-        assert_eq!(positions.len(), 4);
+        assert_eq!(positions.len(), 6);
 
         // Verify non-overlapping
         for i in 0..positions.len() {

@@ -34,6 +34,7 @@ pub struct File {
     pub radius: f32,
     pub dest: Vec2,
     pub distance: f32,
+    pub vel: Vec2,
 
     pub path: String,
     pub fullpath: String,
@@ -94,6 +95,7 @@ impl File {
             radius,
             dest: Vec2::ZERO,
             distance: 0.0,
+            vel: Vec2::ZERO,
             path,
             fullpath: fullpath.to_string(),
             ext,
@@ -239,9 +241,14 @@ impl File {
         self.pawn.pos += accel2;
         self.pawn.accel = Vec2::ZERO;
 
-        if (self.pawn.size - self.target_size).abs() > 1e-4 {
-            self.pawn.size += (self.target_size - self.pawn.size) * (dt * 6.0).min(1.0);
-            self.radius = self.pawn.size * 0.5;
+        let target = if self.removing || self.fade_start > 0.0 {
+            0.0
+        } else {
+            self.target_size
+        };
+        if (self.pawn.size - target).abs() > 1e-4 {
+            self.pawn.size += (target - self.pawn.size) * (dt * 6.0).min(1.0);
+            self.radius = (self.pawn.size * 0.5).max(0.0);
             self.pawn.dims = Vec2::splat(self.pawn.size);
         }
         if self.pulse_timer > 0.0 {
