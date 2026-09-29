@@ -580,6 +580,7 @@ fn test_materialize_from_snapshot_and_settle() {
         ],
         metrics: Vec::new(),
         snapshots: Vec::new(),
+        cached_cohort_0_half_life: None,
     };
 
     let mut snapshot = TreeSnapshot::new();

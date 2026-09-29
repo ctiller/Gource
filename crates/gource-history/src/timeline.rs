@@ -230,10 +230,14 @@ impl TimelineIndex {
 
         // Collect editor counts within this bucket's time window
         let mut user_commits: HashMap<UserId, u32> = HashMap::new();
-        for commit in &history.commits {
-            if commit.timestamp >= bucket.start_time && commit.timestamp <= bucket.end_time {
-                *user_commits.entry(commit.user).or_insert(0) += 1;
-            }
+        let first_idx = history
+            .commits
+            .partition_point(|c| c.timestamp < bucket.start_time);
+        let end_idx = history
+            .commits
+            .partition_point(|c| c.timestamp <= bucket.end_time);
+        for commit in &history.commits[first_idx..end_idx] {
+            *user_commits.entry(commit.user).or_insert(0) += 1;
         }
 
         let mut sorted_editors: Vec<(String, u32)> = user_commits
@@ -357,29 +361,44 @@ impl DashboardSeriesData {
         let mut diff_bars = Vec::with_capacity(sample_count);
         let mut commits_per_period = Vec::with_capacity(sample_count);
 
+        let commits_slice = &history.commits[..=playhead_commit_idx];
+
         for s in 0..sample_count {
             let offset_start = (sample_count - s) as i64 * period;
             let offset_end = (sample_count - s - 1) as i64 * period;
             let p_start = playhead_ts - offset_start;
             let p_end = playhead_ts - offset_end;
 
-            let mut added: u64 = 0;
-            let mut removed: u64 = 0;
-            let mut period_commits: u32 = 0;
+            let first_idx = commits_slice.partition_point(|c| c.timestamp < p_start);
+            let last_idx = if s + 1 == sample_count {
+                commits_slice.partition_point(|c| c.timestamp <= p_end)
+            } else {
+                commits_slice.partition_point(|c| c.timestamp < p_end)
+            };
 
-            for i in 0..=playhead_commit_idx {
-                let ts = history.commits[i].timestamp;
-                if ts >= p_start && (ts < p_end || (s + 1 == sample_count && ts <= p_end)) {
-                    period_commits += 1;
-                    for ch in history.commit_changes(i) {
-                        added = added.saturating_add(ch.lines_added as u64);
-                        removed = removed.saturating_add(ch.lines_removed as u64);
-                    }
-                }
+            if first_idx < last_idx {
+                let period_commits = (last_idx - first_idx) as u32;
+                let end_m = &history.metrics[last_idx - 1];
+                let added = if first_idx > 0 {
+                    end_m
+                        .cum_lines_added
+                        .saturating_sub(history.metrics[first_idx - 1].cum_lines_added)
+                } else {
+                    end_m.cum_lines_added
+                };
+                let removed = if first_idx > 0 {
+                    end_m
+                        .cum_lines_removed
+                        .saturating_sub(history.metrics[first_idx - 1].cum_lines_removed)
+                } else {
+                    end_m.cum_lines_removed
+                };
+                diff_bars.push((added as f32, removed as f32));
+                commits_per_period.push(period_commits as f32);
+            } else {
+                diff_bars.push((0.0, 0.0));
+                commits_per_period.push(0.0);
             }
-
-            diff_bars.push((added as f32, removed as f32));
-            commits_per_period.push(period_commits as f32);
         }
 
         // 4. Git-of-Theseus cohorts
@@ -396,11 +415,42 @@ impl DashboardSeriesData {
 
         let mut samples = Vec::with_capacity(sampled_indices.len());
         for &c_idx in &sampled_indices {
-            let snap = history.state_at_commit(c_idx);
             let mut row = vec![0u64; num_cohorts];
-            for (cid, lines) in snap.stacked_cohorts() {
-                if (cid.0 as usize) < num_cohorts {
-                    row[cid.0 as usize] = lines;
+            if !history.snapshots.is_empty() {
+                let snap_idx = match history
+                    .snapshots
+                    .binary_search_by_key(&c_idx, |s| s.commit_index)
+                {
+                    Ok(exact) => exact,
+                    Err(next) => {
+                        if next == 0 {
+                            0
+                        } else if next >= history.snapshots.len() {
+                            history.snapshots.len() - 1
+                        } else {
+                            let prev = next - 1;
+                            if c_idx - history.snapshots[prev].commit_index
+                                <= history.snapshots[next].commit_index - c_idx
+                            {
+                                prev
+                            } else {
+                                next
+                            }
+                        }
+                    }
+                };
+                let snap = &history.snapshots[snap_idx];
+                for (cid, &lines) in snap.cohort_totals.iter().enumerate() {
+                    if cid < num_cohorts {
+                        row[cid] = lines;
+                    }
+                }
+            } else {
+                let snap = history.state_at_commit(c_idx);
+                for (cid, lines) in snap.stacked_cohorts() {
+                    if (cid.0 as usize) < num_cohorts {
+                        row[cid.0 as usize] = lines;
+                    }
                 }
             }
             samples.push(row);
@@ -414,9 +464,11 @@ impl DashboardSeriesData {
         };
 
         // Half life estimate from cohort 0 if available
-        let half_life_days = history
-            .cohort_half_life(CohortId(0))
-            .map(|sec| (sec / 86400.0) as f32);
+        let half_life_days = history.cached_cohort_0_half_life.or_else(|| {
+            history
+                .cohort_half_life(CohortId(0))
+                .map(|sec| (sec / 86400.0) as f32)
+        });
 
         Self {
             total_lines,

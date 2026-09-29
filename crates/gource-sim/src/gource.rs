@@ -301,6 +301,8 @@ pub struct Gource {
     pub history_cache: Option<std::sync::Arc<History>>,
     pub scrubber: SimScrubber,
     pub dashboards: DashboardStack,
+    pub cached_dashboard_commit: Option<usize>,
+    pub cached_dashboard_data: Option<gource_history::DashboardSeriesData>,
     pub timeline_bar: TimelineBarWidget,
     pub timeline_dragging: bool,
     pub slider_dragging: bool,
@@ -493,6 +495,8 @@ impl Gource {
             history_cache: None,
             scrubber,
             dashboards,
+            cached_dashboard_commit: None,
+            cached_dashboard_data: None,
             timeline_bar,
             timeline_dragging: false,
             slider_dragging: false,
@@ -600,6 +604,8 @@ impl Gource {
         }
         self.timeline_dragging = false;
         self.slider_dragging = false;
+        self.cached_dashboard_commit = None;
+        self.cached_dashboard_data = None;
 
         // The C++ rand() stream and string hash seed are globals that a
         // reset leaves alone.
@@ -825,6 +831,8 @@ impl Gource {
             self.scrubber.set_history(&snap, 64);
             self.history_cache = Some(snap.clone());
             self.history_dirty = false;
+            self.cached_dashboard_commit = None;
+            self.cached_dashboard_data = None;
             snap
         }
     }
@@ -1239,13 +1247,35 @@ impl Gource {
                 gource_settings::DashboardPeriod::Year => 365 * 86400,
             };
             let window_secs = (self.settings.dashboard_window_days as i64) * 86400;
-            let series_data = gource_history::DashboardSeriesData::extract(
-                &hist,
-                playhead_commit_idx,
-                period_secs,
-                window_secs,
-                20,
-            );
+            let series_data = if let (Some(cached_idx), Some(cached_data)) =
+                (self.cached_dashboard_commit, &self.cached_dashboard_data)
+            {
+                if cached_idx == playhead_commit_idx {
+                    cached_data.clone()
+                } else {
+                    let data = gource_history::DashboardSeriesData::extract(
+                        &hist,
+                        playhead_commit_idx,
+                        period_secs,
+                        window_secs,
+                        20,
+                    );
+                    self.cached_dashboard_commit = Some(playhead_commit_idx);
+                    self.cached_dashboard_data = Some(data.clone());
+                    data
+                }
+            } else {
+                let data = gource_history::DashboardSeriesData::extract(
+                    &hist,
+                    playhead_commit_idx,
+                    period_secs,
+                    window_secs,
+                    20,
+                );
+                self.cached_dashboard_commit = Some(playhead_commit_idx);
+                self.cached_dashboard_data = Some(data.clone());
+                data
+            };
 
             for panel_kind in &self.settings.dashboards {
                 match panel_kind {

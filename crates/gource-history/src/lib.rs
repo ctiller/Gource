@@ -188,6 +188,8 @@ pub struct History {
     pub metrics: Vec<CommitMetricsPoint>,
     /// Periodic snapshot checkpoints spaced by [`SNAPSHOT_STRIDE`].
     pub snapshots: Vec<TreeSnapshot>,
+    /// Precomputed half-life estimate in days for cohort 0 (if available).
+    pub cached_cohort_0_half_life: Option<f32>,
 }
 
 impl History {
@@ -356,22 +358,60 @@ impl History {
             return Vec::new();
         }
 
-        let mut points = Vec::new();
-        for (i, commit) in self.commits.iter().enumerate() {
-            if commit.timestamp < birth_ts {
-                continue;
+        // Sequential replay from nearest checkpoint prior to birth_ts
+        let birth_commit_idx = match self
+            .commits
+            .binary_search_by_key(&birth_ts, |c| c.timestamp)
+        {
+            Ok(idx) => {
+                let mut first = idx;
+                while first > 0 && self.commits[first - 1].timestamp == birth_ts {
+                    first -= 1;
+                }
+                first
             }
-            let snap = self.state_at_commit(i);
-            let surviving = snap
-                .cohort_totals
-                .get(cohort.0 as usize)
-                .copied()
-                .unwrap_or(0);
-            points.push(SurvivalPoint {
-                age_seconds: commit.timestamp - birth_ts,
-                surviving_lines: surviving,
-                initial_lines,
-            });
+            Err(idx) => idx,
+        };
+
+        // Find nearest checkpoint <= birth_commit_idx
+        let snap_idx = match self
+            .snapshots
+            .binary_search_by_key(&birth_commit_idx, |s| s.commit_index)
+        {
+            Ok(exact) => exact,
+            Err(next) => next.saturating_sub(1),
+        };
+
+        let (mut state, replay_start) = if snap_idx < self.snapshots.len()
+            && self.snapshots[snap_idx].commit_index <= birth_commit_idx
+        {
+            (
+                self.snapshots[snap_idx].clone(),
+                self.snapshots[snap_idx].commit_index + 1,
+            )
+        } else {
+            (TreeSnapshot::new(), 0)
+        };
+
+        let mut points = Vec::with_capacity(self.commits.len().saturating_sub(birth_commit_idx));
+
+        for i in replay_start..self.commits.len() {
+            let commit = &self.commits[i];
+            let changes = self.commit_changes(i);
+            apply_commit_changes(changes, commit, &mut state, self.decay_model);
+
+            if commit.timestamp >= birth_ts {
+                let surviving = state
+                    .cohort_totals
+                    .get(cohort.0 as usize)
+                    .copied()
+                    .unwrap_or(0);
+                points.push(SurvivalPoint {
+                    age_seconds: commit.timestamp - birth_ts,
+                    surviving_lines: surviving,
+                    initial_lines,
+                });
+            }
         }
 
         points
@@ -538,7 +578,7 @@ impl HistoryBuilder {
             snapshots.push(self.current_state.clone());
         }
 
-        History {
+        let mut hist = History {
             paths: self.paths.clone(),
             users: self.users.clone(),
             cohorts: self.cohorts.clone(),
@@ -548,7 +588,12 @@ impl HistoryBuilder {
             commits: self.commits.clone(),
             metrics: self.metrics.clone(),
             snapshots,
-        }
+            cached_cohort_0_half_life: None,
+        };
+        hist.cached_cohort_0_half_life = hist
+            .cohort_half_life(CohortId(0))
+            .map(|sec| (sec / 86400.0) as f32);
+        hist
     }
 
     /// Finalizes and returns the complete [`History`].
@@ -563,7 +608,7 @@ impl HistoryBuilder {
             self.snapshots.push(self.current_state.clone());
         }
 
-        History {
+        let mut hist = History {
             paths: self.paths,
             users: self.users,
             cohorts: self.cohorts,
@@ -573,6 +618,11 @@ impl HistoryBuilder {
             commits: self.commits,
             metrics: self.metrics,
             snapshots: self.snapshots,
-        }
+            cached_cohort_0_half_life: None,
+        };
+        hist.cached_cohort_0_half_life = hist
+            .cohort_half_life(CohortId(0))
+            .map(|sec| (sec / 86400.0) as f32);
+        hist
     }
 }

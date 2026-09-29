@@ -574,6 +574,16 @@ fn test_gource_dashboards_all_periods_and_empty_hist() {
         let mut list = DrawList::new(UVec2::new(800, 600));
         gource.draw_dashboards(&mut gfx, &mut list, viewport);
     }
+
+    // Verify dashboard caching: consecutive calls at same currtime hit cache
+    let mut list = DrawList::new(UVec2::new(800, 600));
+    gource.draw_dashboards(&mut gfx, &mut list, viewport);
+    assert!(gource.cached_dashboard_commit.is_some());
+    assert!(gource.cached_dashboard_data.is_some());
+
+    // Advance currtime to trigger cache miss and re-extraction
+    gource.currtime = 2_000_000_000;
+    gource.draw_dashboards(&mut gfx, &mut list, viewport);
 }
 
 #[test]
@@ -739,4 +749,26 @@ fn test_persistent_scrubbing_and_caching_and_drag() {
     gource.timeline_bar.show(true);
     let mut list = DrawList::new(UVec2::new(800, 600));
     gource.draw(dt, viewport, &mut gfx, &mut list);
+}
+
+#[test]
+fn test_gource_textures_error_paths() {
+    use gource_settings::GourceSettings;
+
+    let mut gfx = Gfx::new();
+    let settings = GourceSettings {
+        background_image: "nonexistent_background_xyz.png".to_string(),
+        ..Default::default()
+    };
+    let err = gource_sim::gource::GourceTextures::load(&mut gfx, &settings);
+    assert!(err.is_err());
+    assert!(err.unwrap_err().0.contains("failed to load resource"));
+
+    let settings2 = GourceSettings {
+        logo: "nonexistent_logo_xyz.png".to_string(),
+        ..Default::default()
+    };
+    let err2 = gource_sim::gource::GourceTextures::load(&mut gfx, &settings2);
+    assert!(err2.is_err());
+    assert!(err2.unwrap_err().0.contains("failed to load resource"));
 }
