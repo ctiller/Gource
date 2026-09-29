@@ -43,12 +43,27 @@ where
         None => return false,
     };
 
-    let day: u32 = date_caps.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+    let day: u32 = date_caps
+        .get(1)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
     let month_str = date_caps.get(2).map_or("", |m| m.as_str());
-    let year: i32 = date_caps.get(3).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-    let hour: u32 = date_caps.get(4).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-    let min: u32 = date_caps.get(5).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-    let sec: u32 = date_caps.get(6).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+    let year: i32 = date_caps
+        .get(3)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
+    let hour: u32 = date_caps
+        .get(4)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
+    let min: u32 = date_caps
+        .get(5)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
+    let sec: u32 = date_caps
+        .get(6)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
 
     let month = match MONTHS.iter().position(|&m| m == month_str) {
         Some(idx) => (idx + 1) as u32,

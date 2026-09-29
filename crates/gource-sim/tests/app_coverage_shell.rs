@@ -120,8 +120,9 @@ fn test_shell_multi_repo_loop_cycle_and_stop_time() {
 
     let conf = gource_settings::ConfFile::parse(&conf_content, "multi.conf").expect("parse conf");
     let display = gource_settings::DisplaySettings::import(&conf).expect("import display");
-    let gource = gource_settings::GourceSettings::import(&conf, conf.sections_named("gource").next())
-        .expect("import gource");
+    let gource =
+        gource_settings::GourceSettings::import(&conf, conf.sections_named("gource").next())
+            .expect("import gource");
 
     let config = gource_settings::Config {
         conf,
@@ -178,10 +179,12 @@ fn test_shell_recording_multi_repo_stops_at_end() {
         log2.display()
     );
 
-    let conf = gource_settings::ConfFile::parse(&conf_content, "multi_rec.conf").expect("parse conf");
+    let conf =
+        gource_settings::ConfFile::parse(&conf_content, "multi_rec.conf").expect("parse conf");
     let display = gource_settings::DisplaySettings::import(&conf).expect("import display");
-    let gource = gource_settings::GourceSettings::import(&conf, conf.sections_named("gource").next())
-        .expect("import gource");
+    let gource =
+        gource_settings::GourceSettings::import(&conf, conf.sections_named("gource").next())
+            .expect("import gource");
 
     let config = gource_settings::Config {
         conf,

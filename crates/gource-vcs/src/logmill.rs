@@ -307,12 +307,14 @@ fn fetch_internal(
     }
 
     let mut clog = if !log_format.is_empty() {
-        let fmt = if log_format == "cvs" {
-            "cvs-exp"
-        } else {
-            &log_format
-        };
-        try_fetch_format(&logfile, fmt, options, abort_flag, child_process)
+        let fetch = |fmt: &str| try_fetch_format(&logfile, fmt, options, abort_flag, child_process);
+        match log_format.as_str() {
+            // The deprecated raw git format has no log-format value of its
+            // own: `git` falls back to it.
+            "git" => fetch("git").or_else(|| fetch("gitraw")),
+            "cvs" => fetch("cvs-exp"),
+            fmt => fetch(fmt),
+        }
     } else {
         // Auto-detect order: git, hg, bzr, gitraw, cvs-exp, svn, cvs2cl, custom, apache
         let formats = [
@@ -334,18 +336,24 @@ fn fetch_internal(
     };
 
     if let Some(ref mut l) = clog {
-        // Find first commit after start_timestamp if specified
-        if options.start_timestamp != 0 {
-            while !l.is_finished() {
-                if let Some(commit) = l.next_commit() {
-                    if commit.timestamp >= options.start_timestamp {
-                        l.buffer_commit(commit);
-                        break;
-                    }
-                } else if !l.is_seekable() {
+        // Find the first commit at or after start_timestamp, as
+        // `RLogMill::run` does. A stream also has to start with a valid
+        // commit: the commit buffered by the format check has not been
+        // validated (C++ passes it to the app anyway). Streams wait for input
+        // where C++ polls.
+        let start = options.start_timestamp;
+        if start != 0 || !l.is_seekable() {
+            let aborted = || abort_flag.is_some_and(|af| af.load(Ordering::SeqCst));
+            l.wait_for_input(true);
+            while !aborted() && !l.at_end() {
+                if let Some(commit) = l.next_commit()
+                    && (start == 0 || commit.timestamp >= start)
+                {
+                    l.buffer_commit(commit);
                     break;
                 }
             }
+            l.wait_for_input(false);
         }
         return Ok(clog.unwrap());
     }

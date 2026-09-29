@@ -30,6 +30,9 @@ use crate::platform::{PlatformRequest, Viewport};
 use crate::user::UserId;
 use crate::world::{SceneFonts, SceneTextures, World};
 
+/// Most commits read ahead of the current time (`commitqueue_max_size`).
+const COMMITQUEUE_MAX_SIZE: usize = 100;
+
 /// Fonts used by the Gource HUD and scene.
 #[derive(Debug, Clone, Copy)]
 pub struct GourceFonts {
@@ -920,23 +923,37 @@ impl Gource {
         date.len() as f32 * 8.0 * self.settings.font_scale
     }
 
-    /// Read available commits from the CommitLog into commitqueue.
+    /// Read commits from the log into the queue (`Gource::readLog`): until
+    /// the last queued commit is ahead of the current time, or the queue is
+    /// full.
     pub fn read_log(&mut self) -> Result<(), AppError> {
-        let log = match self.commitlog.as_mut() {
-            Some(l) => l,
-            None => return Ok(()),
+        if self.stop_position_reached {
+            return Ok(());
+        }
+        let Some(log) = self.commitlog.as_mut() else {
+            return Ok(());
         };
 
-        while self.commitqueue.len() < 100 {
-            match log.next_commit() {
-                Some(commit) => {
-                    self.commitqueue.push_back(commit);
+        while (log.has_buffered_commit() || !log.is_finished())
+            && self.commitqueue.back().is_none_or(|last| {
+                last.timestamp <= self.currtime && self.commitqueue.len() < COMMITQUEUE_MAX_SIZE
+            })
+        {
+            let Some(commit) = log.next_commit() else {
+                if !log.is_seekable() {
+                    break;
                 }
-                None => break,
+                continue;
+            };
+            if self.settings.stop_timestamp != 0 && commit.timestamp > self.settings.stop_timestamp
+            {
+                self.stop_position_reached = true;
+                break;
             }
+            self.commitqueue.push_back(commit);
         }
 
-        if self.first_read && self.commitqueue.is_empty() && log.is_finished() {
+        if self.first_read && self.commitqueue.is_empty() {
             return Err(AppError("no commits found".to_string()));
         }
         self.first_read = false;

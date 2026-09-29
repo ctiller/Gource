@@ -58,9 +58,18 @@ where
 
     commit.username = caps.get(2).map_or("", |m| m.as_str()).to_string();
 
-    let year: i32 = caps.get(3).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-    let month: u32 = caps.get(4).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-    let day: u32 = caps.get(5).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+    let year: i32 = caps
+        .get(3)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
+    let month: u32 = caps
+        .get(4)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
+    let day: u32 = caps
+        .get(5)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
 
     let naive_date = match chrono::NaiveDate::from_ymd_opt(year, month, day) {
         Some(d) => d,

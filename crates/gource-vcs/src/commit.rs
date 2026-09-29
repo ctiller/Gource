@@ -145,4 +145,3 @@ mod tests {
         assert_eq!(file_colour("/src/file.", &h), Vec3::ONE);
     }
 }
-

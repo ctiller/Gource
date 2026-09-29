@@ -59,6 +59,10 @@ pub fn write_custom_log(path: &str, output: &str, options: &VcsOptions) -> Resul
         Box::new(std::fs::File::create(output)?)
     };
 
+    // Convert all of a stream, rather than stopping when no input has
+    // arrived yet (C++ stops there).
+    commitlog.wait_for_input(true);
+
     while !commitlog.is_finished() {
         let commit = match commitlog.next_commit() {
             Some(c) => c,

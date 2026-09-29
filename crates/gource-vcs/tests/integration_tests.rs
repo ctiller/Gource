@@ -468,8 +468,8 @@ fn test_golden_write_custom_log() {
     };
     // Needs the full history up to the golden revision (not in shallow or
     // unrelated clones).
-    let has_revision = git(&["cat-file", "-e", &format!("{GOLDEN_LOG_REVISION}^{{commit}}")])
-        .is_some()
+    let revision = format!("{GOLDEN_LOG_REVISION}^{{commit}}");
+    let has_revision = git(&["cat-file", "-e", &revision]).is_some()
         && git(&["rev-parse", "--is-shallow-repository"]).as_deref() == Some("false");
     if !has_revision {
         eprintln!("Skipping golden test: revision {GOLDEN_LOG_REVISION} not available");

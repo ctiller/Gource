@@ -8,7 +8,9 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 static CUSTOM_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(?:\xEF\xBB\xBF)?([^|]+)\|([^|]*)\|([ADM]?)\|([^|]+)(?:\|#?([a-fA-F0-9]{6}))?")
+    // C++ matches the UTF-8 byte-order mark as bytes (\xEF\xBB\xBF); lines
+    // are text here, so it's U+FEFF.
+    Regex::new(r"^(?:\x{FEFF})?([^|]+)\|([^|]*)\|([ADM]?)\|([^|]+)(?:\|#?([a-fA-F0-9]{6}))?")
         .unwrap()
 });
 

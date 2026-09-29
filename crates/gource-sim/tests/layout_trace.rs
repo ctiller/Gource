@@ -6,7 +6,10 @@ use gource_sim::shell::GourceShell;
 #[test]
 #[ignore = "investigation harness: prints layout trajectories for comparison with an instrumented C++ build"]
 fn test_layout_trace() {
-    let log_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/app/gource-custom.log");
+    let log_path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/app/gource-custom.log"
+    );
     let args = vec![
         "gource".to_string(),
         "-1280x720".to_string(),

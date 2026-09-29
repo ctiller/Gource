@@ -29,7 +29,11 @@ for fmt in "${formats[@]}"; do
         echo "Processing [$fmt]: $logfile"
         set +e
         if [ "$fmt" = "cvs_exp" ]; then
+            # No --log-format: let gource detect cvs-exp logs.
             "$GOURCE_REF" --output-custom-log "$expected_out" "$logfile" 2> "$expected_err"
+        elif [ "$fmt" = "gitraw" ]; then
+            # There is no gitraw log-format value: git falls back to it.
+            "$GOURCE_REF" --log-format git --output-custom-log "$expected_out" "$logfile" 2> "$expected_err"
         else
             "$GOURCE_REF" --log-format "$fmt" --output-custom-log "$expected_out" "$logfile" 2> "$expected_err"
         fi

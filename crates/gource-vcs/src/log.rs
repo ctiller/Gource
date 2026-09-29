@@ -4,15 +4,33 @@
 use crate::commit::Commit;
 use crate::formats;
 use crate::options::VcsOptions;
+use std::collections::VecDeque;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Seek, SeekFrom};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::sync::{Mutex, PoisonError};
 use std::thread;
 use tempfile::NamedTempFile;
 
 enum LogSource {
     Seekable(SeekableLog),
     Stream(StreamLog),
+}
+
+impl LogSource {
+    fn begin_parse(&mut self) {
+        if let LogSource::Stream(s) = self {
+            s.begin_parse();
+        }
+    }
+
+    /// False if a stream parse ran out of input and was undone.
+    fn end_parse(&mut self) -> bool {
+        match self {
+            LogSource::Seekable(_) => true,
+            LogSource::Stream(s) => s.end_parse(),
+        }
+    }
 }
 
 pub(crate) struct SeekableLog {
@@ -55,7 +73,8 @@ impl SeekableLog {
         let actual = pointer.min(self.file_size);
         let _ = self.reader.seek(SeekFrom::Start(actual));
         self.current_pos = actual;
-        self.finished = self.current_pos >= self.file_size;
+        // `stream->clear()`: seeking resets the end-of-file state.
+        self.finished = false;
     }
 
     pub(crate) fn get_percent(&self) -> f32 {
@@ -66,43 +85,114 @@ impl SeekableLog {
         }
     }
 
+    /// `SeekLog::getNextLine` (`std::getline`): read up to the next newline.
+    /// A read that reaches the end of the file sets the finished state (C++
+    /// `eofbit`), even when it returns a final line without a newline.
     pub(crate) fn get_next_line(&mut self, line: &mut String) -> bool {
         line.clear();
-        match self.reader.read_line(line) {
-            Ok(0) => {
+        let mut bytes = Vec::new();
+        match self.reader.read_until(b'\n', &mut bytes) {
+            Ok(0) | Err(_) => {
                 self.finished = true;
                 false
             }
-            Ok(bytes) => {
-                self.current_pos += bytes as u64;
-                if line.ends_with('\n') {
-                    line.pop();
-                    if line.ends_with('\r') {
-                        line.pop();
-                    }
+            Ok(n) => {
+                self.current_pos += n as u64;
+                if bytes.last() == Some(&b'\n') {
+                    bytes.pop();
+                } else {
+                    self.finished = true;
                 }
+                if bytes.last() == Some(&b'\r') {
+                    bytes.pop();
+                }
+                *line = read_line_text(bytes);
                 true
-            }
-            Err(_) => {
-                self.finished = true;
-                false
             }
         }
     }
 
+    /// `SeekLog::isFinished`: a read has reached the end of the file.
     pub(crate) fn is_finished(&self) -> bool {
-        self.finished || self.current_pos >= self.file_size
+        self.finished
     }
 }
 
+/// Text of a log line. C++ reads raw bytes; invalid UTF-8 is replaced with
+/// '?' as `RCommitLog::filter_utf8` does for names.
+fn read_line_text(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes).unwrap_or_else(|e| gource_core::utf8::filter_utf8(e.as_bytes()))
+}
+
+/// A byte of standard input read by `peek_stdin` and not yet consumed.
+static STDIN_LOOKAHEAD: Mutex<Option<u8>> = Mutex::new(None);
+
+/// `std::cin.peek()`: the next byte of standard input, without consuming it.
+/// The C++ format checks peek at the first character, so a rejected format
+/// leaves the whole stream for the next one.
+fn peek_stdin() -> Option<u8> {
+    let mut lookahead = STDIN_LOOKAHEAD
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if lookahead.is_none() {
+        let mut byte = [0u8; 1];
+        loop {
+            match std::io::stdin().read(&mut byte) {
+                Ok(1) => *lookahead = Some(byte[0]),
+                Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                _ => {}
+            }
+            break;
+        }
+    }
+    *lookahead
+}
+
+/// Standard input, starting with the byte read by `peek_stdin`, if any.
+struct Stdin;
+
+impl Read for Stdin {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        let peeked = STDIN_LOOKAHEAD
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        match peeked {
+            Some(byte) => {
+                buf[0] = byte;
+                Ok(1)
+            }
+            None => std::io::stdin().read(buf),
+        }
+    }
+}
+
+/// A log read from standard input (or another stream). Lines are read on a
+/// thread so the app never waits for input, as C++ makes stdin non-blocking.
+///
+/// A commit is only taken from the stream once all of its lines have
+/// arrived: a parse that runs out of input keeps its lines for the next
+/// attempt, so commits are not split by the timing of the writer.
 pub struct StreamLog {
     receiver: Receiver<String>,
-    finished: bool,
+    /// Lines received and not yet consumed by a parse.
+    pending: VecDeque<String>,
+    /// Number of lines of `pending` read by the current parse.
+    cursor: usize,
+    /// The input has ended.
+    ended: bool,
+    /// The current parse needed a line that has not arrived yet.
+    starved: bool,
+    /// Wait for lines to arrive instead of starving.
+    blocking: bool,
 }
 
 impl StreamLog {
     fn new_stdin() -> Self {
-        Self::from_reader(std::io::stdin())
+        Self::from_reader(Stdin)
     }
 
     pub fn from_reader<R: Read + Send + 'static>(reader: R) -> Self {
@@ -111,19 +201,18 @@ impl StreamLog {
             .name("stream-log-reader".to_string())
             .spawn(move || {
                 let mut buf_reader = BufReader::new(reader);
-                let mut line = String::new();
                 loop {
-                    line.clear();
-                    match buf_reader.read_line(&mut line) {
-                        Ok(0) => break,
+                    let mut bytes = Vec::new();
+                    match buf_reader.read_until(b'\n', &mut bytes) {
+                        // `StreamLog::getNextLine` does not return a last
+                        // line without a newline (it sets eofbit).
+                        Ok(_) if bytes.last() != Some(&b'\n') => break,
                         Ok(_) => {
-                            if line.ends_with('\n') {
-                                line.pop();
-                                if line.ends_with('\r') {
-                                    line.pop();
-                                }
+                            bytes.pop();
+                            if bytes.last() == Some(&b'\r') {
+                                bytes.pop();
                             }
-                            if tx.send(line.clone()).is_err() {
+                            if tx.send(read_line_text(bytes)).is_err() {
                                 break;
                             }
                         }
@@ -135,30 +224,66 @@ impl StreamLog {
 
         Self {
             receiver: rx,
-            finished: false,
+            pending: VecDeque::new(),
+            cursor: 0,
+            ended: false,
+            starved: false,
+            blocking: false,
         }
     }
 
     fn get_next_line(&mut self, line: &mut String) -> bool {
         line.clear();
-        if self.finished {
-            return false;
-        }
-        match self.receiver.try_recv() {
-            Ok(l) => {
-                *line = l;
-                true
+        if self.cursor == self.pending.len() {
+            if self.ended {
+                return false;
             }
-            Err(TryRecvError::Empty) => false,
-            Err(TryRecvError::Disconnected) => {
-                self.finished = true;
-                false
+            let received = if self.blocking {
+                self.receiver.recv().ok()
+            } else {
+                match self.receiver.try_recv() {
+                    Ok(l) => Some(l),
+                    Err(TryRecvError::Empty) => {
+                        self.starved = true;
+                        return false;
+                    }
+                    Err(TryRecvError::Disconnected) => None,
+                }
+            };
+            match received {
+                Some(l) => self.pending.push_back(l),
+                None => {
+                    self.ended = true;
+                    return false;
+                }
             }
         }
+        line.push_str(&self.pending[self.cursor]);
+        self.cursor += 1;
+        true
     }
 
-    pub(crate) fn is_finished(&self) -> bool {
-        self.finished
+    /// Start parsing a commit.
+    fn begin_parse(&mut self) {
+        self.cursor = 0;
+        self.starved = false;
+    }
+
+    /// Finish parsing a commit. Returns false if the parse ran out of input:
+    /// its lines are kept to parse again once more input has arrived.
+    fn end_parse(&mut self) -> bool {
+        let complete = !self.starved;
+        if complete {
+            self.pending.drain(..self.cursor);
+        }
+        self.cursor = 0;
+        self.starved = false;
+        complete
+    }
+
+    /// The input has ended and every line of it has been parsed.
+    pub(crate) fn is_ended(&self) -> bool {
+        self.ended && self.pending.is_empty()
     }
 }
 
@@ -212,8 +337,22 @@ impl CommitLog {
         self.log_command.as_deref()
     }
 
-    /// Low-level parse of the next commit according to `format_name`.
+    /// Parse the next commit. On a stream, a parse that runs out of input is
+    /// undone, to be retried once more input has arrived.
     fn parse_commit(&mut self, commit: &mut Commit) -> bool {
+        self.source.begin_parse();
+        let last_line = self.last_line.clone();
+        let parsed = self.parse_commit_lines(commit);
+        if self.source.end_parse() {
+            parsed
+        } else {
+            self.last_line = last_line;
+            false
+        }
+    }
+
+    /// Low-level parse of the next commit according to `format_name`.
+    fn parse_commit_lines(&mut self, commit: &mut Commit) -> bool {
         let last_line = &mut self.last_line;
         let source = &mut self.source;
         let mut get_line = |line: &mut String| -> bool {
@@ -319,14 +458,27 @@ impl CommitLog {
         self.buffered_commit.is_some()
     }
 
-    /// True once the whole log has been read (and nothing is buffered).
+    /// `isFinished`: the whole log file has been read and nothing is
+    /// buffered. A stream is never finished, as more input may arrive.
     pub fn is_finished(&self) -> bool {
-        if self.buffered_commit.is_some() {
-            return false;
-        }
-        match &self.source {
-            LogSource::Seekable(s) => s.is_finished(),
-            LogSource::Stream(s) => s.is_finished(),
+        self.buffered_commit.is_none()
+            && matches!(&self.source, LogSource::Seekable(s) if s.is_finished())
+    }
+
+    /// Everything has been read: the end of the file, or of a stream's input.
+    pub(crate) fn at_end(&self) -> bool {
+        self.buffered_commit.is_none()
+            && match &self.source {
+                LogSource::Seekable(s) => s.is_finished(),
+                LogSource::Stream(s) => s.is_ended(),
+            }
+    }
+
+    /// Make reading from a stream wait for input, instead of returning no
+    /// commit until more input has arrived. Files are unaffected.
+    pub fn wait_for_input(&mut self, wait: bool) {
+        if let LogSource::Stream(s) = &mut self.source {
+            s.blocking = wait;
         }
     }
 
@@ -394,7 +546,14 @@ impl CommitLog {
     /// Check format implementation: read one commit without validation.
     /// If successful: seek back to 0.0 if seekable, or buffer the commit if stream.
     pub fn check_format(&mut self) -> bool {
-        if let Some(commit) = self.next_commit_unvalidated() {
+        // Wait for a stream's first commit (C++ waits for input on stdin).
+        let was_waiting = match &mut self.source {
+            LogSource::Stream(s) => std::mem::replace(&mut s.blocking, true),
+            LogSource::Seekable(_) => false,
+        };
+        let first = self.next_commit_unvalidated();
+        self.wait_for_input(was_waiting);
+        if let Some(commit) = first {
             match &mut self.source {
                 LogSource::Seekable(s) => {
                     s.seek_to(0.0);
@@ -419,9 +578,8 @@ impl CommitLog {
         };
 
         if path == "-" {
-            // Can't easily peek stdin without consuming, but we can peek 1 byte if needed.
-            // In C++, checkFirstChar peeks std::cin.
-            return true;
+            // `checkFirstChar` peeks at `std::cin`.
+            return peek_stdin() == Some(exp as u8);
         }
 
         let mut file = match File::open(path) {

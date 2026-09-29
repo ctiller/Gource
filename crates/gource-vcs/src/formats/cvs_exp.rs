@@ -68,12 +68,30 @@ where
         None => return false,
     };
 
-    let year: i32 = date_caps.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-    let month: u32 = date_caps.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-    let day: u32 = date_caps.get(3).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-    let hour: u32 = date_caps.get(4).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-    let min: u32 = date_caps.get(5).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-    let sec: u32 = date_caps.get(6).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+    let year: i32 = date_caps
+        .get(1)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
+    let month: u32 = date_caps
+        .get(2)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
+    let day: u32 = date_caps
+        .get(3)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
+    let hour: u32 = date_caps
+        .get(4)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
+    let min: u32 = date_caps
+        .get(5)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
+    let sec: u32 = date_caps
+        .get(6)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
 
     let naive_date = match chrono::NaiveDate::from_ymd_opt(year, month, day) {
         Some(d) => d,
@@ -117,11 +135,16 @@ where
         }
     }
 
-    // The while loop already read the line after entries into `line`.
-    // If it's not empty, read commit message until blank line
-    if !line.is_empty() {
-        while get_line(&mut line) && !line.is_empty() {}
+    // C++ reads a "blank line" here. The entry loop has already consumed
+    // the line after the entries, so with a single blank line this is the
+    // first line of the message, and the message loop below then runs into
+    // the next commit. Kept as-is for parity with the C++ binary.
+    if !get_line(&mut line) {
+        return false;
     }
+
+    // Read the commit message (up to a blank line)
+    while get_line(&mut line) && !line.is_empty() {}
 
     // Read until end of commit or eof
     while get_line(&mut line) {
