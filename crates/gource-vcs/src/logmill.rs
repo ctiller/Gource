@@ -109,6 +109,19 @@ impl LogMill {
         None
     }
 
+    /// Block until the fetch has finished. The result stays available to
+    /// [`LogMill::take_result`].
+    pub fn wait(&mut self) {
+        if self.cached_result.is_none()
+            && let Ok(res) = self.result_rx.recv()
+        {
+            self.cached_result = Some(res);
+            if let Some(handle) = self.thread_handle.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+
     /// Request cancellation (e.g. when the user quits while a large log is
     /// being generated). Kills a running VCS command if possible.
     pub fn abort(&mut self) {

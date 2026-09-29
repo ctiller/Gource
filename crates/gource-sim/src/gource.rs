@@ -139,7 +139,7 @@ impl GourceTextures {
                         Path::new(&settings.logo),
                         gource_draw::TextureOptions::plain(),
                     )
-                    .map_err(|e| AppError(e.to_string()))?,
+                    .map_err(|_| resource_error(&settings.logo))?,
             )
         } else {
             None
@@ -152,7 +152,7 @@ impl GourceTextures {
                         Path::new(&settings.background_image),
                         gource_draw::TextureOptions::default(),
                     )
-                    .map_err(|e| AppError(e.to_string()))?,
+                    .map_err(|_| resource_error(&settings.background_image))?,
             )
         } else {
             None
@@ -167,6 +167,28 @@ impl GourceTextures {
             logo,
             background,
         })
+    }
+}
+
+/// The fatal error for an image that can't be loaded: C++ throws a
+/// `TextureException`, which `main` reports as "failed to load resource".
+fn resource_error(path: &str) -> AppError {
+    AppError(format!("failed to load resource '{path}'"))
+}
+
+/// The x position of a caption `width` pixels wide: C++ stores it in an
+/// `int` - centred with `(display.width / 2) - (width / 2)` (integer
+/// halving of the display width) when `--caption-offset` is 0, right-aligned
+/// with `display.width + offset - width` when it is negative - so the
+/// result is truncated towards zero.
+fn caption_offset_x(caption_offset: i32, display_width: u32, width: f32) -> i32 {
+    let display_width = display_width as i32;
+    if caption_offset == 0 {
+        ((display_width / 2) as f32 - width / 2.0) as i32
+    } else if caption_offset < 0 {
+        ((display_width + caption_offset) as f32 - width) as i32
+    } else {
+        caption_offset
     }
 }
 
@@ -386,6 +408,13 @@ impl Gource {
         }
 
         Ok(g)
+    }
+
+    /// Port of `Gource::reload()`: the shell calls it after reloading its
+    /// resources (F5) and when the display changes size; the next logic
+    /// step repositions the active captions.
+    pub fn reload(&mut self) {
+        self.reloaded = true;
     }
 
     /// Reset simulation state for seeking / restarting.
@@ -1047,7 +1076,7 @@ impl Gource {
             Some(path) => Some(
                 gfx.textures
                     .load_file(Path::new(path), gource_draw::TextureOptions::default())
-                    .map_err(|e| AppError(e.to_string()))?,
+                    .map_err(|_| resource_error(path))?,
             ),
             None => None,
         };
@@ -1076,6 +1105,19 @@ impl Gource {
 
         // Initialize log from logmill
         if self.commitlog.is_none() {
+            if self.recording {
+                // C++ polls the log mill, which nearly always finishes during
+                // the first frame. A recording makes that deterministic, so
+                // its runtime and exported frames don't depend on how long
+                // the log takes to read: the first frame always waits, and
+                // the second blocks until the log is ready.
+                if self.framecount == 0 {
+                    return Ok(());
+                }
+                if let Some(m) = self.logmill.as_mut() {
+                    m.wait();
+                }
+            }
             let finished = self
                 .logmill
                 .as_ref()
@@ -1158,13 +1200,15 @@ impl Gource {
             self.subseconds = 0.0;
         }
 
-        let time_inc = dt * 86400.0 * self.settings.days_per_second;
+        // C++: `float time_inc = (dt * 86400.0 * days_per_second)`: 86400.0
+        // is a double, so the product is evaluated in double precision.
+        let time_inc = (dt as f64 * 86400.0 * self.settings.days_per_second as f64) as f32;
         let seconds = time_inc as i64;
         self.subseconds += time_inc - (seconds as f32);
 
         if self.subseconds >= 1.0 {
             self.currtime += self.subseconds as i64;
-            self.subseconds -= self.subseconds.floor();
+            self.subseconds -= (self.subseconds as i64) as f32;
         }
         self.currtime += seconds;
 
@@ -1208,16 +1252,34 @@ impl Gource {
             self.subseconds = 0.0;
         }
 
+        // C++ resizes the slider to the display every tick.
+        self.slider
+            .resize(viewport.width as f32, viewport.height as f32, 35.0);
+
         // Captions logic
-        let caption_height = 20.0 * self.settings.font_scale;
+        let caption_height = gfx.fonts.max_height(self.fonts.caption);
+        let medium_height = gfx.fonts.max_height(self.fonts.medium);
+        let display_height = viewport.height as f32;
         let mut caption_start_y = if self.can_seek() {
             self.slider.bounds().min.y - 35.0
         } else {
-            viewport.height as f32 - 40.0 * self.settings.font_scale
+            display_height - medium_height - 20.0
         };
         if !self.settings.title.is_empty() {
-            caption_start_y =
-                caption_start_y.min(viewport.height as f32 - 40.0 * self.settings.font_scale);
+            caption_start_y = caption_start_y.min(display_height - 20.0 - medium_height);
+        }
+        let caption_start_y = caption_start_y.floor();
+
+        if self.reloaded {
+            // Reposition the active captions (the display or fonts changed).
+            let mut y = caption_start_y;
+            for cap in &mut self.active_captions {
+                let width = gfx.text_width(self.fonts.caption, &cap.caption);
+                let x = caption_offset_x(self.settings.caption_offset, viewport.width, width);
+                cap.set_pos(Vec2::new(x as f32, y));
+                y -= caption_height;
+            }
+            self.reloaded = false;
         }
 
         while let Some(cap) = self.captions.front() {
@@ -1225,22 +1287,14 @@ impl Gource {
                 break;
             }
             let mut cap = self.captions.pop_front().unwrap();
+            // Stack below the lowest free row (C++ compares rows exactly).
             let mut y = caption_start_y;
-            while self
-                .active_captions
-                .iter()
-                .any(|c| (c.pos.y - y).abs() < 1.0)
-            {
+            while self.active_captions.iter().any(|c| c.pos.y == y) {
                 y -= caption_height;
             }
-            let mut offset_x = self.settings.caption_offset as f32;
-            let text_width = gfx.text_width(self.fonts.caption, &cap.caption);
-            if offset_x == 0.0 {
-                offset_x = (viewport.width as f32) * 0.5 - (text_width * 0.5);
-            } else if offset_x < 0.0 {
-                offset_x = (viewport.width as f32) + offset_x - text_width;
-            }
-            cap.set_pos(Vec2::new(offset_x, y));
+            let width = gfx.text_width(self.fonts.caption, &cap.caption);
+            let x = caption_offset_x(self.settings.caption_offset, viewport.width, width);
+            cap.set_pos(Vec2::new(x as f32, y));
             self.active_captions.push(cap);
         }
 
@@ -1255,7 +1309,8 @@ impl Gource {
         self.update_users(t, dt);
 
         self.world.interact_dirs();
-        self.world.update_dirs(dt, self.settings.elasticity);
+        self.world
+            .update_dirs(dt, self.settings.elasticity, self.settings.file_idle_time);
 
         self.update_camera(dt, viewport);
 

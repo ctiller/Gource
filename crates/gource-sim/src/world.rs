@@ -671,8 +671,11 @@ impl World {
         let children = self.dirs[dir_id].children.clone();
         for child_id in children {
             if self.remove_file_from_tree(child_id, file_id, file_path, was_visible) {
-                // Check if child is now empty and reap
-                if self.dirs[child_id].is_empty() {
+                // Reap the child if it is now empty: C++ checks
+                // `noFiles() && noDirs()`, not `empty()` (which only counts
+                // visible files) - hidden files still belong to the dir.
+                let child = &self.dirs[child_id];
+                if child.files.is_empty() && child.children.is_empty() {
                     self.dirs[dir_id].children.retain(|&cid| cid != child_id);
                     self.delete_dir_recursive(child_id);
                     self.on_node_updated(dir_id, false);
@@ -770,9 +773,12 @@ impl World {
             1
         };
 
+        // C++ adds the users in name order (the `users` map). The insertion
+        // order is the visit order, so it decides the order in which the
+        // repulsion forces are summed.
         let mut tree = QuadTree::new(quadtree_bounds, max_depth, 1);
-        for (user_id, user) in &self.users {
-            tree.insert(user_id, user.pawn.bounds());
+        for &user_id in self.users_by_name.values() {
+            tree.insert(user_id, self.users[user_id].pawn.bounds());
         }
 
         let p_space = self.tuning.personal_space_dist;
@@ -857,13 +863,14 @@ impl World {
         self.dir_tree = Some(tree);
     }
 
-    /// Port of `Gource::updateDirs(float dt)`.
-    pub fn update_dirs(&mut self, dt: f32, elasticity: f32) {
+    /// Port of `Gource::updateDirs(float dt)`. `file_idle_time` is
+    /// `gGourceSettings.file_idle_time` (files idle longer fade out; 0 = never).
+    pub fn update_dirs(&mut self, dt: f32, elasticity: f32, file_idle_time: f32) {
         if let Some(tree) = self.dir_tree.take() {
             self.apply_dir_forces_recursive(self.root, &tree);
             self.dir_tree = Some(tree);
         }
-        self.logic_dirs_recursive(self.root, dt, elasticity);
+        self.logic_dirs_recursive(self.root, dt, elasticity, file_idle_time);
     }
 
     fn apply_dir_forces_recursive(&mut self, dir_id: DirId, tree: &QuadTree<DirId>) {
@@ -966,7 +973,13 @@ impl World {
         false
     }
 
-    fn logic_dirs_recursive(&mut self, dir_id: DirId, dt: f32, elasticity: f32) {
+    fn logic_dirs_recursive(
+        &mut self,
+        dir_id: DirId,
+        dt: f32,
+        elasticity: f32,
+        file_idle_time: f32,
+    ) {
         if !self.dirs[dir_id].is_empty()
             && !self.dirs[dir_id].position_initialized
             && let Some(pid) = self.dirs[dir_id].parent
@@ -994,7 +1007,7 @@ impl World {
         let file_ids = self.dirs[dir_id].files.clone();
         for fid in file_ids {
             if let Some(file) = self.files.get_mut(fid) {
-                let expired = file.logic(dt, 0.0);
+                let expired = file.logic(dt, file_idle_time);
                 if expired {
                     self.removed_files.push(fid);
                 }
@@ -1003,7 +1016,7 @@ impl World {
 
         let children = self.dirs[dir_id].children.clone();
         for cid in children {
-            self.logic_dirs_recursive(cid, dt, elasticity);
+            self.logic_dirs_recursive(cid, dt, elasticity, file_idle_time);
         }
 
         self.dirs[dir_id].calc_colour(&self.files);
@@ -1383,7 +1396,8 @@ impl World {
                 let offset_src = offset * 0.3;
 
                 let alpha = 1.0 - a.progress;
-                let alpha2 = alpha * 0.1;
+                // C++: `alpha * 0.1` (a double literal).
+                let alpha2 = (alpha as f64 * 0.1) as f32;
 
                 let col1 = Vec4::new(a.colour.x, a.colour.y, a.colour.z, alpha);
                 let col2 = Vec4::new(a.colour.x, a.colour.y, a.colour.z, alpha2);
@@ -1663,7 +1677,7 @@ mod tests {
         world.interact_dirs();
         assert!(world.dir_tree.is_some());
 
-        world.update_dirs(0.1, 0.0);
+        world.update_dirs(0.1, 0.0, 0.0);
 
         let inactives = world.update_users(1.1, 0.1, &settings);
         assert!(inactives.is_empty());
@@ -1671,7 +1685,11 @@ mod tests {
         // Deleting file
         let del_info = world.delete_file(fid).expect("deleted file");
         assert_eq!(del_info.fullpath, "/src/main.rs");
-        assert_eq!(world.users[uid].action_count(), 0);
+        // The action was active: C++ keeps counting it (see
+        // `User::removed_active_count`), though the user is now idle.
+        assert!(world.users[uid].is_idle());
+        assert_eq!(world.users[uid].removed_active_count, 1);
+        assert_eq!(world.users[uid].action_count(), 1);
 
         // Deleting user
         let udel_info = world.delete_user(uid).expect("deleted user");

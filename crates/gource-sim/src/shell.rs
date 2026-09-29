@@ -26,6 +26,9 @@ pub struct GourceShell {
     pub toggle_delay: f32,
     pub requests: VecDeque<PlatformRequest>,
     pub gfx: Gfx,
+    /// The viewport of the previous frame: a change is the C++
+    /// `GourceShell::resize`, which reloads (see [`GourceShell::reload`]).
+    pub last_viewport: Option<Viewport>,
 }
 
 impl GourceShell {
@@ -47,6 +50,7 @@ impl GourceShell {
             toggle_delay: 0.0,
             requests: VecDeque::new(),
             gfx,
+            last_viewport: None,
         };
 
         // Prepare the first repository
@@ -131,9 +135,7 @@ impl GourceShell {
             }
 
             if *key == Key::F5 {
-                if let Some(ref mut g) = self.gource {
-                    g.reset();
-                }
+                self.reload();
                 return;
             }
 
@@ -141,6 +143,9 @@ impl GourceShell {
                 if self.toggle_delay <= 0.0 && !self.options.recording {
                     self.requests.push_back(PlatformRequest::ToggleFrameless);
                     self.toggle_delay = 0.25;
+                    if let Some(g) = self.gource.as_mut() {
+                        g.reload();
+                    }
                 }
                 return;
             }
@@ -149,6 +154,9 @@ impl GourceShell {
                 if modifiers.alt {
                     if !self.options.recording {
                         self.requests.push_back(PlatformRequest::ToggleFullscreen);
+                        if let Some(g) = self.gource.as_mut() {
+                            g.reload();
+                        }
                     }
                 } else if self.repo_count > 1 {
                     self.next = true;
@@ -162,11 +170,41 @@ impl GourceShell {
         }
     }
 
+    /// Port of `GourceShell::reload()` (F5): re-read the textures from their
+    /// files, then let the visualization reposition its captions. Like a
+    /// texture that fails to load at startup, one that can no longer be read
+    /// is fatal (C++ throws a `TextureException`).
+    pub fn reload(&mut self) {
+        if let Some(err) = self.gfx.textures.reload_files().into_iter().next() {
+            let path = match &err {
+                gource_draw::TextureError::Io { path, .. } => path.clone(),
+                gource_draw::TextureError::Decode { name, .. } => name.clone(),
+            };
+            self.is_finished = true;
+            self.requests.push_back(PlatformRequest::Fatal(format!(
+                "failed to load resource '{path}'"
+            )));
+            self.requests.push_back(PlatformRequest::Quit);
+            return;
+        }
+        if let Some(g) = self.gource.as_mut() {
+            g.reload();
+        }
+    }
+
     /// Advance one displayed frame and tessellate into list.
     pub fn frame(&mut self, dt: f32, viewport: Viewport, list: &mut DrawList) {
         if self.is_finished {
             return;
         }
+
+        // A new display size is the C++ `GourceShell::resize`, which reloads.
+        if self.last_viewport.is_some_and(|v| v != viewport)
+            && let Some(g) = self.gource.as_mut()
+        {
+            g.reload();
+        }
+        self.last_viewport = Some(viewport);
 
         if self.toggle_delay > 0.0 {
             self.toggle_delay -= dt;

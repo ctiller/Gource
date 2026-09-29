@@ -6,7 +6,7 @@
 
 use crate::list::TextureId;
 use glam::UVec2;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -140,12 +140,56 @@ fn generate_mipmaps(width: u32, height: u32, base_rgba: &[u8]) -> Vec<Vec<u8>> {
 pub struct TextureStore {
     textures: Vec<Option<Texture>>,
     cache: HashMap<(String, TextureOptions), TextureId>,
+    /// Textures loaded with [`TextureStore::load_file`] (their name is the
+    /// path), for [`TextureStore::reload_files`].
+    files: BTreeSet<TextureId>,
 }
 
 impl Default for TextureStore {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Read and decode an image file (png, jpeg, bmp, gif, tga) to RGBA8.
+fn decode_file(path: &Path) -> Result<(u32, u32, Vec<u8>), TextureError> {
+    let name = path.to_string_lossy().into_owned();
+    let reader = image::ImageReader::open(path).map_err(|e| TextureError::Io {
+        path: name.clone(),
+        source: e,
+    })?;
+
+    let reader = reader.with_guessed_format().map_err(|e| TextureError::Io {
+        path: name.clone(),
+        source: e,
+    })?;
+
+    // If format couldn't be guessed from magic bytes (common for TGA), guess from extension
+    let reader = if reader.format().is_none() {
+        if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+            if let Some(fmt) = image::ImageFormat::from_extension(ext) {
+                let mut r = reader;
+                r.set_format(fmt);
+                r
+            } else {
+                reader
+            }
+        } else {
+            reader
+        }
+    } else {
+        reader
+    };
+
+    let img = reader.decode().map_err(|e| TextureError::Decode {
+        name,
+        message: e.to_string(),
+    })?;
+
+    let rgba = img.to_rgba8();
+    let width = rgba.width();
+    let height = rgba.height();
+    Ok((width, height, rgba.into_raw()))
 }
 
 impl TextureStore {
@@ -163,6 +207,7 @@ impl TextureStore {
         Self {
             textures: vec![Some(white_texture)],
             cache: HashMap::new(),
+            files: BTreeSet::new(),
         }
     }
 
@@ -179,46 +224,43 @@ impl TextureStore {
             return Ok(id);
         }
 
-        let reader = image::ImageReader::open(path).map_err(|e| TextureError::Io {
-            path: path.to_string_lossy().into_owned(),
-            source: e,
-        })?;
-
-        let reader = reader.with_guessed_format().map_err(|e| TextureError::Io {
-            path: path.to_string_lossy().into_owned(),
-            source: e,
-        })?;
-
-        // If format couldn't be guessed from magic bytes (common for TGA), guess from extension
-        let reader = if reader.format().is_none() {
-            if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-                if let Some(fmt) = image::ImageFormat::from_extension(ext) {
-                    let mut r = reader;
-                    r.set_format(fmt);
-                    r
-                } else {
-                    reader
-                }
-            } else {
-                reader
-            }
-        } else {
-            reader
-        };
-
-        let img = reader.decode().map_err(|e| TextureError::Decode {
-            name: key.0.clone(),
-            message: e.to_string(),
-        })?;
-
-        let rgba = img.to_rgba8();
-        let width = rgba.width();
-        let height = rgba.height();
-        let raw = rgba.into_raw();
-
+        let (width, height, raw) = decode_file(path)?;
         let id = self.create_rgba(&key.0, width, height, raw, options);
         self.cache.insert(key, id);
+        self.files.insert(id);
         Ok(id)
+    }
+
+    /// Re-read every texture loaded with [`TextureStore::load_file`] from
+    /// its file, keeping its id and options and bumping its version (the
+    /// C++ `TextureManager::unload()` + `reload()` of F5). A texture whose
+    /// file can no longer be read keeps its old pixels; the errors are
+    /// returned.
+    pub fn reload_files(&mut self) -> Vec<TextureError> {
+        let mut errors = Vec::new();
+        let ids: Vec<TextureId> = self.files.iter().copied().collect();
+        for id in ids {
+            let Some(Some(tex)) = self.textures.get(id.0 as usize) else {
+                continue;
+            };
+            match decode_file(Path::new(&tex.name)) {
+                Ok((width, height, rgba)) => {
+                    let tex = self.textures[id.0 as usize]
+                        .as_mut()
+                        .expect("checked above");
+                    tex.levels = if tex.options.mipmaps {
+                        generate_mipmaps(width, height, &rgba)
+                    } else {
+                        vec![rgba]
+                    };
+                    tex.width = width;
+                    tex.height = height;
+                    tex.version = tex.version.wrapping_add(1);
+                }
+                Err(e) => errors.push(e),
+            }
+        }
+        errors
     }
 
     /// Decode an in-memory image (e.g. an embedded resource). Cached by
@@ -379,6 +421,7 @@ impl TextureStore {
             .and_then(|slot| slot.take())
         {
             self.cache.remove(&(tex.name, tex.options));
+            self.files.remove(&id);
         }
     }
 }

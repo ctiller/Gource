@@ -79,7 +79,7 @@ fn test_world_scenarios_and_harden() {
         world.update_bounds();
         world.interact_users();
         world.interact_dirs();
-        world.update_dirs(0.1, 0.1);
+        world.update_dirs(0.1, 0.1, 0.0);
     }
 
     // Now actions should be executed / files touched

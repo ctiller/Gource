@@ -53,7 +53,8 @@ impl File {
     ) -> Self {
         let mut pawn = Pawn::new(fullpath.to_string(), pos, tagid);
         pawn.hidden = true;
-        pawn.size = file_diameter * 1.05;
+        // C++: `gGourceFileDiameter * 1.05` (a double literal).
+        pawn.size = (file_diameter as f64 * 1.05) as f32;
         let radius = pawn.size * 0.5;
 
         pawn.speed = 5.0;

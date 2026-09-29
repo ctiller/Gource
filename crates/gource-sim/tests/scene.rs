@@ -300,7 +300,7 @@ fn test_world_drawing_and_frustum() {
     world.update_bounds();
     world.interact_users();
     world.interact_dirs();
-    world.update_dirs(0.1, 0.2);
+    world.update_dirs(0.1, 0.2, 0.0);
 
     let proj = Projection::new(Vec3::new(0.0, 0.0, -500.0), Vec2::new(1280.0, 720.0));
     world.prepare_frame(&proj, &settings);
@@ -603,7 +603,7 @@ fn test_world_comprehensive_coverage() {
     world.update_bounds();
     world.interact_users();
     world.interact_dirs();
-    world.update_dirs(0.1, 0.5);
+    world.update_dirs(0.1, 0.5, 0.0);
 
     // Finish actions in update_users
     for _ in 0..15 {
@@ -698,7 +698,7 @@ fn test_world_deep_tree_forces_and_reparenting() {
     world.interact_users();
 
     // Update dirs to exercise parent's parent push force, sibling repulsion, and nearby repulsion
-    world.update_dirs(0.1, 0.5);
+    world.update_dirs(0.1, 0.5, 0.0);
 
     // Test file deletion on middle directory triggering deletion of empty dir
     let d1 = world.delete_file(f1);

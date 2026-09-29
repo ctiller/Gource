@@ -20,6 +20,11 @@ pub struct User {
 
     pub actions: Vec<Action>,
     pub active_actions: Vec<Action>,
+    /// Active actions dropped by [`User::file_removed`]. C++ `fileRemoved`
+    /// erases them without decrementing `activeCount`, so they keep counting
+    /// towards `getActionCount()` (the user's personal space and action
+    /// interval) for the rest of the user's life. Kept for parity.
+    pub removed_active_count: usize,
 
     pub action_interval: f32,
     pub action_dist: f32,
@@ -56,6 +61,7 @@ impl User {
             pawn,
             actions: Vec::new(),
             active_actions: Vec::new(),
+            removed_active_count: 0,
             action_interval: 0.2,
             action_dist: 50.0,
             last_action: 0.0,
@@ -114,12 +120,16 @@ impl User {
     /// Port of `RUser::fileRemoved(RFile* f)`.
     pub fn file_removed(&mut self, file_id: FileId) {
         self.actions.retain(|a| a.target != file_id);
+        let active = self.active_actions.len();
         self.active_actions.retain(|a| a.target != file_id);
+        self.removed_active_count += active - self.active_actions.len();
     }
 
-    /// Port of `RUser::getActionCount()`.
+    /// Port of `RUser::getActionCount()` (`actionCount + activeCount`),
+    /// including the active actions C++ never uncounts (see
+    /// [`User::removed_active_count`]).
     pub fn action_count(&self) -> usize {
-        self.actions.len() + self.active_actions.len()
+        self.actions.len() + self.active_actions.len() + self.removed_active_count
     }
 
     /// Port of `RUser::getPendingActionCount()`.
@@ -205,7 +215,8 @@ impl User {
         let desired_dist = if self.action_count() == 0 {
             personal_space_dist
         } else if !self.actions.is_empty() && self.active_actions.is_empty() {
-            personal_space_dist * 0.1
+            // C++: `gGourcePersonalSpaceDist * 0.1` is evaluated in double.
+            (personal_space_dist as f64 * 0.1) as f32
         } else {
             personal_space_dist * 0.5
         };
