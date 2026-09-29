@@ -54,4 +54,14 @@ pub struct VcsOptions {
     pub hasher: StringHasher,
     /// Whether to include numstat when reading git logs.
     pub include_numstat: bool,
+    /// Live streaming mode.
+    pub live: bool,
+    /// Polling interval for live mode (seconds). <= 0.0 defaults to 5.0 in watchers.
+    pub live_interval_secs: f32,
+    /// Run `git fetch --quiet` before checking for updates in live mode.
+    pub live_fetch: bool,
+    /// Target GitHub repository or owner for watch mode ("owner/repo" or "owner").
+    pub github: String,
+    /// Personal access token for GitHub API (or via GITHUB_TOKEN / GH_TOKEN env vars).
+    pub github_token: String,
 }

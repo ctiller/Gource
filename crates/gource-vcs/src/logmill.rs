@@ -304,6 +304,26 @@ fn fetch_internal(
     abort_flag: Option<&Arc<AtomicBool>>,
     child_process: Option<&Arc<Mutex<Option<Child>>>>,
 ) -> Result<CommitLog, String> {
+    let abort_clone = abort_flag
+        .cloned()
+        .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
+
+    if !options.github.is_empty() {
+        let target = crate::github::GitHubTarget::parse(&options.github)?;
+        return crate::github::GitHubWatcher::spawn(target, options.clone(), abort_clone);
+    } else if crate::github::GitHubTarget::looks_like_github_path(path) {
+        let target = crate::github::GitHubTarget::parse(path)?;
+        return crate::github::GitHubWatcher::spawn(target, options.clone(), abort_clone);
+    } else if options.live {
+        let path_obj = Path::new(path);
+        if path_obj.is_dir()
+            && let Some((repo_dir, fmt)) = find_repository(path_obj)
+            && fmt == "git"
+        {
+            return crate::live::LiveGitWatcher::spawn(repo_dir, options.clone(), abort_clone);
+        }
+    }
+
     let mut log_format = options.log_format.clone();
     let mut logfile = path.to_string();
 

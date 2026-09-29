@@ -134,10 +134,17 @@ pub fn vcs_options(settings: &GourceSettings) -> VcsOptions {
             user_show_filters: settings.user_show_filters.clone(),
         },
         hasher: StringHasher::new(settings.hash_seed),
-        include_numstat: settings.file_size_metric != gource_settings::FileSizeMetric::None
+        include_numstat: settings.live
+            || !settings.github.is_empty()
+            || settings.file_size_metric != gource_settings::FileSizeMetric::None
             || settings.file_pulse > 0.0
             || settings.file_colour_mode != gource_settings::FileColourMode::Extension
             || !settings.dashboards.is_empty()
             || !settings.output_stats_filename.is_empty(),
+        live: settings.live,
+        live_interval_secs: settings.live_interval,
+        live_fetch: settings.live_fetch,
+        github: settings.github.clone(),
+        github_token: settings.github_token.clone(),
     }
 }

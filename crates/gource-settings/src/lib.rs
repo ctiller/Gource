@@ -309,6 +309,13 @@ fn get_option_type(opt: &str) -> Option<&'static str> {
         "no-cache" => Some("bool"),
         "seed" => Some("int"),
 
+        // Live mode and GitHub watch options
+        "live" => Some("bool"),
+        "live-interval" => Some("float"),
+        "live-fetch" => Some("bool"),
+        "github" => Some("string"),
+        "github-token" => Some("string"),
+
         _ => None,
     }
 }

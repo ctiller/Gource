@@ -14,6 +14,8 @@
 
 pub mod commit;
 pub mod formats;
+pub mod github;
+pub mod live;
 pub mod log;
 pub mod logmill;
 pub mod options;
@@ -22,6 +24,11 @@ pub mod options;
 mod coverage_tests;
 
 pub use commit::{Commit, CommitFile, FileAction};
+pub use github::{
+    DefaultHttpTransport, GitHubTarget, GitHubWatcher, HttpResponse, HttpTransport,
+    resolve_github_token,
+};
+pub use live::LiveGitWatcher;
 pub use log::CommitLog;
 pub use logmill::{LogMill, LogMillStatus};
 pub use options::{CommitFilters, VcsOptions};

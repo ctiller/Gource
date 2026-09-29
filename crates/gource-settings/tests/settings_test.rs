@@ -1261,3 +1261,117 @@ fn test_evolution_cli_and_settings() {
         vec![DashboardPanel::Diff, DashboardPanel::Commits]
     );
 }
+
+#[test]
+fn test_live_and_github_settings() {
+    // 1. Defaults
+    let def = GourceSettings::default();
+    assert!(!def.live);
+    assert_eq!(def.live_interval, 5.0);
+    assert!(!def.live_fetch);
+    assert!(def.github.is_empty());
+    assert!(def.github_token.is_empty());
+
+    // 2. Parse command line with live options
+    let args = vec![
+        "--live".to_string(),
+        "--live-interval".to_string(),
+        "2.5".to_string(),
+        "--live-fetch".to_string(),
+        "--github".to_string(),
+        "owner/repo".to_string(),
+        "--github-token".to_string(),
+        "ghp_secret_token_12345".to_string(),
+        ".".to_string(),
+    ];
+    let action = parse_command_line(&args).unwrap();
+    let cfg = match action {
+        CliAction::Run(cfg) => cfg,
+        _ => panic!("expected Run"),
+    };
+    assert!(cfg.gource.live);
+    assert_eq!(cfg.gource.live_interval, 2.5);
+    assert!(cfg.gource.live_fetch);
+    assert_eq!(cfg.gource.github, "owner/repo");
+    assert_eq!(cfg.gource.github_token, "ghp_secret_token_12345");
+
+    // 3. Security requirement: github_token is NEVER in to_cli_args()
+    let cli_args = cfg.gource.to_cli_args();
+    assert!(cli_args.contains(&"--live".to_string()));
+    assert!(cli_args.contains(&"--live-interval".to_string()));
+    assert!(cli_args.contains(&"2.5".to_string()));
+    assert!(cli_args.contains(&"--live-fetch".to_string()));
+    assert!(cli_args.contains(&"--github".to_string()));
+    assert!(cli_args.contains(&"owner/repo".to_string()));
+    assert!(!cli_args.contains(&"--github-token".to_string()));
+    assert!(!cli_args.iter().any(|arg| arg.contains("secret")));
+
+    // 4. Default live-interval (5.0) is not emitted in to_cli_args
+    let mut default_interval_settings = cfg.gource.clone();
+    default_interval_settings.live_interval = 5.0;
+    let cli_args2 = default_interval_settings.to_cli_args();
+    assert!(!cli_args2.contains(&"--live-interval".to_string()));
+
+    // 5. GitHub watch automatically sets live = true if live is not explicitly set
+    let mut conf = ConfFile::new();
+    let sec = conf.add_section("gource");
+    sec.add_entry("path", ".");
+    sec.add_entry("github", "torvalds/linux");
+    let s = GourceSettings::import(&conf, conf.section("gource")).unwrap();
+    assert_eq!(s.github, "torvalds/linux");
+    assert!(s.live);
+
+    // Explicit live=false with github keeps live=false
+    let mut conf_no_live = ConfFile::new();
+    let sec_no_live = conf_no_live.add_section("gource");
+    sec_no_live.add_entry("path", ".");
+    sec_no_live.add_entry("github", "torvalds/linux");
+    sec_no_live.add_entry("live", "false");
+    let s_no_live = GourceSettings::import(&conf_no_live, conf_no_live.section("gource")).unwrap();
+    assert_eq!(s_no_live.github, "torvalds/linux");
+    assert!(!s_no_live.live);
+
+    // 6. Path with GitHub URL automatically sets live = true
+    for gh_path in [
+        "https://github.com/torvalds/linux",
+        "http://github.com/torvalds/linux",
+        "github:torvalds/linux",
+    ] {
+        let mut conf_url = ConfFile::new();
+        let sec_url = conf_url.add_section("gource");
+        sec_url.add_entry("path", gh_path);
+        let s_url = GourceSettings::import(&conf_url, conf_url.section("gource")).unwrap();
+        assert!(s_url.live, "expected live=true for path {}", gh_path);
+    }
+
+    // 7. Validation errors
+    let mut bad_interval_conf = ConfFile::new();
+    let sec_bad = bad_interval_conf.add_section("gource");
+    sec_bad.add_entry("path", ".");
+    sec_bad.add_entry("live-interval", "0.0");
+    assert!(
+        GourceSettings::import(&bad_interval_conf, bad_interval_conf.section("gource")).is_err()
+    );
+
+    let mut neg_interval_conf = ConfFile::new();
+    let sec_neg = neg_interval_conf.add_section("gource");
+    sec_neg.add_entry("path", ".");
+    sec_neg.add_entry("live-interval", "-1.5");
+    assert!(
+        GourceSettings::import(&neg_interval_conf, neg_interval_conf.section("gource")).is_err()
+    );
+
+    let mut empty_github_conf = ConfFile::new();
+    let sec_empty_gh = empty_github_conf.add_section("gource");
+    sec_empty_gh.add_entry("path", ".");
+    sec_empty_gh.add_entry("github", "");
+    assert!(
+        GourceSettings::import(&empty_github_conf, empty_github_conf.section("gource")).is_err()
+    );
+
+    let mut empty_token_conf = ConfFile::new();
+    let sec_empty_tok = empty_token_conf.add_section("gource");
+    sec_empty_tok.add_entry("path", ".");
+    sec_empty_tok.add_entry("github-token", "");
+    assert!(GourceSettings::import(&empty_token_conf, empty_token_conf.section("gource")).is_err());
+}

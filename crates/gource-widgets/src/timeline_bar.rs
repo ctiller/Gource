@@ -90,6 +90,10 @@ pub struct TimelineBarData {
     pub direction_label: String,
     /// Current simulation date string.
     pub current_date: String,
+    /// Whether live mode is enabled.
+    pub is_live: bool,
+    /// Whether the playhead is currently pinned to the live edge.
+    pub at_live_edge: bool,
     /// Optional hover tooltip card.
     pub hover_info: Option<TimelineHoverCard>,
 }
@@ -105,6 +109,8 @@ impl Default for TimelineBarData {
             clip_out_frac: 1.0,
             direction_label: "▶ 1.0x".to_string(),
             current_date: String::new(),
+            is_live: false,
+            at_live_edge: false,
             hover_info: None,
         }
     }
@@ -115,6 +121,7 @@ impl Default for TimelineBarData {
 pub enum TimelineHit {
     None,
     DirectionButton,
+    LiveBadge,
     ClipInHandle,
     ClipOutHandle,
     Marker(usize),
@@ -133,6 +140,8 @@ pub struct TimelineBarWidget {
     pub hovered: bool,
     pub btn_width: f32,
     pub date_width: f32,
+    pub last_is_live: bool,
+    pub last_at_live_edge: bool,
 }
 
 impl TimelineBarWidget {
@@ -147,7 +156,26 @@ impl TimelineBarWidget {
             hovered: false,
             btn_width: 60.0,
             date_width: 90.0,
+            last_is_live: false,
+            last_at_live_edge: false,
         }
+    }
+
+    pub fn set_live(&mut self, is_live: bool, at_live_edge: bool) {
+        self.last_is_live = is_live;
+        self.last_at_live_edge = at_live_edge;
+    }
+
+    /// Calculate the live badge rectangle `(min, max)`.
+    pub fn live_badge_rect(&self) -> (Vec2, Vec2) {
+        let badge_w = 76.0 * self.font_scale;
+        let badge_h = (self.bounds.height() - 12.0 * self.font_scale).max(10.0);
+        let badge_min = Vec2::new(
+            self.bounds.max.x - badge_w - 8.0 * self.font_scale,
+            self.bounds.min.y + 6.0 * self.font_scale,
+        );
+        let badge_max = Vec2::new(badge_min.x + badge_w, badge_min.y + badge_h);
+        (badge_min, badge_max)
     }
 
     pub fn set_bounds(&mut self, pos: Vec2, size: Vec2) {
@@ -235,7 +263,20 @@ impl TimelineBarWidget {
 
         let (track_start, track_end, track_top, track_bottom) = self.track_rect();
 
-        // 1. Check Direction Button badge
+        // 1. Check Live Badge if active
+        let is_live = self.last_is_live || data.is_some_and(|d| d.is_live);
+        if is_live {
+            let (badge_min, badge_max) = self.live_badge_rect();
+            if mouse_pos.x >= badge_min.x
+                && mouse_pos.x <= badge_max.x
+                && mouse_pos.y >= badge_min.y
+                && mouse_pos.y <= badge_max.y
+            {
+                return TimelineHit::LiveBadge;
+            }
+        }
+
+        // 2. Check Direction Button badge
         let btn_w = self.btn_width * self.font_scale;
         let btn_min = self.bounds.min + Vec2::new(8.0 * self.font_scale, 6.0 * self.font_scale);
         let btn_max = Vec2::new(btn_min.x + btn_w, self.bounds.max.y - 6.0 * self.font_scale);
@@ -543,6 +584,50 @@ impl TimelineBarWidget {
                 &diff_style,
             );
         }
+
+        // 10. Live / DVR Pill Badge
+        if data.is_live || self.last_is_live {
+            let (badge_min, badge_max) = self.live_badge_rect();
+            let badge_size = badge_max - badge_min;
+            let at_live_edge =
+                data.at_live_edge || (self.last_is_live && self.last_at_live_edge && !data.is_live);
+
+            let (badge_text, badge_color, badge_bg) = if at_live_edge {
+                // Live Edge: bright green text, subtle dark green background
+                (
+                    "● LIVE",
+                    Vec4::new(0.2, 0.9, 0.4, 0.95 * a),
+                    Vec4::new(0.08, 0.22, 0.12, 0.85 * a),
+                )
+            } else {
+                // DVR / Behind Live Edge: amber text, subtle dark amber background
+                (
+                    "DVR -> LIVE",
+                    Vec4::new(0.95, 0.75, 0.2, 0.95 * a),
+                    Vec4::new(0.25, 0.18, 0.08, 0.85 * a),
+                )
+            };
+
+            // Badge shadow and background pill
+            list.solid_rect(
+                badge_min + Vec2::new(1.0, 1.0),
+                badge_size,
+                Vec4::new(0.0, 0.0, 0.0, 0.4 * a),
+            );
+            list.solid_rect(badge_min, badge_size, badge_bg);
+            list.rect_outline(
+                badge_min,
+                badge_max,
+                1.0,
+                badge_color * Vec4::new(1.0, 1.0, 1.0, 0.6),
+            );
+
+            let badge_style = TextStyle::new(badge_color)
+                .with_align_top(false)
+                .with_align_right(false);
+            let text_pos = badge_min + Vec2::new(6.0 * self.font_scale, badge_size.y * 0.7);
+            gfx.draw_text(list, self.font, text_pos, badge_text, &badge_style);
+        }
     }
 }
 
@@ -673,5 +758,60 @@ mod tests {
         let mut list2 = DrawList::new(UVec2::new(800, 600));
         widget.draw(&data, &mut gfx, &mut list2);
         assert!(list2.is_empty());
+    }
+
+    #[test]
+    fn test_timeline_bar_live_badge() {
+        let mut gfx = Gfx::new();
+        let face = gfx.fonts.default_face();
+        let font = gfx.fonts.font(face, 12);
+
+        let mut widget = TimelineBarWidget::new(font, 1.0);
+        widget.resize(800, 600, font, 1.0);
+
+        // By default, not live
+        assert!(!widget.last_is_live);
+        assert!(!widget.last_at_live_edge);
+
+        let (badge_min, badge_max) = widget.live_badge_rect();
+        let badge_center = (badge_min + badge_max) * 0.5;
+
+        // When not live, clicking badge center hits either None or Track, not LiveBadge
+        let mut data = TimelineBarData {
+            is_live: false,
+            at_live_edge: false,
+            ..Default::default()
+        };
+        assert_ne!(
+            widget.hit_test(badge_center, Some(&data)),
+            TimelineHit::LiveBadge
+        );
+
+        // When data.is_live is true, clicking badge center hits LiveBadge
+        data.is_live = true;
+        data.at_live_edge = true;
+        assert_eq!(
+            widget.hit_test(badge_center, Some(&data)),
+            TimelineHit::LiveBadge
+        );
+
+        // Drawing when at_live_edge is true
+        let mut list = DrawList::new(UVec2::new(800, 600));
+        widget.draw(&data, &mut gfx, &mut list);
+        assert!(!list.is_empty());
+
+        // Drawing when behind live edge (DVR mode)
+        data.at_live_edge = false;
+        let mut list_dvr = DrawList::new(UVec2::new(800, 600));
+        widget.draw(&data, &mut gfx, &mut list_dvr);
+        assert!(!list_dvr.is_empty());
+
+        // Test set_live on widget
+        widget.set_live(true, false);
+        assert!(widget.last_is_live);
+        assert!(!widget.last_at_live_edge);
+
+        // hit_test without data still recognizes LiveBadge because last_is_live is set
+        assert_eq!(widget.hit_test(badge_center, None), TimelineHit::LiveBadge);
     }
 }

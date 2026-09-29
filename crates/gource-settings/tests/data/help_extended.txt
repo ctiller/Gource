@@ -55,6 +55,12 @@ Options:
   -o, --output-ppm-stream FILE    Output PPM stream to a file ('-' for STDOUT)
   -r, --output-framerate  FPS     Framerate of output (25,30,60)
 
+  --live                          Enable live stream/watch mode
+  --live-interval SECONDS         Polling interval for live updates (default: 5.0)
+  --live-fetch                    Fetch remote repository changes in live mode
+  --github TARGET                 Watch a GitHub repository (owner/repo or URL)
+  --github-token TOKEN            GitHub personal access token for API requests
+
 Extended Options:
 
   --window-position XxY    Initial window position

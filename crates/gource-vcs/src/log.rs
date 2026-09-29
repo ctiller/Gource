@@ -232,6 +232,18 @@ impl StreamLog {
         }
     }
 
+    /// Create a StreamLog reading lines directly from a channel receiver.
+    pub fn from_channel(rx: Receiver<String>) -> Self {
+        Self {
+            receiver: rx,
+            pending: VecDeque::new(),
+            cursor: 0,
+            ended: false,
+            starved: false,
+            blocking: false,
+        }
+    }
+
     fn get_next_line(&mut self, line: &mut String) -> bool {
         line.clear();
         if self.cursor == self.pending.len() {
@@ -295,6 +307,7 @@ pub struct CommitLog {
     options: VcsOptions,
     last_line: Option<String>,
     buffered_commit: Option<Commit>,
+    live: bool,
 }
 
 impl CommitLog {
@@ -312,6 +325,7 @@ impl CommitLog {
             options,
             last_line: None,
             buffered_commit: None,
+            live: false,
         }
     }
 
@@ -323,7 +337,36 @@ impl CommitLog {
             options,
             last_line: None,
             buffered_commit: None,
+            live: false,
         }
+    }
+
+    /// Construct a ready-to-poll live CommitLog from a channel receiver without blocking on check_format.
+    pub fn from_live_stream(
+        format_name: &str,
+        log_command: Option<String>,
+        rx: Receiver<String>,
+        options: VcsOptions,
+    ) -> Self {
+        let stream = StreamLog::from_channel(rx);
+        Self {
+            format_name: format_name.to_string(),
+            log_command,
+            source: LogSource::Stream(stream),
+            options,
+            last_line: None,
+            buffered_commit: None,
+            live: true,
+        }
+    }
+
+    pub fn with_live(mut self, live: bool) -> Self {
+        self.live = live;
+        self
+    }
+
+    pub fn is_live(&self) -> bool {
+        self.live
     }
 
     /// Name of the log format ("git", "custom", ...).
@@ -370,6 +413,12 @@ impl CommitLog {
             "custom" => {
                 let mut line = String::new();
                 while get_line(&mut line) {
+                    if line.is_empty() {
+                        if !commit.files.is_empty() {
+                            break;
+                        }
+                        continue;
+                    }
                     match formats::custom::CustomParser::parse_commit_entry(
                         &line,
                         commit,
@@ -546,6 +595,10 @@ impl CommitLog {
     /// Check format implementation: read one commit without validation.
     /// If successful: seek back to 0.0 if seekable, or buffer the commit if stream.
     pub fn check_format(&mut self) -> bool {
+        if self.format_name == "custom" && self.live {
+            return true;
+        }
+
         // Wait for a stream's first commit (C++ waits for input on stdin).
         let was_waiting = match &mut self.source {
             LogSource::Stream(s) => std::mem::replace(&mut s.blocking, true),

@@ -238,6 +238,7 @@ pub struct Gource {
     pub active_captions: Vec<RCaption>,
 
     pub commitqueue: VecDeque<Commit>,
+    pub ingested_commits: Vec<Commit>,
 
     pub track_users: bool,
     pub manual_camera: bool,
@@ -440,6 +441,7 @@ impl Gource {
             captions: VecDeque::new(),
             active_captions: Vec::new(),
             commitqueue: VecDeque::new(),
+            ingested_commits: Vec::new(),
             track_users,
             manual_camera: false,
             manual_zoom: false,
@@ -592,7 +594,10 @@ impl Gource {
         self.mouse_dragged = false;
         self.last_percent = 0.0;
         self.commit_cursor = 0;
-        self.history_preindexed = false;
+        if !self.is_live_mode() {
+            self.history_preindexed = false;
+            self.ingested_commits.clear();
+        }
         self.timeline_dragging = false;
         self.slider_dragging = false;
 
@@ -647,15 +652,54 @@ impl Gource {
         }
     }
 
+    /// Check whether live mode or GitHub watch mode is active.
+    pub fn is_live_mode(&self) -> bool {
+        self.settings.live
+            || !self.settings.github.is_empty()
+            || self.commitlog.as_ref().is_some_and(|l| l.is_live())
+    }
+
+    /// Check whether the playhead is currently pinned to the live edge.
+    pub fn is_at_live_edge(&self) -> bool {
+        self.is_live_mode()
+            && self.scrubber.state.playback_direction == gource_history::PlaybackDirection::Forward
+            && (self.ingested_commits.is_empty()
+                || (self.commit_cursor >= self.ingested_commits.len()
+                    && self.commitqueue.is_empty())
+                || self.scrubber.state.playhead_fraction >= 0.99)
+    }
+
+    /// Drain newly arrived commits from the live log into ingested_commits and history_builder.
+    pub fn drain_live_commits(&mut self) {
+        if !self.is_live_mode() {
+            return;
+        }
+        let Some(ref mut log) = self.commitlog else {
+            return;
+        };
+        let mut got_any = false;
+        while let Some(commit) = log.next_commit() {
+            self.history_builder
+                .add_commit(Self::commit_to_input(&commit));
+            self.history_dirty = true;
+            self.history_preindexed = true;
+            self.ingested_commits.push(commit);
+            got_any = true;
+        }
+        if got_any || self.history_dirty {
+            let _ = self.ensure_history();
+        }
+    }
+
     /// Check if seeking is possible.
     pub fn can_seek(&self) -> bool {
         if self.settings.hide_progress {
             return false;
         }
-        if let Some(ref log) = self.commitlog {
-            log.is_seekable()
+        if self.commitlog.as_ref().is_some_and(|l| l.is_seekable()) {
+            true
         } else {
-            false
+            self.is_live_mode() && !self.ingested_commits.is_empty()
         }
     }
 
@@ -927,6 +971,10 @@ impl Gource {
             None
         };
 
+        let is_live = self.is_live_mode();
+        let at_live_edge = self.is_at_live_edge();
+        self.timeline_bar.set_live(is_live, at_live_edge);
+
         TimelineBarData {
             buckets,
             markers,
@@ -936,6 +984,8 @@ impl Gource {
             clip_out_frac: self.scrubber.state.clip_out.unwrap_or(1.0),
             direction_label,
             current_date: self.display_date.clone(),
+            is_live,
+            at_live_edge,
             hover_info,
         }
     }
@@ -1070,6 +1120,11 @@ impl Gource {
         match hit {
             TimelineHit::DirectionButton => {
                 self.scrubber.state.toggle_direction();
+            }
+            TimelineHit::LiveBadge => {
+                self.scrubber.state.playback_direction = gource_history::PlaybackDirection::Forward;
+                self.paused = false;
+                self.handle_timeline_hit(TimelineHit::Track(1.0));
             }
             TimelineHit::Track(frac) => {
                 let frac = frac.clamp(0.0, 1.0);
@@ -1769,6 +1824,7 @@ impl Gource {
                                 || !self.settings.dashboards.is_empty()
                                 || !self.settings.cache_dir.is_empty()
                                 || self.history_preindexed
+                                || self.is_live_mode()
                             {
                                 self.slider_dragging = true;
                                 self.handle_timeline_hit(TimelineHit::Track(p));
@@ -1823,6 +1879,32 @@ impl Gource {
         if self.stop_position_reached {
             return Ok(());
         }
+
+        if self.is_live_mode() {
+            self.drain_live_commits();
+
+            while self.commit_cursor < self.ingested_commits.len()
+                && self.commitqueue.back().is_none_or(|last| {
+                    last.timestamp <= self.currtime && self.commitqueue.len() < COMMITQUEUE_MAX_SIZE
+                })
+            {
+                let commit = self.ingested_commits[self.commit_cursor].clone();
+                if self.settings.stop_timestamp != 0
+                    && commit.timestamp > self.settings.stop_timestamp
+                {
+                    self.stop_position_reached = true;
+                    break;
+                }
+                self.commit_cursor += 1;
+                self.commitqueue.push_back(commit);
+            }
+
+            if !self.commitqueue.is_empty() {
+                self.first_read = false;
+            }
+            return Ok(());
+        }
+
         let Some(log) = self.commitlog.as_mut() else {
             return Ok(());
         };
@@ -2071,7 +2153,12 @@ impl Gource {
         self.scrubber.sync_playhead_from_time(self.currtime);
 
         // Fetch commits
-        if self.commitqueue.is_empty() {
+        if self.is_live_mode() {
+            self.drain_live_commits();
+            if self.commitqueue.is_empty() && self.commit_cursor < self.ingested_commits.len() {
+                self.read_log()?;
+            }
+        } else if self.commitqueue.is_empty() {
             self.read_log()?;
         }
 
@@ -2091,17 +2178,28 @@ impl Gource {
             self.subseconds = 0.0;
         }
 
-        // C++: `float time_inc = (dt * 86400.0 * days_per_second)`: 86400.0
-        // is a double, so the product is evaluated in double precision.
-        let time_inc = (dt as f64 * 86400.0 * self.settings.days_per_second as f64) as f32;
-        let seconds = time_inc as i64;
-        self.subseconds += time_inc - (seconds as f32);
+        if self.is_live_mode()
+            && self.commitqueue.is_empty()
+            && self.commit_cursor >= self.ingested_commits.len()
+        {
+            // At the live edge waiting for new commits: hold currtime at lasttime
+            if self.lasttime > 0 {
+                self.currtime = self.lasttime;
+            }
+            self.subseconds = 0.0;
+        } else {
+            // C++: `float time_inc = (dt * 86400.0 * days_per_second)`: 86400.0
+            // is a double, so the product is evaluated in double precision.
+            let time_inc = (dt as f64 * 86400.0 * self.settings.days_per_second as f64) as f32;
+            let seconds = time_inc as i64;
+            self.subseconds += time_inc - (seconds as f32);
 
-        if self.subseconds >= 1.0 {
-            self.currtime += self.subseconds as i64;
-            self.subseconds -= (self.subseconds as i64) as f32;
+            if self.subseconds >= 1.0 {
+                self.currtime += self.subseconds as i64;
+                self.subseconds -= (self.subseconds as i64) as f32;
+            }
+            self.currtime += seconds;
         }
-        self.currtime += seconds;
 
         // Delete reaped files
         let removed = std::mem::take(&mut self.world.removed_files);
@@ -2114,10 +2212,12 @@ impl Gource {
         // Process commits up to currtime
         let t = self.runtime;
         while let Some(commit) = self.commitqueue.front() {
-            if self.settings.auto_skip_seconds >= 0.0
+            let auto_skip = self.settings.auto_skip_seconds >= 0.0
                 && self.idle_time >= self.settings.auto_skip_seconds
-                && !self.stop_position_reached
-            {
+                && !self.stop_position_reached;
+            let live_catchup =
+                self.is_live_mode() && self.currtime < commit.timestamp && self.idle_time > 0.0;
+            if auto_skip || live_catchup {
                 self.currtime = commit.timestamp;
                 self.lasttime = commit.timestamp;
                 self.idle_time = 0.0;
@@ -2140,6 +2240,15 @@ impl Gource {
                 }
                 self.lasttime = commit.timestamp;
             }
+            self.subseconds = 0.0;
+        }
+
+        if self.is_live_mode()
+            && self.commitqueue.is_empty()
+            && self.commit_cursor >= self.ingested_commits.len()
+            && self.lasttime > 0
+        {
+            self.currtime = self.lasttime;
             self.subseconds = 0.0;
         }
 
@@ -2269,7 +2378,7 @@ impl Gource {
             }
         }
 
-        if self.world.users.is_empty() && self.stop_position_reached {
+        if !self.is_live_mode() && self.world.users.is_empty() && self.stop_position_reached {
             self.is_finished = true;
             self.pending_requests.push(PlatformRequest::Quit);
         }

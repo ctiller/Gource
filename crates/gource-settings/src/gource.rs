@@ -352,6 +352,13 @@ pub struct GourceSettings {
     pub cache_dir: String,
     pub no_cache: bool,
     pub seed: Option<u32>,
+
+    // Live mode and GitHub watch settings
+    pub live: bool,
+    pub live_interval: f32,
+    pub live_fetch: bool,
+    pub github: String,
+    pub github_token: String,
 }
 
 impl Default for GourceSettings {
@@ -498,6 +505,12 @@ impl Default for GourceSettings {
             cache_dir: String::new(),
             no_cache: false,
             seed: None,
+
+            live: false,
+            live_interval: 5.0,
+            live_fetch: false,
+            github: String::new(),
+            github_token: String::new(),
         };
         s.set_scaled_font_sizes();
         s
@@ -730,6 +743,22 @@ impl GourceSettings {
             args.push("--seed".to_string());
             args.push(s.to_string());
         }
+
+        if self.live {
+            args.push("--live".to_string());
+        }
+        if (self.live_interval - 5.0).abs() > 1e-5 {
+            args.push("--live-interval".to_string());
+            args.push(self.live_interval.to_string());
+        }
+        if self.live_fetch {
+            args.push("--live-fetch".to_string());
+        }
+        if !self.github.is_empty() {
+            args.push("--github".to_string());
+            args.push(self.github.clone());
+        }
+        // Security: never persist or export github_token
 
         if !self.default_path && !self.path.is_empty() && self.path != "." {
             args.push(self.path.clone());
@@ -1733,7 +1762,12 @@ impl GourceSettings {
                     "log-format required when reading from STDIN".to_owned(),
                 ));
             }
-        } else if !settings.path.is_empty() && settings.path != "." {
+        } else if !settings.path.is_empty()
+            && settings.path != "."
+            && !settings.path.starts_with("https://github.com/")
+            && !settings.path.starts_with("http://github.com/")
+            && !settings.path.starts_with("github:")
+        {
             let mut p = settings.path.clone();
             while p.ends_with('/') || p.ends_with('\\') {
                 p.pop();
@@ -1745,6 +1779,49 @@ impl GourceSettings {
                     settings.path
                 )));
             }
+        }
+        if let Some(entry) = gource_settings.entry("live") {
+            settings.live = entry.get_bool();
+        }
+
+        if let Some(entry) = gource_settings.entry("live-interval") {
+            if !entry.has_value() {
+                return Err(conf.missing_value_error(entry));
+            }
+            let v = entry.get_float();
+            if v <= 0.0 {
+                return Err(conf.invalid_value_error(entry));
+            }
+            settings.live_interval = v;
+        }
+
+        if let Some(entry) = gource_settings.entry("live-fetch") {
+            settings.live_fetch = entry.get_bool();
+        }
+
+        if let Some(entry) = gource_settings.entry("github") {
+            if !entry.has_value() || entry.value.is_empty() {
+                return Err(conf.invalid_value_error(entry));
+            }
+            settings.github = entry.value.clone();
+            if gource_settings.entry("live").is_none() {
+                settings.live = true;
+            }
+        }
+
+        if let Some(entry) = gource_settings.entry("github-token") {
+            if !entry.has_value() || entry.value.is_empty() {
+                return Err(conf.invalid_value_error(entry));
+            }
+            settings.github_token = entry.value.clone();
+        }
+
+        if (settings.path.starts_with("https://github.com/")
+            || settings.path.starts_with("http://github.com/")
+            || settings.path.starts_with("github:"))
+            && gource_settings.entry("live").is_none()
+        {
+            settings.live = true;
         }
 
         Ok(settings)
