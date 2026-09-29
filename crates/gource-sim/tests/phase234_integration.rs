@@ -365,3 +365,261 @@ fn test_interactive_widget_hit_testing_and_toggles() {
         .update(dt, viewport, &mut gfx, &mut list)
         .expect("update succeeds");
 }
+
+#[test]
+fn test_scrubber_full_coverage() {
+    use gource_sim::scrubber::SimScrubber;
+
+    // Test Default trait
+    let mut scrubber = SimScrubber::default();
+    assert_eq!(scrubber.checkpoints.len(), 0);
+    assert_eq!(scrubber.reverse_buffer_len(), 0);
+
+    let mut app = load_test_app(&[]);
+    let gource = app.shell_mut().gource.as_mut().unwrap();
+    let snap = gource.snapshot();
+
+    // Test maybe_record_checkpoint with currtime == 0 (does not record)
+    scrubber.maybe_record_checkpoint(0, 1.0, || snap.clone());
+    assert_eq!(scrubber.checkpoints.len(), 0);
+
+    // Test maybe_record_checkpoint with currtime > 0 and empty checkpoints
+    scrubber.maybe_record_checkpoint(100, 1.0, || snap.clone());
+    assert_eq!(scrubber.checkpoints.len(), 1);
+    assert_eq!(scrubber.last_checkpoint_runtime, 1.0);
+
+    // Test maybe_record_checkpoint when runtime diff is less than threshold (should not record)
+    scrubber.maybe_record_checkpoint(200, 1.2, || snap.clone());
+    assert_eq!(scrubber.checkpoints.len(), 1);
+
+    // Test maybe_record_checkpoint when runtime diff >= threshold (should record)
+    scrubber.maybe_record_checkpoint(300, 2.5, || snap.clone());
+    assert_eq!(scrubber.checkpoints.len(), 2);
+    assert_eq!(scrubber.last_checkpoint_runtime, 2.5);
+
+    // Test on_patch_applied with Dynamics where retained checkpoints exist (currtime <= current_ts)
+    scrubber.on_patch_applied(&[gource_settings::SettingClass::Dynamics], i64::MAX);
+    assert_eq!(scrubber.checkpoints.len(), 2);
+
+    // Prune when current_ts < snapshot currtime
+    scrubber.on_patch_applied(&[gource_settings::SettingClass::Timeline], -1);
+    assert_eq!(scrubber.checkpoints.len(), 0);
+
+    // Test reverse buffer capacity and clear
+    scrubber.max_reverse_frames = 2;
+    scrubber.push_reverse_frame(snap.clone());
+    scrubber.push_reverse_frame(snap.clone());
+    scrubber.push_reverse_frame(snap);
+    assert_eq!(scrubber.reverse_buffer_len(), 2);
+    scrubber.clear_reverse_buffer();
+    assert_eq!(scrubber.reverse_buffer_len(), 0);
+}
+
+#[test]
+fn test_gource_tuning_panel_and_timeline_coverage() {
+    use gource_history::{MarkerKind, PlaybackDirection, TimelineMarker};
+    use gource_widgets::tuning_panel::TuningTab;
+
+    let mut app = load_test_app(&[]);
+    let gource = app.shell_mut().gource.as_mut().unwrap();
+
+    // 1. build_tuning_panel_data across all TuningTab variants
+    for tab in [
+        TuningTab::Visual,
+        TuningTab::Dynamics,
+        TuningTab::Timeline,
+        TuningTab::Structural,
+    ] {
+        gource.tuning_tab = tab;
+        let data = gource.build_tuning_panel_data();
+        assert_eq!(data.active_tab, tab);
+        assert!(!data.rows.is_empty());
+    }
+
+    // 2. build_timeline_bar_data with markers of all MarkerKind variants
+    let _ = gource.ensure_history();
+    if let Some(ref mut tl) = gource.scrubber.timeline {
+        tl.markers.push(TimelineMarker {
+            timestamp: 1000,
+            label: "v1.0".to_string(),
+            kind: MarkerKind::Tag,
+        });
+        tl.markers.push(TimelineMarker {
+            timestamp: 1500,
+            label: "Big Refactor".to_string(),
+            kind: MarkerKind::Caption,
+        });
+        tl.markers.push(TimelineMarker {
+            timestamp: 2000,
+            label: "Release 2.0".to_string(),
+            kind: MarkerKind::Milestone,
+        });
+    }
+
+    // Test direction labels for Forward (paused/unpaused) and Reverse (paused/unpaused)
+    gource.scrubber.state.playback_direction = PlaybackDirection::Forward;
+    gource.paused = false;
+    let data_fwd = gource.build_timeline_bar_data();
+    assert!(data_fwd.markers.len() >= 3);
+
+    gource.paused = true;
+    let _ = gource.build_timeline_bar_data();
+
+    gource.scrubber.state.playback_direction = PlaybackDirection::Reverse;
+    gource.paused = false;
+    let _ = gource.build_timeline_bar_data();
+
+    gource.paused = true;
+    let _ = gource.build_timeline_bar_data();
+
+    // Test timeline_bar hover card
+    gource.timeline_bar.hovered = true;
+    let (t_min, t_max, _, _) = gource.timeline_bar.track_rect();
+    gource.mouse_pos.x = (t_min + t_max) * 0.5;
+    let data_hover = gource.build_timeline_bar_data();
+    assert!(data_hover.hover_info.is_some());
+
+    // Mouse x outside track bounds
+    gource.mouse_pos.x = t_min - 100.0;
+    let data_hover_outside = gource.build_timeline_bar_data();
+    assert!(data_hover_outside.hover_info.is_none());
+}
+
+#[test]
+fn test_gource_hit_handlers() {
+    use gource_widgets::timeline_bar::TimelineHit;
+    use gource_widgets::tuning_panel::{TuningHit, TuningTab};
+
+    let mut app = load_test_app(&[]);
+    let gource = app.shell_mut().gource.as_mut().unwrap();
+
+    // 1. handle_tuning_hit on all variants
+    gource.tuning_panel.show(true);
+    gource.handle_tuning_hit(TuningHit::Close);
+    assert!(!gource.tuning_panel.is_visible());
+
+    gource.handle_tuning_hit(TuningHit::Tab(TuningTab::Dynamics));
+    assert_eq!(gource.tuning_tab, TuningTab::Dynamics);
+
+    // RowReset, RowSlider, RowToggle, RowCycle
+    gource.handle_tuning_hit(TuningHit::RowReset { setting_index: 0 });
+    gource.handle_tuning_hit(TuningHit::RowSlider {
+        setting_index: 0,
+        frac: 0.5,
+    });
+    gource.handle_tuning_hit(TuningHit::RowToggle { setting_index: 0 });
+    gource.handle_tuning_hit(TuningHit::RowCycle { setting_index: 0 });
+
+    // Test cycling all cyclable setting IDs
+    for (idx, id) in SettingId::all().iter().enumerate() {
+        match id {
+            SettingId::CameraMode
+            | SettingId::FileColourMode
+            | SettingId::FileSizeMetric
+            | SettingId::DashboardPeriod => {
+                gource.handle_tuning_hit(TuningHit::RowCycle { setting_index: idx });
+            }
+            _ => {}
+        }
+    }
+
+    gource.handle_tuning_hit(TuningHit::SaveConfig);
+    assert!(gource.tuning_status.as_ref().unwrap().contains("Saved"));
+
+    gource.handle_tuning_hit(TuningHit::CopyCli);
+    assert!(gource.tuning_status.as_ref().unwrap().contains("Flags:"));
+
+    gource.handle_tuning_hit(TuningHit::ResetAll);
+    assert!(gource.tuning_status.as_ref().unwrap().contains("Reset"));
+
+    gource.handle_tuning_hit(TuningHit::PanelBackground);
+    gource.handle_tuning_hit(TuningHit::None);
+
+    // 2. handle_timeline_hit on all variants
+    gource.handle_timeline_hit(TimelineHit::DirectionButton);
+    gource.handle_timeline_hit(TimelineHit::ClipInHandle);
+    gource.handle_timeline_hit(TimelineHit::ClipOutHandle);
+    gource.handle_timeline_hit(TimelineHit::Track(0.5));
+    gource.handle_timeline_hit(TimelineHit::Marker(0));
+    gource.handle_timeline_hit(TimelineHit::None);
+}
+
+#[test]
+fn test_gource_dashboards_all_periods_and_empty_hist() {
+    use gource_draw::DrawList;
+    use gource_settings::{DashboardPanel, DashboardPeriod};
+
+    let mut app = load_test_app(&[]);
+    let viewport = Viewport::new(800, 600);
+    let mut gfx = Gfx::new();
+    let gource = app.shell_mut().gource.as_mut().unwrap();
+
+    gource.settings.dashboards = vec![
+        DashboardPanel::Lines,
+        DashboardPanel::Diff,
+        DashboardPanel::Theseus,
+        DashboardPanel::Editors,
+        DashboardPanel::Commits,
+        DashboardPanel::Churn,
+    ];
+    gource.settings.hide_dashboards = false;
+
+    for period in [
+        DashboardPeriod::Day,
+        DashboardPeriod::Week,
+        DashboardPeriod::Month,
+        DashboardPeriod::Year,
+    ] {
+        gource.settings.dashboard_period = period;
+        let mut list = DrawList::new(UVec2::new(800, 600));
+        gource.draw_dashboards(&mut gfx, &mut list, viewport);
+    }
+}
+
+#[test]
+fn test_gource_seek_and_reverse_edge_cases() {
+    use gource_draw::DrawList;
+
+    let mut app = load_test_app(&[]);
+    let viewport = Viewport::new(800, 600);
+    let mut gfx = Gfx::new();
+    let dt = 1.0 / 60.0;
+    let gource = app.shell_mut().gource.as_mut().unwrap();
+
+    // Advance 60 frames to populate history and checkpoints
+    for _ in 0..60 {
+        let mut list = DrawList::new(UVec2::new(800, 600));
+        gource.update(dt, viewport, &mut gfx, &mut list).unwrap();
+    }
+
+    let cp_ts = gource.scrubber.checkpoints.checkpoints()[0].currtime;
+
+    // 1. Seek with RestoredAndReplayed: target slightly ahead of checkpoint
+    let replay_target = cp_ts + 200;
+    let outcome = gource.seek_to_timestamp(replay_target, 500, viewport, &mut gfx);
+    assert!(outcome.is_ok());
+
+    // 2. Seek with max_replay_ticks = 0 to trigger MaterializedFromHistory
+    let outcome_mat = gource.seek_to_timestamp(cp_ts, 0, viewport, &mut gfx);
+    assert!(outcome_mat.is_ok());
+
+    // 3. Seek to -1 (before repository history) to trigger FallbackLegacySeek
+    let outcome_fallback = gource.seek_to_timestamp(-1, 0, viewport, &mut gfx);
+    assert_eq!(
+        outcome_fallback.unwrap(),
+        gource_sim::scrubber::SeekOutcome::FallbackLegacySeek
+    );
+
+    // 4. step_reverse when reverse_buffer is non-empty
+    gource.scrubber.push_reverse_frame(gource.snapshot());
+    assert!(gource.step_reverse(viewport, &mut gfx).unwrap());
+
+    // 5. step_reverse when reverse_buffer is empty and currtime > 0
+    gource.scrubber.clear_reverse_buffer();
+    assert!(gource.currtime > 0);
+    let _ = gource.step_reverse(viewport, &mut gfx);
+
+    // 6. step_reverse when currtime == 0 returns Ok(false)
+    gource.currtime = 0;
+    assert!(!gource.step_reverse(viewport, &mut gfx).unwrap());
+}

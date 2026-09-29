@@ -153,6 +153,39 @@ fn test_gitraw_remaining_lines() {
         &mut commit,
         &opts
     ));
+
+    // File filtered out by file_filters to cover gitraw.rs line 94
+    let mut filter_opts = VcsOptions::default();
+    filter_opts
+        .filters
+        .file_filters
+        .push(fancy_regex::Regex::new(r"\.ignored$").unwrap());
+    let lines7 = [
+        "commit 123",
+        "tree 456",
+        "author Alice <a@b> 1577836800 +0000",
+        "committer Alice <a@b> 1577836800 +0000",
+        "",
+        "commit message",
+        "",
+        ":100644 100644 0000000 1111111 M\tfile.ignored",
+        "",
+    ];
+    let mut idx7 = 0;
+    assert!(formats::gitraw::parse_commit(
+        |l: &mut String| {
+            if idx7 < lines7.len() {
+                *l = lines7[idx7].to_string();
+                idx7 += 1;
+                true
+            } else {
+                false
+            }
+        },
+        &mut commit,
+        &filter_opts
+    ));
+    assert!(commit.files.is_empty());
 }
 
 #[test]
@@ -3732,10 +3765,7 @@ fn test_coverage_boost_remaining() {
     // 3. logmill.rs take_result returns cached_result
     // Create a finished logmill
     let mut mill = crate::LogMill::spawn("tests/data/parity/custom/standard.log", opts.clone());
-    // Wait until finished or check status to populate cached_result
-    while !mill.is_finished() {
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    mill.wait();
     // Calling status() populates cached_result when result arrives
     assert_eq!(mill.status(), crate::logmill::LogMillStatus::Success);
     // Now take_result takes from cached_result!
@@ -3949,77 +3979,122 @@ fn test_custom_parser_stats_columns() {
         .unwrap()
     );
     assert!(c7_bin.files[0].is_binary);
+}
 
-    // Test write_custom_log stats output with in-memory buffer
-    let commit = Commit {
-        timestamp: 12345,
-        username: "alice".to_string(),
-        files: vec![
-            CommitFile {
-                filename: "/bin.dat".to_string(),
-                action: FileAction::Add,
-                colour: glam::Vec3::ONE,
-                lines_added: None,
-                lines_removed: None,
-                is_binary: true,
-            },
-            CommitFile {
-                filename: "/stats.txt".to_string(),
-                action: FileAction::Modify,
-                colour: glam::Vec3::ONE,
-                lines_added: Some(10),
-                lines_removed: Some(5),
-                is_binary: false,
-            },
-            CommitFile {
-                filename: "/plain.txt".to_string(),
-                action: FileAction::Delete,
-                colour: glam::Vec3::ONE,
-                lines_added: None,
-                lines_removed: None,
-                is_binary: false,
-            },
-        ],
-    };
-    let mut out = Vec::new();
-    for file in &commit.files {
-        use std::io::Write;
-        if file.is_binary {
-            writeln!(
-                &mut out,
-                "{}|{}|{}|{}|-|-",
-                commit.timestamp,
-                commit.username,
-                file.action.code(),
-                file.filename
-            )
-            .unwrap();
-        } else if let (Some(added), Some(removed)) = (file.lines_added, file.lines_removed) {
-            writeln!(
-                &mut out,
-                "{}|{}|{}|{}|{}|{}",
-                commit.timestamp,
-                commit.username,
-                file.action.code(),
-                file.filename,
-                added,
-                removed
-            )
-            .unwrap();
-        } else {
-            writeln!(
-                &mut out,
-                "{}|{}|{}|{}",
-                commit.timestamp,
-                commit.username,
-                file.action.code(),
-                file.filename
-            )
-            .unwrap();
-        }
+#[test]
+fn test_write_custom_log_with_stats_to_file() {
+    use std::io::Write;
+
+    let input_dir = tempfile::tempdir().unwrap();
+    let input_log = input_dir.path().join("input.log");
+    let mut f = std::fs::File::create(&input_log).unwrap();
+    // 3 lines in custom log format:
+    // 1: binary file with -|-
+    // 2: text file with 10|5
+    // 3: plain file without stats
+    writeln!(f, "1000|alice|A|/bin.dat|-|-").unwrap();
+    writeln!(f, "1000|alice|M|/stats.txt|10|5").unwrap();
+    writeln!(f, "1000|alice|D|/plain.txt").unwrap();
+    f.flush().unwrap();
+    drop(f);
+
+    let output_log = input_dir.path().join("output.log");
+    let opts = VcsOptions::default();
+
+    let res = crate::write_custom_log(
+        input_log.to_str().unwrap(),
+        output_log.to_str().unwrap(),
+        &opts,
+    );
+    assert!(res.is_ok(), "write_custom_log failed: {:?}", res);
+
+    let output_content = std::fs::read_to_string(&output_log).unwrap();
+    assert!(output_content.contains("1000|alice|A|/bin.dat|-|-\n"));
+    assert!(output_content.contains("1000|alice|M|/stats.txt|10|5\n"));
+    assert!(output_content.contains("1000|alice|D|/plain.txt\n"));
+
+    // Output to stdout ("-")
+    let res_stdout = crate::write_custom_log(input_log.to_str().unwrap(), "-", &opts);
+    assert!(res_stdout.is_ok());
+
+    // File with a commit dropped by filters to trigger next_commit None -> continue
+    let filter_input = input_dir.path().join("filter_test.log");
+    std::fs::write(
+        &filter_input,
+        "1000|alice|A|/valid1.txt\n2000|dropuser|A|/valid2.txt\n3000|bob|M|/valid3.txt\n",
+    )
+    .unwrap();
+    let filter_output = input_dir.path().join("filter_out.log");
+    let mut filter_opts = VcsOptions::default();
+    filter_opts
+        .filters
+        .user_filters
+        .push(fancy_regex::Regex::new("^dropuser$").unwrap());
+    let res_filter = crate::write_custom_log(
+        filter_input.to_str().unwrap(),
+        filter_output.to_str().unwrap(),
+        &filter_opts,
+    );
+    assert!(res_filter.is_ok());
+    let filter_content = std::fs::read_to_string(&filter_output).unwrap();
+    assert!(filter_content.contains("1000|alice|A|/valid1.txt\n"));
+    assert!(!filter_content.contains("dropuser"));
+    assert!(filter_content.contains("3000|bob|M|/valid3.txt\n"));
+
+    // Error opening output file:
+    let bad_output = input_dir.path().join("does_not_exist").join("out.log");
+    let res_err = crate::write_custom_log(
+        input_log.to_str().unwrap(),
+        bad_output.to_str().unwrap(),
+        &opts,
+    );
+    assert!(res_err.is_err());
+
+    // Error on writeln with binary stats to /dev/full
+    if std::path::Path::new("/dev/full").exists() {
+        let bin_input = input_dir.path().join("bin_only.log");
+        std::fs::write(&bin_input, "1000|alice|A|/bin.dat|-|-\n").unwrap();
+        let res_bin = crate::write_custom_log(bin_input.to_str().unwrap(), "/dev/full", &opts);
+        assert!(res_bin.is_err());
+
+        let stats_input = input_dir.path().join("stats_only.log");
+        std::fs::write(&stats_input, "1000|alice|M|/stats.txt|10|5\n").unwrap();
+        let res_stats = crate::write_custom_log(stats_input.to_str().unwrap(), "/dev/full", &opts);
+        assert!(res_stats.is_err());
+
+        let plain_input = input_dir.path().join("plain_only.log");
+        std::fs::write(&plain_input, "1000|alice|A|/plain.txt\n").unwrap();
+        let res_plain = crate::write_custom_log(plain_input.to_str().unwrap(), "/dev/full", &opts);
+        assert!(res_plain.is_err());
     }
-    let s = String::from_utf8(out).unwrap();
-    assert!(s.contains("12345|alice|A|/bin.dat|-|-\n"));
-    assert!(s.contains("12345|alice|M|/stats.txt|10|5\n"));
-    assert!(s.contains("12345|alice|D|/plain.txt\n"));
+
+    // Apache log with an invalid line between valid commits to trigger next_commit None -> continue
+    let apache_input = input_dir.path().join("apache_test.log");
+    let valid_line1 =
+        "127.0.0.1 - alice [10/Oct/2000:13:55:36 -0700] \"GET /apache1.html HTTP/1.0\" 200 2326";
+    let bad_line = "THIS IS NOT A VALID APACHE LINE";
+    let valid_line2 =
+        "127.0.0.1 - bob [10/Oct/2000:13:55:37 -0700] \"GET /apache2.html HTTP/1.0\" 200 2326";
+    std::fs::write(
+        &apache_input,
+        format!("{valid_line1}\n{bad_line}\n{valid_line2}\n"),
+    )
+    .unwrap();
+    let apache_out = input_dir.path().join("apache_out.log");
+    let mut apache_opts = VcsOptions::default();
+    apache_opts.log_format = "apache".to_string();
+    let res_apache = crate::write_custom_log(
+        apache_input.to_str().unwrap(),
+        apache_out.to_str().unwrap(),
+        &apache_opts,
+    );
+    assert!(res_apache.is_ok());
+    let apache_content = std::fs::read_to_string(&apache_out).unwrap();
+    assert!(apache_content.contains("127.0.0.1"));
+}
+
+#[test]
+fn test_lib_log_command() {
+    assert!(crate::log_command("git").is_some());
+    assert!(crate::log_command("unknown_vcs_xyz").is_none());
 }
