@@ -4,6 +4,7 @@
 //! provides small, well-tested building blocks (geometry, hashing, time, text).
 
 pub mod bounds;
+pub mod crand;
 pub mod datetime;
 pub mod math;
 pub mod quadtree;

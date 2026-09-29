@@ -122,6 +122,14 @@ impl GourceShell {
                 return;
             }
 
+            let disable_input = self
+                .gource
+                .as_ref()
+                .is_some_and(|g| g.settings.disable_input);
+            if disable_input {
+                return;
+            }
+
             if *key == Key::F5 {
                 if let Some(ref mut g) = self.gource {
                     g.reset();

@@ -2,10 +2,9 @@
 //! (port of `src/gource.h`, `src/gource.cpp`).
 
 use std::collections::VecDeque;
-use std::f32::consts::PI;
 use std::path::{Path, PathBuf};
 
-use glam::{Vec2, Vec3, Vec4};
+use glam::{Vec2, Vec4};
 use gource_core::StringHasher;
 use gource_core::bounds::Bounds2D;
 use gource_core::datetime;
@@ -23,7 +22,7 @@ use gource_widgets::slider::PositionSlider;
 use gource_widgets::textbox::TextBox;
 
 use crate::app::AppError;
-use crate::camera::ZoomCamera;
+use crate::camera::{STARTING_Z, ZoomCamera};
 use crate::file::FileId;
 use crate::input::{InputEvent, Key, MouseButton};
 use crate::platform::{PlatformRequest, Viewport};
@@ -101,14 +100,15 @@ pub struct GourceTextures {
 }
 
 impl GourceTextures {
-    /// Load textures needed by Gource into Gfx.
+    /// Load textures needed by Gource into Gfx. Options follow the C++
+    /// `texturemanager.grab` calls: mipmapped and clamped, except the logo.
     pub fn load(gfx: &mut Gfx, settings: &GourceSettings) -> Result<Self, AppError> {
         let file_tex = gfx
             .textures
             .load_bytes(
                 "file.png",
                 gource_draw::resources::FILE_PNG,
-                gource_draw::TextureOptions::plain(),
+                gource_draw::TextureOptions::default(),
             )
             .map_err(|e| AppError(e.to_string()))?;
 
@@ -117,26 +117,20 @@ impl GourceTextures {
             .load_bytes(
                 "beam.png",
                 gource_draw::resources::BEAM_PNG,
-                gource_draw::TextureOptions::plain(),
+                gource_draw::TextureOptions::default(),
             )
             .map_err(|e| AppError(e.to_string()))?;
 
-        let user_tex = if !settings.default_user_image.is_empty() {
-            gfx.textures
-                .load_file(
-                    Path::new(&settings.default_user_image),
-                    gource_draw::TextureOptions::plain(),
-                )
-                .map_err(|e| AppError(e.to_string()))?
-        } else {
-            gfx.textures
-                .load_bytes(
-                    "user.png",
-                    gource_draw::resources::USER_PNG,
-                    gource_draw::TextureOptions::plain(),
-                )
-                .map_err(|e| AppError(e.to_string()))?
-        };
+        // `usertex`; `--default-user-image` and `--user-image-dir` images are
+        // chosen per user (`Gource::assign_user_image`).
+        let user_tex = gfx
+            .textures
+            .load_bytes(
+                "user.png",
+                gource_draw::resources::USER_PNG,
+                gource_draw::TextureOptions::default(),
+            )
+            .map_err(|e| AppError(e.to_string()))?;
 
         let logo = if !settings.logo.is_empty() {
             Some(
@@ -156,7 +150,7 @@ impl GourceTextures {
                 gfx.textures
                     .load_file(
                         Path::new(&settings.background_image),
-                        gource_draw::TextureOptions::plain(),
+                        gource_draw::TextureOptions::default(),
                     )
                     .map_err(|e| AppError(e.to_string()))?,
             )
@@ -276,15 +270,8 @@ impl Gource {
         let fonts = GourceFonts::load(gfx, &settings)?;
         let textures = GourceTextures::load(gfx, &settings)?;
 
-        let starting_z = -300.0f32;
-        let mut camera = ZoomCamera::new(
-            Vec3::new(0.0, 0.0, starting_z),
-            Vec3::ZERO,
-            settings.camera_zoom_min,
-            settings.camera_zoom_max,
-        );
-        camera.set_distance(settings.camera_zoom_default);
-        camera.set_padding(settings.padding);
+        let starting_z = STARTING_Z;
+        let camera = ZoomCamera::from_settings(&settings);
 
         let track_users = settings.camera_mode == CameraMode::Track;
 
@@ -298,7 +285,7 @@ impl Gource {
 
         let mut file_key = FileKey::new(1.0);
         file_key.set_font(
-            fonts.base,
+            fonts.medium,
             settings.scaled_font_size as f32,
             settings.font_scale,
         );
@@ -330,7 +317,8 @@ impl Gource {
             max_tick_rate = 1.0 / (gource_framerate as f32);
         }
 
-        let world = World::new(fastrand::u64(..), settings.hash_seed);
+        // C++ never seeds rand(), so its sequence starts from seed 1.
+        let world = World::new(1, settings.hash_seed);
 
         let mut g = Self {
             settings,
@@ -422,7 +410,12 @@ impl Gource {
         self.mouse_dragged = false;
         self.last_percent = 0.0;
 
-        self.world = World::new(fastrand::u64(..), self.settings.hash_seed);
+        // The C++ rand() stream and string hash seed are globals that a
+        // reset leaves alone.
+        let rng = std::mem::take(&mut self.world.rng);
+        let hash_seed = self.world.hasher.seed;
+        self.world = World::new(1, hash_seed);
+        self.world.rng = rng;
         self.file_key.clear();
 
         self.captions.clear();
@@ -623,7 +616,7 @@ impl Gource {
 
     /// Change string hasher seed and recolour world & file key.
     pub fn change_colours(&mut self) {
-        let new_seed = fastrand::i32(1..=10000);
+        let new_seed = (self.world.rng.rand() % 10000) + 1;
         self.world.change_colours(new_seed);
         let hasher = StringHasher::new(new_seed);
         self.file_key.colourize(&hasher);
@@ -672,6 +665,10 @@ impl Gource {
                 if *key == Key::Escape && !*repeat {
                     self.is_finished = true;
                     self.pending_requests.push(PlatformRequest::Quit);
+                    return;
+                }
+
+                if self.commitlog.is_none() {
                     return;
                 }
 
@@ -755,6 +752,7 @@ impl Gource {
                     Key::Char('c') => self.splash = 15.0,
                     Key::Char('v') => self.toggle_camera_mode(),
                     Key::Char('s') => self.recolour = true,
+                    Key::Char('z') => self.world.tuning.gravity = !self.world.tuning.gravity,
                     Key::Tab => self.select_next_user(),
                     Key::Space => self.paused = !self.paused,
                     Key::Char('=') | Key::Char('+') => {
@@ -826,12 +824,17 @@ impl Gource {
                 if self.mouse_dragged || right_mouse {
                     if right_mouse {
                         self.manual_rotate = true;
-                        let angle = if delta.x.abs() > delta.y.abs() {
-                            (delta.x.abs() / 10.0).min(1.0) * 5.0 * (PI / 180.0) * delta.x.signum()
+                        let mag = if delta.x.abs() > delta.y.abs() {
+                            delta.x
                         } else {
-                            (delta.y.abs() / 10.0).min(1.0) * 5.0 * (PI / 180.0) * delta.y.signum()
+                            delta.y
                         };
-                        self.rotate_angle = angle;
+                        // C++: min(1, |mag| / 10) * 5 * DEGREES_TO_RADIANS
+                        // (a double), negated for a negative drag.
+                        let angle = ((1.0f32.min(mag.abs() / 10.0) * 5.0) as f64
+                            * gource_core::math::CPP_DEGREES_TO_RADIANS)
+                            as f32;
+                        self.rotate_angle = if mag < 0.0 { -angle } else { angle };
                         return;
                     }
 
@@ -851,8 +854,7 @@ impl Gource {
                     && let Some(p) = self.slider.mouse_over(*pos)
                 {
                     let date = self.date_at_position(p);
-                    let cap_w = self.date_text_width(&date);
-                    self.slider.set_caption(date, cap_w);
+                    self.slider.set_caption(date, 0.0);
                 }
             }
             InputEvent::MouseButton {
@@ -919,10 +921,6 @@ impl Gource {
         }
     }
 
-    fn date_text_width(&self, date: &str) -> f32 {
-        date.len() as f32 * 8.0 * self.settings.font_scale
-    }
-
     /// Read commits from the log into the queue (`Gource::readLog`): until
     /// the last queued commit is ahead of the current time, or the queue is
     /// full.
@@ -981,7 +979,12 @@ impl Gource {
     }
 
     /// Process a single commit by updating the directory tree and actions.
-    pub fn process_commit(&mut self, commit: &Commit, t: f32) {
+    pub fn process_commit(
+        &mut self,
+        commit: &Commit,
+        t: f32,
+        gfx: &mut Gfx,
+    ) -> Result<(), AppError> {
         for cf in &commit.files {
             if !cf.filename.is_empty() && cf.filename.ends_with('/') {
                 if cf.action != FileAction::Delete {
@@ -1004,10 +1007,10 @@ impl Gource {
                     let fid_opt = self.world.add_file(cf, &self.settings);
                     if let Some(fid) = fid_opt {
                         let ext = self.world.files[fid].ext.clone();
-                        let col = self.world.files[fid].colour();
-                        let font_scale = self.settings.font_scale;
+                        let col = self.world.files[fid].file_colour;
+                        let font_id = self.fonts.medium;
                         self.file_key
-                            .inc(&ext, col, |text| text.len() as f32 * 8.0 * font_scale);
+                            .inc(&ext, col, |text| gfx.text_width(font_id, text));
                     }
                     fid_opt
                 }
@@ -1018,9 +1021,48 @@ impl Gource {
                     .add_file_action(commit, cf, fid, t, &self.settings);
             }
         }
+
+        for uid in std::mem::take(&mut self.world.new_users) {
+            self.assign_user_image(uid, gfx)?;
+        }
+        Ok(())
     }
 
-    pub fn logic(&mut self, dt: f32, viewport: Viewport) -> Result<(), AppError> {
+    /// Port of `RUser::assignUserImage`: the image from `--user-image-dir`
+    /// matching the user's name, else `--default-user-image`, else the
+    /// built-in `user.png`. Custom images are drawn uncoloured unless
+    /// `--colour-images` is set.
+    pub fn assign_user_image(&mut self, uid: UserId, gfx: &mut Gfx) -> Result<(), AppError> {
+        let Some(user) = self.world.users.get(uid) else {
+            return Ok(());
+        };
+        let mut image = None;
+        if !self.settings.user_image_dir.is_empty() {
+            image = self.settings.user_image_map.get(user.name());
+        }
+        if image.is_none() && !self.settings.default_user_image.is_empty() {
+            image = Some(&self.settings.default_user_image);
+        }
+        let graphic = match image {
+            Some(path) => Some(
+                gfx.textures
+                    .load_file(Path::new(path), gource_draw::TextureOptions::default())
+                    .map_err(|e| AppError(e.to_string()))?,
+            ),
+            None => None,
+        };
+        let uncoloured = graphic.is_some() && !self.settings.colour_user_images;
+        let size = gfx
+            .textures
+            .size(graphic.unwrap_or(self.textures.scene.default_user));
+        let hasher = &self.world.hasher;
+        if let Some(user) = self.world.users.get_mut(uid) {
+            user.assign_graphic(hasher, graphic, size, uncoloured);
+        }
+        Ok(())
+    }
+
+    pub fn logic(&mut self, dt: f32, viewport: Viewport, gfx: &mut Gfx) -> Result<(), AppError> {
         if self.is_finished {
             return Ok(());
         }
@@ -1151,7 +1193,7 @@ impl Gource {
             }
 
             let commit = self.commitqueue.pop_front().unwrap();
-            self.process_commit(&commit, t);
+            self.process_commit(&commit, t, gfx)?;
 
             if self.settings.no_time_travel {
                 if commit.timestamp > self.lasttime {
@@ -1192,10 +1234,11 @@ impl Gource {
                 y -= caption_height;
             }
             let mut offset_x = self.settings.caption_offset as f32;
+            let text_width = gfx.text_width(self.fonts.caption, &cap.caption);
             if offset_x == 0.0 {
-                offset_x = (viewport.width as f32) * 0.5 - (cap.caption.len() as f32 * 4.0);
+                offset_x = (viewport.width as f32) * 0.5 - (text_width * 0.5);
             } else if offset_x < 0.0 {
-                offset_x = (viewport.width as f32) + offset_x - (cap.caption.len() as f32 * 8.0);
+                offset_x = (viewport.width as f32) + offset_x - text_width;
             }
             cap.set_pos(Vec2::new(offset_x, y));
             self.active_captions.push(cap);
@@ -1209,22 +1252,7 @@ impl Gource {
         // World update
         self.world.update_bounds();
         self.world.interact_users();
-        let inactive = self.world.update_users(t, dt, &self.settings);
-        for uid in inactive {
-            self.world.delete_user(uid);
-        }
-
-        if self.world.users.is_empty() && self.stop_position_reached {
-            self.is_finished = true;
-            self.pending_requests.push(PlatformRequest::Quit);
-        }
-
-        let idle_users = self.world.users.values().filter(|u| u.is_idle()).count();
-        if idle_users == self.world.users.len() {
-            self.idle_time += dt;
-        } else {
-            self.idle_time = 0.0;
-        }
+        self.update_users(t, dt);
 
         self.world.interact_dirs();
         self.world.update_dirs(dt, self.settings.elasticity);
@@ -1238,9 +1266,10 @@ impl Gource {
         };
         if display_time > 0 {
             self.display_date = datetime::format_local(display_time, &self.settings.date_format);
-            let target_offset = self.display_date.len() as f32 * 4.5 * self.settings.font_scale;
-            if (self.date_x_offset - target_offset).abs() > 5.0 {
-                self.date_x_offset = target_offset;
+            let w = gfx.text_width(self.fonts.medium, &self.display_date);
+            let date_offset = (((w as i32) as f64) * 0.5) as i32;
+            if (self.date_x_offset as i32 - date_offset).abs() > 5 {
+                self.date_x_offset = date_offset as f32;
             }
         } else {
             self.display_date.clear();
@@ -1249,9 +1278,69 @@ impl Gource {
         Ok(())
     }
 
+    /// Port of `Gource::updateUsers`: move users, then (in name order)
+    /// deselect a fading selected user and select the first active
+    /// `--follow-user` when nothing is selected. The finish check and the
+    /// idle count run before inactive users are deleted, as in C++.
+    fn update_users(&mut self, t: f32, dt: f32) {
+        let inactive = self.world.update_users(t, dt, &self.settings);
+
+        let user_ids: Vec<UserId> = self.world.users_by_name.values().copied().collect();
+        let mut idle_users = 0;
+        for uid in user_ids {
+            let user = &self.world.users[uid];
+            let fading = user.is_fading(self.settings.user_idle_time);
+            let idle = user.is_idle();
+
+            if fading && self.selected_user == Some(uid) {
+                self.select_user(None);
+            }
+
+            if idle {
+                idle_users += 1;
+            } else if self.selected_user.is_none() && self.selected_file.is_none() {
+                let name = self.world.users[uid].name();
+                let followed = self
+                    .settings
+                    .follow_users
+                    .iter()
+                    .any(|f| !f.is_empty() && f == name);
+                if followed {
+                    self.select_user(Some(uid));
+                }
+            }
+        }
+
+        if self.world.users.is_empty() && self.stop_position_reached {
+            self.is_finished = true;
+            self.pending_requests.push(PlatformRequest::Quit);
+        }
+
+        if idle_users == self.world.users.len() {
+            self.idle_time += dt;
+        } else {
+            self.idle_time = 0.0;
+        }
+
+        for uid in inactive {
+            self.delete_user(uid);
+        }
+    }
+
+    /// Port of `Gource::deleteUser`.
+    fn delete_user(&mut self, uid: UserId) {
+        if self.hover_user == Some(uid) {
+            self.hover_user = None;
+        }
+        if self.selected_user == Some(uid) {
+            self.select_user(None);
+        }
+        self.world.delete_user(uid);
+    }
+
     /// Update camera tracking and framing.
     pub fn update_camera(&mut self, dt: f32, viewport: Viewport) {
-        let auto_rotate = !self.manual_rotate && !self.settings.disable_auto_rotate;
+        let mut auto_rotate = !self.manual_rotate && !self.settings.disable_auto_rotate;
 
         if self.manual_camera {
             if self.cursor_move.length_squared() > 0.0 {
@@ -1262,6 +1351,7 @@ impl Gource {
                 pos.y += delta.y;
                 self.camera.set_pos(pos, true);
                 self.camera.stop();
+                auto_rotate = false;
                 self.cursor_move = Vec2::ZERO;
             }
         } else {
@@ -1303,21 +1393,22 @@ impl Gource {
 
         if auto_rotate {
             if self.rotation_remaining_angle > 0.0 {
-                let angle_rate =
-                    (dt.max(1.0 - ((self.rotation_remaining_angle / 90.0) - 0.5).abs() * 2.0)) * dt;
+                // C++: `max(dt, (float)(1.0f - fabs((r / 90.0f) - 0.5) *
+                // 2.0f)) * dt`, where `- 0.5` makes the inner part double.
+                let inner = (1.0f64
+                    - (((self.rotation_remaining_angle / 90.0) as f64) - 0.5).abs() * 2.0)
+                    as f32;
+                let angle_rate = dt.max(inner) * dt;
                 let step = self.rotation_remaining_angle.min(90.0 * angle_rate);
                 self.rotation_remaining_angle -= step;
-                self.rotate_angle = step * (PI / 180.0);
+                self.rotate_angle =
+                    ((step as f64) * gource_core::math::CPP_DEGREES_TO_RADIANS) as f32;
             } else if !self.cursor.right_button_pressed() && self.world.dir_bounds.area() > 10000.0
             {
-                let aspect = viewport.width as f32 / (viewport.height as f32).max(1.0);
+                let aspect = viewport.width as f32 / viewport.height as f32;
                 let w = self.world.dir_bounds.width();
                 let h = self.world.dir_bounds.height();
-                let ratio = if aspect > 1.0 {
-                    w / h.max(1.0)
-                } else {
-                    h / w.max(1.0)
-                };
+                let ratio = if aspect > 1.0 { w / h } else { h / w };
                 if ratio < 0.67 {
                     self.rotation_remaining_angle = 90.0;
                 }
@@ -1681,7 +1772,7 @@ impl Gource {
             self.stop_position_reached = true;
         }
 
-        self.logic(scaled_dt, viewport)?;
+        self.logic(scaled_dt, viewport, gfx)?;
         self.draw(scaled_dt, viewport, gfx, list);
 
         // Frame capture for recording

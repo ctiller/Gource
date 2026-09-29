@@ -170,9 +170,15 @@ fn test_user_full_coverage() {
     let hasher = gource_core::StringHasher::default();
     let mut u = User::new("david", Vec2::new(50.0, 50.0), 12, 400.0, 1.5, &hasher);
 
-    // Colourize custom uncoloured
-    u.colourize(&hasher, true);
-    assert_eq!(u.usercol, Vec3::ONE);
+    // A custom image without --colour-images: white, then the C++ blend.
+    u.assign_graphic(&hasher, None, glam::UVec2::new(384, 512), true);
+    assert_eq!(u.usercol, Vec3::splat(0.9));
+    assert!((u.pawn.graphic_ratio - 512.0 / 384.0).abs() < 1e-6);
+    assert_eq!(u.pawn.dims, Vec2::new(30.0, 40.0));
+
+    // Recolouring (`changeColours`) uses the raw hash without the blend.
+    u.colourize(&hasher);
+    assert_eq!(u.usercol, hasher.colour_hash("david"));
 
     // Alpha with idle time
     u.pawn.elapsed = 10.0;
@@ -180,7 +186,7 @@ fn test_user_full_coverage() {
     assert_eq!(u.alpha(4.0), 0.0); // 10 - 5 - 4 = 1.0 -> alpha = 1.0 - 1.0 = 0.0
 
     // Overlap forces
-    let mut rng = fastrand::Rng::with_seed(999);
+    let mut rng = gource_core::crand::CRand::new(999);
     u.apply_force_user(u.pawn.pos, 100.0, &mut rng); // dist < 0.001
     assert!(u.pawn.accel.length() > 0.0);
     u.pawn.accel = Vec2::ZERO;
@@ -234,7 +240,7 @@ fn test_dirnode_full_coverage() {
     assert_eq!(d.path_token, "");
 
     // Overlap forces: dist < 0.00001
-    let mut rng = fastrand::Rng::with_seed(1234);
+    let mut rng = gource_core::crand::CRand::new(1234);
     d.apply_force_dir(d.pos, 10.0, &mut rng);
     assert!(d.accel.length() > 0.0);
 
@@ -500,7 +506,7 @@ fn test_user_additional_coverage() {
     assert_eq!(ncol_sel, Vec3::new(1.0, 1.0, 0.0));
 
     // Desired dist force pull in apply_force_action
-    let mut rng = fastrand::Rng::with_seed(123);
+    let mut rng = gource_core::crand::CRand::new(123);
     u.apply_force_action(Vec2::new(15.0, 10.0), 20.0, 50.0, &mut rng);
 
     // Action queue with overdue max_file_lag

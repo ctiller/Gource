@@ -51,7 +51,7 @@ impl FileKeyEntry {
         colour: Vec3,
         scaled_font_size: f32,
         font_scale: f32,
-        text_width_fn: impl Fn(&str) -> f32,
+        mut text_width_fn: impl FnMut(&str) -> f32,
     ) -> Self {
         let ext = ext.into();
         let width = 90.0 * font_scale;
@@ -349,12 +349,20 @@ impl FileKey {
     /// Increment count for an extension, creating the entry if necessary.
     ///
     /// Port of `FileKey::inc(RFile* file)`.
-    pub fn inc(&mut self, ext: &str, colour: Vec3, text_width_fn: impl Fn(&str) -> f32) {
+    pub fn inc(&mut self, ext: &str, colour: Vec3, text_width_fn: impl FnMut(&str) -> f32) {
         let scaled_font_size = self.scaled_font_size;
         let font_scale = self.font_scale;
-        let entry = self.keymap.entry(ext.to_string()).or_insert_with(|| {
-            FileKeyEntry::new(ext, colour, scaled_font_size, font_scale, text_width_fn)
-        });
+        use std::collections::btree_map::Entry;
+        let entry = match self.keymap.entry(ext.to_string()) {
+            Entry::Occupied(o) => o.into_mut(),
+            Entry::Vacant(v) => v.insert(FileKeyEntry::new(
+                ext,
+                colour,
+                scaled_font_size,
+                font_scale,
+                text_width_fn,
+            )),
+        };
         entry.inc();
     }
 
@@ -363,7 +371,7 @@ impl FileKey {
         &mut self,
         ext: &str,
         hasher: &StringHasher,
-        text_width_fn: impl Fn(&str) -> f32,
+        text_width_fn: impl FnMut(&str) -> f32,
     ) {
         let colour = if ext.is_empty() {
             Vec3::ONE

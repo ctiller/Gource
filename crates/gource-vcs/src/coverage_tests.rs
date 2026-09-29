@@ -3690,4 +3690,70 @@ fn test_coverage_boost_more() {
     let failing_stream = StreamLog::from_reader(FailingReader);
     let mut failing_clog = CommitLog::from_stream("custom", failing_stream, opts.clone());
     assert!(failing_clog.next_commit().is_none());
+
+    // 12. open_file with non-existent file
+    assert!(CommitLog::open_file("/non/existent/path/for/log", "git", &opts).is_none());
+
+    // 13. at_end with seekable log at end
+    assert!(clog_seek.at_end());
+
+    // 14. LogMill abort with running child process
+    let temp_repo = tempfile::tempdir().unwrap();
+    let status = std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(temp_repo.path())
+        .status();
+    if let Ok(s) = status
+        && s.success()
+    {
+        let mut mill = crate::LogMill::spawn(temp_repo.path().to_str().unwrap(), opts.clone());
+        mill.abort();
+    }
+}
+
+#[test]
+fn test_coverage_boost_remaining() {
+    // 1. log.rs at_end with StreamLog
+    let opts = VcsOptions::default();
+    let empty_cursor = Cursor::new(b"");
+    let stream = StreamLog::from_reader(empty_cursor);
+    let mut stream_clog = CommitLog::from_stream("custom", stream, opts.clone());
+    // Enable blocking so get_next_line waits for reader thread to finish reading EOF
+    stream_clog.wait_for_input(true);
+    assert!(stream_clog.next_commit().is_none());
+    assert!(stream_clog.at_end());
+
+    // 2. log.rs CommitLog::open_file on a directory (File::open succeeds, SeekableLog::new fails)
+    let temp_dir = tempfile::tempdir().unwrap();
+    assert!(CommitLog::open_file(temp_dir.path().to_str().unwrap(), "custom", &opts).is_none());
+
+    // 3. logmill.rs take_result returns cached_result
+    // Create a finished logmill
+    let mut mill = crate::LogMill::spawn("tests/data/parity/custom/standard.log", opts.clone());
+    // Wait until finished or check status to populate cached_result
+    while !mill.is_finished() {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    // Calling status() populates cached_result when result arrives
+    assert_eq!(mill.status(), crate::logmill::LogMillStatus::Success);
+    // Now take_result takes from cached_result!
+    let res = mill.take_result();
+    assert!(res.is_some() && res.unwrap().is_ok());
+
+    // 5. logmill.rs generate_log in fetch_directory where check_format fails
+    // A directory with git repo but no commits -> git log command succeeds with empty output,
+    // so check_format returns false, hitting line 401
+    let empty_git_dir = tempfile::tempdir().unwrap();
+    let init_res = std::process::Command::new("git")
+        .args(["init"])
+        .current_dir(empty_git_dir.path())
+        .status();
+    if let Ok(s) = init_res
+        && s.success()
+    {
+        let clog_empty =
+            crate::LogMill::fetch_blocking(empty_git_dir.path().to_str().unwrap(), &opts);
+        // fetch_blocking returns Err("failed to generate log file" or similar when check_format fails)
+        assert!(clog_empty.is_err());
+    }
 }

@@ -88,7 +88,7 @@ fn test_golden_world_math_radius() {
     // RADIUS 0.000000 1.500000 1.000000 (diameter=8, visible=0, sum=0, padding=1.5)
     let mut node1 = DirNode::new("/test1", 8.0, 1.5);
     node1.visible_count = 0;
-    node1.calc_radius(1.5, 0.0);
+    node1.calc_radius(1.5, []);
     assert_eq!(node1.area(), 0.0);
     assert!((node1.radius() - 1.5).abs() < 1e-4);
     assert!((node1.parent_radius() - 1.0).abs() < 1e-4);
@@ -96,7 +96,7 @@ fn test_golden_world_math_radius() {
     // RADIUS 451.327423 31.866703 23.779964 (diameter=8, visible=5, sum=200, padding=1.5)
     let mut node2 = DirNode::new("/test2", 8.0, 1.5);
     node2.visible_count = 5;
-    node2.calc_radius(1.5, 200.0);
+    node2.calc_radius(1.5, [200.0]);
     assert!((node2.area() - 451.327423).abs() < 1e-3);
     assert!((node2.radius() - 31.866703).abs() < 1e-3);
     assert!((node2.parent_radius() - 23.779964).abs() < 1e-3);
@@ -104,7 +104,7 @@ fn test_golden_world_math_radius() {
     // RADIUS 3827.433350 123.732506 106.347229 (diameter=12, visible=25, sum=1000, padding=2.0)
     let mut node3 = DirNode::new("/test3", 12.0, 2.0);
     node3.visible_count = 25;
-    node3.calc_radius(2.0, 1000.0);
+    node3.calc_radius(2.0, [1000.0]);
     assert!((node3.area() - 3827.433350).abs() < 1e-2);
     assert!((node3.radius() - 123.732506).abs() < 1e-3);
     assert!((node3.parent_radius() - 106.347229).abs() < 1e-3);

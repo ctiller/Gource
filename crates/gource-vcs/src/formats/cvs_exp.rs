@@ -102,12 +102,7 @@ where
         None => return false,
     };
 
-    use chrono::TimeZone;
-    commit.timestamp = match chrono::Local.from_local_datetime(&naive_dt) {
-        chrono::LocalResult::Single(dt) => dt.timestamp(),
-        chrono::LocalResult::Ambiguous(dt1, _) => dt1.timestamp(),
-        chrono::LocalResult::None => 0,
-    };
+    commit.timestamp = gource_core::datetime::local_timestamp(&naive_dt);
 
     let rest = date_caps.get(7).map_or("", |m| m.as_str());
     let detail_caps = match CVSEXP_DETAIL_REGEX.captures(rest) {

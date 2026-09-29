@@ -1,0 +1,5 @@
+1615705199|Alice|A|/spring/before.txt
+1615707000|Alice|A|/spring/skipped.txt
+1636259400|Bob|A|/fall/before.txt
+1636263000|Carol|A|/fall/repeated.txt
+1636263900|Carol|M|/fall/repeated.txt

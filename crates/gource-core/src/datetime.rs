@@ -6,7 +6,10 @@
 //! (the `TZ` environment variable is honoured by chrono).
 
 use chrono::format::StrftimeItems;
-use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono::{
+    DateTime, FixedOffset, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Offset,
+    TimeDelta, TimeZone, Utc,
+};
 use regex::Regex;
 use std::sync::OnceLock;
 
@@ -49,8 +52,8 @@ pub fn parse_date_time(datetime: &str) -> Option<i64> {
 
 /// Core parse logic generic over a `chrono::TimeZone`.
 ///
-/// If no timezone or offset is specified in the string, `tz` is used.
-/// For ambiguous or non-existent local times, the earliest valid time is picked.
+/// If no timezone or offset is specified in the string, `tz` is used, with
+/// DST transitions handled like `mktime` (see [`local_timestamp_in`]).
 pub fn parse_date_time_in<Tz: TimeZone>(tz: &Tz, datetime: &str) -> Option<i64> {
     let re = get_timestamp_regex();
     let caps = re.captures(datetime)?;
@@ -116,22 +119,37 @@ pub fn parse_date_time_in<Tz: TimeZone>(tz: &Tz, datetime: &str) -> Option<i64> 
         }
     }
 
-    // Default: interpret in `tz` (local time), picking the earliest valid for ambiguous / DST transitions
-    let dt = match tz.from_local_datetime(&naive_dt) {
-        chrono::LocalResult::Single(dt) => dt,
-        chrono::LocalResult::Ambiguous(earliest, _latest) => earliest,
-        chrono::LocalResult::None => {
-            // For nonexistent times during spring forward gap (like mktime does),
-            // advance by 1 hour to find a valid time.
-            let shifted = naive_dt + chrono::Duration::hours(1);
-            match tz.from_local_datetime(&shifted) {
-                chrono::LocalResult::Single(dt) => dt,
-                chrono::LocalResult::Ambiguous(earliest, _latest) => earliest,
-                chrono::LocalResult::None => return None,
-            }
+    Some(local_timestamp_in(tz, &naive_dt))
+}
+
+/// Converts a wall-clock time in `tz` to a Unix timestamp the way C `mktime`
+/// does with `tm_isdst = -1`, which is how the C++ code reads local times.
+///
+/// A time repeated when the clocks go back resolves to the earlier instant
+/// (glibc does this unless its previous call landed after the transition). A
+/// time skipped when the clocks go forward is read with the UTC offset in
+/// effect before the jump, as glibc does: 02:30 on a spring-forward night in
+/// New York becomes 03:30 EDT.
+pub fn local_timestamp_in<Tz: TimeZone>(tz: &Tz, local: &NaiveDateTime) -> i64 {
+    match tz.from_local_datetime(local) {
+        LocalResult::Single(dt) => dt.timestamp(),
+        // chrono doesn't always put the earlier instant first (its POSIX TZ
+        // rule path returns standard time first), so compare.
+        LocalResult::Ambiguous(a, b) => a.timestamp().min(b.timestamp()),
+        LocalResult::None => {
+            // A day earlier is before the transition for any UTC offset.
+            let before = local
+                .checked_sub_signed(TimeDelta::days(1))
+                .unwrap_or(*local);
+            let offset = tz.offset_from_utc_datetime(&before).fix().local_minus_utc();
+            local.and_utc().timestamp() - i64::from(offset)
         }
-    };
-    Some(dt.timestamp())
+    }
+}
+
+/// [`local_timestamp_in`] for the system time zone (honours `TZ`).
+pub fn local_timestamp(local: &NaiveDateTime) -> i64 {
+    local_timestamp_in(&Local, local)
 }
 
 /// Format a timestamp with a given timezone using C `strftime` format specifiers.
@@ -305,6 +323,47 @@ mod tests {
         // Invalid timezone offsets > 24 hours
         assert_eq!(parse_date_time("2021-11-01 12:00:00+25:00"), None);
         assert_eq!(parse_date_time("2021-11-01 12:00:00-25:00"), None);
+    }
+
+    /// US Eastern time as a POSIX rule, so the test doesn't need tzdata.
+    const DST_TZ: &str = "XST5XDT,M3.2.0,M11.1.0";
+    const DST_TEST: &str = "datetime::tests::local_times_across_dst_match_mktime";
+
+    /// The expected values are what glibc `mktime` (`tm_isdst = -1`) returns
+    /// for the same wall-clock times with the same `TZ`. Runs in a child
+    /// process because `TZ` is process-wide.
+    #[test]
+    fn local_times_across_dst_match_mktime() {
+        if std::env::var_os("GOURCE_DST_CHILD").is_none() {
+            let exe = std::env::current_exe().expect("test binary path");
+            let output = std::process::Command::new(exe)
+                .args(["--exact", DST_TEST, "--nocapture", "--test-threads=1"])
+                .env("GOURCE_DST_CHILD", "1")
+                .env("TZ", DST_TZ)
+                .output()
+                .expect("run child test");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("DST_CHILD_OK"),
+                "child failed: {stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let at = |y, mo, d, h, mi| {
+            NaiveDate::from_ymd_opt(y, mo, d)
+                .and_then(|date| date.and_hms_opt(h, mi, 0))
+                .expect("valid date")
+        };
+        // Summer: plain EDT.
+        assert_eq!(local_timestamp(&at(2021, 6, 1, 12, 0)), 1_622_563_200);
+        // Skipped by the spring-forward jump: read as EST, i.e. 03:30 EDT.
+        assert_eq!(local_timestamp(&at(2021, 3, 14, 2, 30)), 1_615_707_000);
+        // Repeated by the fall-back: the earlier instant, 01:30 EDT.
+        assert_eq!(local_timestamp(&at(2021, 11, 7, 1, 30)), 1_636_263_000);
+        assert_eq!(parse_date_time("2021-03-14 02:30"), Some(1_615_707_000));
+        assert_eq!(parse_date_time("2021-11-07 01:30"), Some(1_636_263_000));
+        println!("DST_CHILD_OK");
     }
 
     #[test]

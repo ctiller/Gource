@@ -1,7 +1,7 @@
 //! SplineEdge: curved tree edges (port of spline.cpp).
 
 use glam::{Vec2, Vec4};
-use std::f32::consts::PI;
+use gource_core::math::CPP_PI;
 
 /// A curved edge connecting directory nodes.
 /// Port of `SplineEdge` in `spline.h` / `spline.cpp`.
@@ -44,10 +44,14 @@ impl SplineEdge {
         let to_norm = if to_len > 0.0 { to / to_len } else { to };
         let mid_norm = if mid_len > 0.0 { mid / mid_len } else { mid };
 
-        let dp = (to_norm.dot(mid_norm)).clamp(-1.0, 1.0);
-        let ang = dp.acos() / PI;
+        // C++ clamps only the top; a dot below -1 makes `acos` NaN, and the
+        // saturating cast below then yields detail 1, as C++'s int cast of
+        // NaN (INT_MIN) does after its `< 1` check.
+        let dp = to_norm.dot(mid_norm).min(1.0);
+        // `acos(float)` resolves to acosf; `/ PI` and `* 100.0` are double.
+        let ang = ((dp.acos() as f64) / CPP_PI) as f32;
 
-        let edge_detail = ((ang * 100.0) as i32).clamp(1, 10);
+        let edge_detail = (((ang as f64) * 100.0) as i32).clamp(1, 10);
 
         self.spline_point.clear();
         self.spline_colour.clear();

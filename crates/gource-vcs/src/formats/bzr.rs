@@ -75,17 +75,9 @@ where
         Some(d) => d,
         None => return false,
     };
-    let naive_dt = match naive_date.and_hms_opt(0, 0, 0) {
-        Some(dt) => dt,
-        None => return false,
-    };
+    let naive_dt = naive_date.and_time(chrono::NaiveTime::MIN);
 
-    use chrono::TimeZone;
-    commit.timestamp = match chrono::Local.from_local_datetime(&naive_dt) {
-        chrono::LocalResult::Single(dt) => dt.timestamp(),
-        chrono::LocalResult::Ambiguous(dt1, _) => dt1.timestamp(),
-        chrono::LocalResult::None => 0,
-    };
+    commit.timestamp = gource_core::datetime::local_timestamp(&naive_dt);
 
     while get_line(&mut line) && !line.is_empty() {
         if let Some(fcaps) = BZR_FILE_REGEX.captures(&line) {

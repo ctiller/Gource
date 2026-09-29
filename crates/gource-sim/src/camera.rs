@@ -31,6 +31,9 @@ use gource_core::Bounds2D;
 use gource_draw::Projection;
 use gource_settings::GourceSettings;
 
+/// Initial camera z (C++ `Gource::starting_z`).
+pub const STARTING_Z: f32 = -300.0;
+
 /// Camera mode cropping for [`ZoomCamera::adjust`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CameraCrop {
@@ -134,12 +137,15 @@ impl ZoomCamera {
         cam
     }
 
-    /// Construct a `ZoomCamera` initialized with values from [`GourceSettings`].
+    /// The camera `Gource` starts with: C++
+    /// `ZoomCamera(vec3(0, 0, starting_z), vec3(0), camera_zoom_default, camera_zoom_max)`.
+    /// `camera_zoom_default` is the closest the automatic framing zooms in;
+    /// `camera_zoom_min` only limits manual zooming.
     pub fn from_settings(settings: &GourceSettings) -> Self {
         let mut cam = Self::new(
-            Vec3::new(0.0, 0.0, -settings.camera_zoom_default),
+            Vec3::new(0.0, 0.0, STARTING_Z),
             Vec3::ZERO,
-            settings.camera_zoom_min,
+            settings.camera_zoom_default,
             settings.camera_zoom_max,
         );
         cam.set_padding(settings.padding);
@@ -345,8 +351,9 @@ impl ZoomCamera {
         }
 
         // calc visible width of the opposite wall at a distance of 1 this fov
-        // tan( fov * 0.5f * DEGREES_TO_RADIANS ) * 2.0
-        let toa = (self.fov * 0.5).to_radians().tan() * 2.0;
+        // C++ `tan( fov * 0.5f * DEGREES_TO_RADIANS ) * 2.0`: double math.
+        let toa = ((((self.fov * 0.5) as f64) * gource_core::math::CPP_DEGREES_TO_RADIANS).tan()
+            * 2.0) as f32;
 
         // TOA = tan = opposite/adjacent (distance = adjacent)
         // use the larger side of the box
@@ -362,7 +369,8 @@ impl ZoomCamera {
             }
         };
 
-        let distance = distance.clamp(self.min_distance, self.max_distance);
+        // C++ order: max wins if min > max (f32::clamp would panic).
+        let distance = distance.max(self.min_distance).min(self.max_distance);
         self.dest.z = -distance;
     }
 

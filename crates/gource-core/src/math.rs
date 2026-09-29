@@ -2,6 +2,16 @@
 
 use glam::{Vec2, Vec3, Vec4};
 
+/// `PI` from `core/pi.h`: a *double* literal, so C++ expressions such as
+/// `radius * PI` are evaluated in double precision and then rounded to
+/// float. Use this (in f64) wherever the C++ code uses `PI`. It is the
+/// truncated C++ literal on purpose: results must match bit for bit.
+#[allow(clippy::approx_constant)]
+pub const CPP_PI: f64 = 3.14159265;
+
+/// `DEGREES_TO_RADIANS` from `core/pi.h` (also a double literal).
+pub const CPP_DEGREES_TO_RADIANS: f64 = 0.017453292;
+
 /// Rotate `v` by the angle whose sine is `s` and cosine is `c`.
 pub fn rotate_vec2(v: Vec2, s: f32, c: f32) -> Vec2 {
     Vec2::new(v.x * c - v.y * s, v.x * s + v.y * c)

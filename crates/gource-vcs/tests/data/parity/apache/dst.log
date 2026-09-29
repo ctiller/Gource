@@ -1,0 +1,6 @@
+127.0.0.1 - Alice [14/Mar/2021:01:59:59 -0500] "GET /spring/before.html HTTP/1.1" 200 100
+127.0.0.1 - Alice [14/Mar/2021:02:30:00 -0500] "GET /spring/skipped.html HTTP/1.1" 200 100
+127.0.0.1 - Bob [14/Mar/2021:03:30:00 -0400] "GET /spring/after.html HTTP/1.1" 200 100
+127.0.0.1 - Bob [07/Nov/2021:00:30:00 -0400] "GET /fall/before.html HTTP/1.1" 200 100
+127.0.0.1 - Carol [07/Nov/2021:01:30:00 -0400] "GET /fall/repeated.html HTTP/1.1" 200 100
+127.0.0.1 - Carol [07/Nov/2021:03:00:00 -0500] "GET /fall/after.html HTTP/1.1" 200 100

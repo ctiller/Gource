@@ -41,8 +41,9 @@ use crate::action::{Action, ActionKind};
 use crate::dirnode::DirNode;
 use crate::file::{DirId, File, FileId};
 use crate::user::{User, UserId};
-use fastrand::Rng;
 use glam::{Vec2, Vec3, Vec4};
+use gource_core::crand::CRand;
+use gource_core::math::CPP_PI;
 use gource_core::{Bounds2D, QuadTree, StringHasher};
 use gource_draw::font::{FontId, TextStyle};
 use gource_draw::list::{DrawList, Material, TextureId, Vertex};
@@ -51,7 +52,6 @@ use gource_settings::GourceSettings;
 use gource_vcs::commit::{Commit, CommitFile, FileAction};
 use slotmap::SlotMap;
 use std::collections::BTreeMap;
-use std::f32::consts::PI;
 
 /// C++ tunable globals and constants with their defaults.
 #[derive(Debug, Clone)]
@@ -153,8 +153,21 @@ pub struct World {
 
     pub tag_seq: i32,
     pub hasher: StringHasher,
-    pub rng: Rng,
+    /// The C++ `rand()` stream (physics jitter, recolouring).
+    pub rng: CRand,
     pub tuning: Tuning,
+    /// Users created since the owner last drained this list. `Gource` assigns
+    /// their images (`RUser::assignUserImage`), which needs the texture store.
+    pub new_users: Vec<UserId>,
+}
+
+/// C++ `normalise(vec2((rand() % 100) - 50, (rand() % 100) - 50))`, the
+/// nudge that separates overlapping dirs and users. GCC evaluates the
+/// constructor arguments right to left, so y draws first.
+pub(crate) fn random_direction(rng: &mut CRand) -> Vec2 {
+    let y = (rng.rand() % 100 - 50) as f32;
+    let x = (rng.rand() % 100 - 50) as f32;
+    gource_core::math::normalise2(Vec2::new(x, y))
 }
 
 impl World {
@@ -188,8 +201,9 @@ impl World {
             removed_files: Vec::new(),
             tag_seq: 1,
             hasher: StringHasher::new(hash_seed),
-            rng: Rng::with_seed(seed),
+            rng: CRand::new(seed as u32),
             tuning,
+            new_users: Vec::new(),
         }
     }
 
@@ -198,7 +212,7 @@ impl World {
     pub fn change_colours(&mut self, new_seed: i32) {
         self.hasher.seed = new_seed;
         for (_, user) in &mut self.users {
-            user.colourize(&self.hasher, false);
+            user.colourize(&self.hasher);
         }
         for (_, file) in &mut self.files {
             file.colourize(&self.hasher);
@@ -265,6 +279,7 @@ impl World {
         let user_id = self.users.insert(user);
         self.users_by_name.insert(username.to_string(), user_id);
         self.users_by_tag.insert(tagid, user_id);
+        self.new_users.push(user_id);
 
         user_id
     }
@@ -678,14 +693,20 @@ impl World {
         }
     }
 
-    fn on_file_updated(&mut self, dir_id: DirId) {
-        let children_area_sum: f32 = self.dirs[dir_id]
+    /// The children's `dir_area`s, in child order (for
+    /// [`DirNode::calc_radius`]).
+    fn children_areas(&self, dir_id: DirId) -> Vec<f32> {
+        self.dirs[dir_id]
             .children
             .iter()
             .filter_map(|&cid| self.dirs.get(cid))
             .map(|c| c.dir_area)
-            .sum();
-        self.dirs[dir_id].calc_radius(self.tuning.dir_padding, children_area_sum);
+            .collect()
+    }
+
+    fn on_file_updated(&mut self, dir_id: DirId) {
+        let children_areas = self.children_areas(dir_id);
+        self.dirs[dir_id].calc_radius(self.tuning.dir_padding, children_areas);
         self.dirs[dir_id].since_last_file_change = 0.0;
         self.on_node_updated(dir_id, false);
     }
@@ -694,13 +715,8 @@ impl World {
         if user_initiated {
             self.dirs[dir_id].since_last_node_change = 0.0;
         }
-        let children_area_sum: f32 = self.dirs[dir_id]
-            .children
-            .iter()
-            .filter_map(|&cid| self.dirs.get(cid))
-            .map(|c| c.dir_area)
-            .sum();
-        self.dirs[dir_id].calc_radius(self.tuning.dir_padding, children_area_sum);
+        let children_areas = self.children_areas(dir_id);
+        self.dirs[dir_id].calc_radius(self.tuning.dir_padding, children_areas);
         self.dirs[dir_id].update_file_positions(self.tuning.file_diameter, &mut self.files);
         if self.dirs[dir_id].visible
             && self.dirs[dir_id].children.is_empty()
@@ -736,8 +752,9 @@ impl World {
             .collect();
 
         for did in visible_dirs {
-            let b = self.dirs[did].bounds();
-            self.dir_bounds.update_bounds(&b);
+            let dir = &mut self.dirs[did];
+            dir.update_quad_item_bounds();
+            self.dir_bounds.update_bounds(&dir.quad_item_bounds);
         }
     }
 
@@ -775,7 +792,12 @@ impl World {
                 self.users[user_id].apply_force_user(other_pos, p_space, &mut self.rng);
             }
 
-            // Apply force to actions
+            // Apply force to actions (`RUser::applyForceToActions`)
+            let user = &mut self.users[user_id];
+            if user.active_actions.is_empty() && user.actions.is_empty() {
+                continue;
+            }
+            user.last_action = user.pawn.elapsed;
             let user = &self.users[user_id];
             let target_file_pos = if !user.active_actions.is_empty() {
                 let mut positions = Vec::new();
@@ -828,7 +850,7 @@ impl World {
         let mut tree = QuadTree::new(quadtree_bounds, max_depth, 1);
         for &dir_id in self.dir_map.values() {
             if !self.dirs[dir_id].is_empty() {
-                tree.insert(dir_id, self.dirs[dir_id].bounds());
+                tree.insert(dir_id, self.dirs[dir_id].quad_item_bounds);
             }
         }
 
@@ -855,8 +877,9 @@ impl World {
             None => return,
         };
 
-        // Query tree for nearby dirnodes
-        let bounds = self.dirs[dir_id].bounds();
+        // Query tree for nearby dirnodes (C++ queries with the cached
+        // quadItemBounds, stale for hidden dirs).
+        let bounds = self.dirs[dir_id].quad_item_bounds;
         let nearby = tree.items_in_bounds(&bounds);
 
         for other_id in nearby {
@@ -922,8 +945,10 @@ impl World {
             }
 
             if visible_sibs > 1 {
-                let slice_size =
-                    (self.dirs[parent_id].dir_radius * PI) / (visible_sibs as f32 + 1.0);
+                // C++: (radius * PI) in double, divided by a float, then
+                // rounded to float.
+                let slice_size = ((self.dirs[parent_id].dir_radius as f64 * CPP_PI)
+                    / ((visible_sibs as f32 + 1.0) as f64)) as f32;
                 sib_accel *= slice_size;
                 self.dirs[dir_id].accel += sib_accel;
             }
@@ -1070,7 +1095,7 @@ impl World {
             .map(|pid| (self.dirs[pid].projected_pos, self.dirs[pid].col));
 
         let dir = &mut self.dirs[dir_id];
-        dir.in_frustum = v_bounds.overlaps(&dir.bounds());
+        dir.in_frustum = v_bounds.overlaps(&dir.quad_item_bounds);
         dir.projected_pos = proj.to_screen(dir.pos);
         dir.projected_spos = proj.to_screen(dir.spos);
 
@@ -1145,6 +1170,14 @@ impl World {
             self.draw_files_recursive(self.root, list, proj, textures.file);
         }
 
+        // C++ `updateVBOs`: `--fixed-user-size` keeps users the same size on
+        // screen by scaling their world size with the camera distance.
+        let user_scale_factor = if settings.fixed_user_size {
+            proj.distance / -crate::camera::STARTING_Z
+        } else {
+            1.0
+        };
+
         // 5. User shadows (offset (2, 2) * user_scale world units)
         if !settings.hide_users {
             let offset_world = Vec2::new(2.0, 2.0) * settings.user_scale;
@@ -1156,10 +1189,11 @@ impl World {
                 let alpha = user.alpha(settings.user_idle_time) * shadow_mult;
                 let world_pos = user.pawn.pos + offset_world;
                 let screen_pos = proj.to_screen(world_pos);
-                let screen_size = proj.to_screen_len(user.pawn.size);
+                let screen_size = proj.to_screen_len(user.pawn.size * user_scale_factor);
                 let dims = Vec2::new(screen_size, screen_size * user.pawn.graphic_ratio);
                 let col = Vec4::new(0.0, 0.0, 0.0, alpha);
-                list.rect(textures.default_user, screen_pos - dims * 0.5, dims, col);
+                let tex = user.graphic.unwrap_or(textures.default_user);
+                list.rect(tex, screen_pos - dims * 0.5, dims, col);
             }
         }
 
@@ -1173,10 +1207,11 @@ impl World {
                 let alpha = user.alpha(settings.user_idle_time);
                 let col = user.colour();
                 let screen_pos = proj.to_screen(user.pawn.pos);
-                let screen_size = proj.to_screen_len(user.pawn.size);
+                let screen_size = proj.to_screen_len(user.pawn.size * user_scale_factor);
                 let dims = Vec2::new(screen_size, screen_size * user.pawn.graphic_ratio);
                 let colour = Vec4::new(col.x, col.y, col.z, alpha);
-                list.rect(textures.default_user, screen_pos - dims * 0.5, dims, colour);
+                let tex = user.graphic.unwrap_or(textures.default_user);
+                list.rect(tex, screen_pos - dims * 0.5, dims, colour);
             }
         }
 
@@ -1477,20 +1512,26 @@ impl World {
         // 4. Selected user drawn on top
         if let Some(uid) = selected_user
             && let Some(user) = self.users.get(uid)
+            && !user.pawn.is_hidden()
+            && !settings.hide_usernames
+            && !settings.hide_users
         {
-            let font_id = fonts.user_selected;
-            let text_w = gfx.text_width(font_id, user.name());
-            let font_h = gfx.fonts.max_height(font_id);
-            let pos = Vec2::new(
-                user.pawn.screenpos.x - text_w * 0.5,
-                user.pawn.screenpos.y - font_h,
-            );
-            let col = settings.selection_colour;
-            let style = TextStyle::default()
-                .with_colour(Vec4::new(col.x, col.y, col.z, 1.0))
-                .with_shadow(true)
-                .with_align_top(false);
-            gfx.draw_text(list, font_id, pos, user.name(), &style);
+            let alpha = user.alpha(settings.user_idle_time);
+            if alpha > 0.01 {
+                let font_id = fonts.user_selected;
+                let text_w = gfx.text_width(font_id, user.name());
+                let font_h = gfx.fonts.max_height(font_id);
+                let pos = Vec2::new(
+                    user.pawn.screenpos.x - text_w * 0.5,
+                    user.pawn.screenpos.y - font_h,
+                );
+                let col = settings.selection_colour;
+                let style = TextStyle::default()
+                    .with_colour(Vec4::new(col.x, col.y, col.z, alpha))
+                    .with_shadow(true)
+                    .with_align_top(false);
+                gfx.draw_text(list, font_id, pos, user.name(), &style);
+            }
         }
 
         // 5. Selected file drawn on top

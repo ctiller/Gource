@@ -63,7 +63,7 @@ fn test_user_uncovered_branches() {
     let a2 = Action::new(f2, 10, 1.0, ActionKind::Create);
     user.active_actions.push(a1);
     user.actions.push(a2);
-    let mut rng = fastrand::Rng::with_seed(42);
+    let mut rng = gource_core::crand::CRand::new(42);
     user.apply_force_user(Vec2::new(10.0, 0.0), 100.0, &mut rng);
     assert!(user.pawn.accel.x != 0.0);
 

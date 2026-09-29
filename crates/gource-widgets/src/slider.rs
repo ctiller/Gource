@@ -256,10 +256,15 @@ impl PositionSlider {
         if let (false, true, Some(font)) =
             (self.caption.is_empty(), self.mouseover >= 0.0, self.font)
         {
+            let capwidth = if self.capwidth > 0.0 {
+                self.capwidth
+            } else {
+                gfx.text_width(font, &self.caption)
+            };
             let height_offset = 25.0 * font_scale;
             let min_x = 1.0f32;
-            let max_x = (display_width - self.capwidth - 1.0).max(1.0);
-            let ideal_x = self.mouseover - (self.capwidth / 2.0);
+            let max_x = (display_width - capwidth - 1.0).max(1.0);
+            let ideal_x = self.mouseover - (capwidth / 2.0);
             let text_x = ideal_x.clamp(min_x, max_x);
             let text_y = self.bounds.min.y - height_offset;
 

@@ -4,9 +4,8 @@ use crate::file::{DirId, File, FileId};
 use crate::spline::SplineEdge;
 use glam::{Vec2, Vec3, Vec4};
 use gource_core::Bounds2D;
-use gource_core::math::rotate_vec2;
+use gource_core::math::{CPP_PI, rotate_vec2};
 use slotmap::SlotMap;
-use std::f32::consts::PI;
 
 /// A directory node in the visualizer tree.
 /// Port of `RDirNode` in `dirnode.h` / `dirnode.cpp`.
@@ -50,6 +49,13 @@ pub struct DirNode {
 
     pub screenpos: Vec3,
     pub node_normal: Vec2,
+
+    /// C++ `QuadItem::quadItemBounds`: refreshed by
+    /// [`DirNode::update_quad_item_bounds`] only while the dir is visible
+    /// (`Gource::updateBounds`), so a hidden dir keeps its last bounds (the
+    /// empty box at the origin if it was never visible). The dir quadtree,
+    /// the dir force query and the frustum test all use this cached value.
+    pub quad_item_bounds: Bounds2D,
 }
 
 impl DirNode {
@@ -61,7 +67,8 @@ impl DirNode {
         }
 
         let padded_file_radius = file_diameter * 0.5;
-        let file_area = padded_file_radius * padded_file_radius * PI;
+        // C++: float * float, then * PI (double).
+        let file_area = ((padded_file_radius * padded_file_radius) as f64 * CPP_PI) as f32;
 
         let mut node = Self {
             // C++: the constructor's setParent(parent) calls adjustPath(),
@@ -97,8 +104,9 @@ impl DirNode {
             visible_count: 0,
             screenpos: Vec3::ZERO,
             node_normal: Vec2::ZERO,
+            quad_item_bounds: Bounds2D::new(),
         };
-        node.calc_radius(dir_padding, 0.0);
+        node.calc_radius(dir_padding, []);
         node.calc_colour(&SlotMap::with_key());
         node
     }
@@ -248,10 +256,17 @@ impl DirNode {
         self.visible_count == 0 && self.children.is_empty()
     }
 
-    /// Port of `RDirNode::calcRadius()`.
-    pub fn calc_radius(&mut self, dir_padding: f32, children_area_sum: f32) {
+    /// Port of `RDirNode::calcRadius()`. `children_areas` are the children's
+    /// `dir_area`s in child order: C++ adds them to the file area one at a
+    /// time, and float addition is not associative, so a pre-summed total
+    /// can round differently.
+    pub fn calc_radius(&mut self, dir_padding: f32, children_areas: impl IntoIterator<Item = f32>) {
         let total_file_area = self.file_area * (self.visible_count as f32);
-        self.dir_area = total_file_area + children_area_sum;
+        let mut dir_area = total_file_area;
+        for area in children_areas {
+            dir_area += area;
+        }
+        self.dir_area = dir_area;
         self.dir_radius = 1.0f32.max(self.dir_area.sqrt()) * dir_padding;
         self.parent_radius = 1.0f32.max(total_file_area.sqrt() * dir_padding);
     }
@@ -281,7 +296,8 @@ impl DirNode {
     pub fn calc_file_dest(max_files: usize, file_no: usize) -> Vec2 {
         let arc = 1.0 / (max_files as f32);
         let frac = arc * 0.5 + arc * (file_no as f32);
-        let angle = frac * PI * 2.0;
+        // C++ `sinf(frac*PI*2.0)`: double product, rounded to float.
+        let angle = ((frac as f64) * CPP_PI * 2.0) as f32;
         Vec2::new(angle.sin(), angle.cos())
     }
 
@@ -312,7 +328,7 @@ impl DirNode {
                 if file_no >= max_files {
                     diameter += 1;
                     d += file_diameter;
-                    max_files = (1.0f32.max((diameter as f32) * PI)) as usize;
+                    max_files = (1.0f64.max((diameter as f64) * CPP_PI)) as usize;
 
                     if files_left < max_files {
                         max_files = files_left;
@@ -331,7 +347,12 @@ impl DirNode {
     }
 
     /// Port of `RDirNode::applyForceDir(RDirNode* node)`.
-    pub fn apply_force_dir(&mut self, other_pos: Vec2, other_radius: f32, rng: &mut fastrand::Rng) {
+    pub fn apply_force_dir(
+        &mut self,
+        other_pos: Vec2,
+        other_radius: f32,
+        rng: &mut gource_core::crand::CRand,
+    ) {
         let dir = other_pos - self.pos;
         let posd2 = dir.length_squared();
         let myradius = self.dir_radius;
@@ -347,12 +368,7 @@ impl DirNode {
         let distance = posd - myradius - your_radius;
 
         if posd < 0.00001 {
-            let rx = (rng.i32(0..100) - 50) as f32;
-            let ry = (rng.i32(0..100) - 50) as f32;
-            let v = Vec2::new(rx, ry);
-            let len = v.length();
-            let norm = if len > 0.0 { v / len } else { Vec2::X };
-            self.accel += norm;
+            self.accel += crate::world::random_direction(rng);
             return;
         }
 
@@ -436,10 +452,16 @@ impl DirNode {
         self.spos = rotate_vec2(self.spos - centre, s, c) + centre;
     }
 
-    /// Port of `RDirNode::updateQuadItemBounds()`.
+    /// The box `RDirNode::updateQuadItemBounds()` computes: `pos ± radius`.
     pub fn bounds(&self) -> Bounds2D {
         let radoffset = Vec2::splat(self.dir_radius);
         Bounds2D::from_points(self.pos - radoffset, self.pos + radoffset)
+    }
+
+    /// Port of `RDirNode::updateQuadItemBounds()`: refresh the cached
+    /// [`DirNode::quad_item_bounds`].
+    pub fn update_quad_item_bounds(&mut self) {
+        self.quad_item_bounds = self.bounds();
     }
 
     /// Port of `RDirNode::averageFileColour()`.
@@ -519,13 +541,14 @@ mod tests {
         assert_eq!(node.visible_count, 1);
 
         let dest0 = DirNode::calc_file_dest(1, 0);
-        assert_eq!(dest0, Vec2::new((PI).sin(), (PI).cos())); // frac = 0.5 -> angle = PI
+        let angle = CPP_PI as f32; // frac = 0.5 -> angle = PI
+        assert_eq!(dest0, Vec2::new(angle.sin(), angle.cos()));
     }
 
     #[test]
     fn dirnode_physics_and_forces() {
         let mut node = DirNode::new("/foo/", 8.0, 1.5);
-        let mut rng = fastrand::Rng::with_seed(42);
+        let mut rng = gource_core::crand::CRand::new(42);
 
         let mut sm: SlotMap<DirId, ()> = SlotMap::with_key();
         let dummy_parent = sm.insert(());

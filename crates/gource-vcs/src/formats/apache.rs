@@ -80,12 +80,7 @@ where
     };
 
     // The C++ code uses mktime with time_str (which evaluates as local time)
-    use chrono::TimeZone;
-    commit.timestamp = match chrono::Local.from_local_datetime(&naive_dt) {
-        chrono::LocalResult::Single(dt) => dt.timestamp(),
-        chrono::LocalResult::Ambiguous(dt1, _) => dt1.timestamp(),
-        chrono::LocalResult::None => 0,
-    };
+    commit.timestamp = gource_core::datetime::local_timestamp(&naive_dt);
 
     let req_caps = match APACHE_ENTRY_REQUEST.captures(request_str) {
         Some(c) => c,

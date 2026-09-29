@@ -3,7 +3,8 @@
 use crate::action::Action;
 use crate::file::FileId;
 use crate::pawn::Pawn;
-use glam::{Vec2, Vec3};
+use glam::{UVec2, Vec2, Vec3};
+use gource_draw::TextureId;
 use slotmap::new_key_type;
 
 new_key_type! {
@@ -28,6 +29,10 @@ pub struct User {
 
     pub usercol: Vec3,
     pub highlighted: bool,
+
+    /// The user's image (`--user-image-dir` / `--default-user-image`);
+    /// `None` draws the built-in `user.png`.
+    pub graphic: Option<TextureId>,
 }
 
 impl User {
@@ -57,8 +62,11 @@ impl User {
             min_units_ps: 100.0,
             usercol: Vec3::ONE,
             highlighted: false,
+            graphic: None,
         };
-        user.colourize(hasher, false);
+        // The built-in-image path of `assignUserImage`; `Gource` calls
+        // `assign_graphic` again with the user's real image and its size.
+        user.assign_graphic(hasher, None, UVec2::ONE, false);
         user
     }
 
@@ -67,14 +75,32 @@ impl User {
         self.pawn.name()
     }
 
-    /// Port of `RUser::colourize()`.
-    pub fn colourize(&mut self, hasher: &gource_core::StringHasher, custom_uncoloured: bool) {
-        if custom_uncoloured {
+    /// Port of `RUser::colourize()`: the raw colour hash of the name. C++
+    /// `Gource::changeColours` calls only this, so recoloured users lose the
+    /// blend `assignUserImage` applies.
+    pub fn colourize(&mut self, hasher: &gource_core::StringHasher) {
+        self.usercol = hasher.colour_hash(&self.pawn.name);
+    }
+
+    /// Port of `RUser::assignUserImage()` once the image is chosen:
+    /// `graphic` is the user's own image (`None` = the built-in `user.png`),
+    /// `size` the chosen texture's size in pixels (sets the aspect ratio), and
+    /// `uncoloured` is true for a custom image without `--colour-images`.
+    pub fn assign_graphic(
+        &mut self,
+        hasher: &gource_core::StringHasher,
+        graphic: Option<TextureId>,
+        size: UVec2,
+        uncoloured: bool,
+    ) {
+        self.colourize(hasher);
+        if uncoloured {
             self.usercol = Vec3::ONE;
-        } else {
-            let base = hasher.colour_hash(&self.pawn.name);
-            self.usercol = (base * 0.6 + Vec3::ONE * 0.4) * 0.9;
         }
+        self.graphic = graphic;
+        self.pawn.set_graphic_dimensions(size.x, size.y);
+        self.usercol = self.usercol * 0.6 + Vec3::ONE * 0.4;
+        self.usercol *= 0.9;
     }
 
     /// Port of `RUser::addAction(RAction* action)`.
@@ -171,7 +197,7 @@ impl User {
         &mut self,
         other_pos: Vec2,
         personal_space_dist: f32,
-        rng: &mut fastrand::Rng,
+        rng: &mut gource_core::crand::CRand,
     ) {
         let dir = other_pos - self.pawn.pos;
         let dist = dir.length();
@@ -185,12 +211,7 @@ impl User {
         };
 
         if dist < 0.001 {
-            let rx = (rng.i32(0..100) - 50) as f32;
-            let ry = (rng.i32(0..100) - 50) as f32;
-            let v = Vec2::new(rx, ry);
-            let len = v.length();
-            let norm = if len > 0.0 { v / len } else { Vec2::X };
-            self.pawn.accel += norm;
+            self.pawn.accel += crate::world::random_direction(rng);
             return;
         }
 
@@ -206,19 +227,14 @@ impl User {
         target_pos: Vec2,
         action_dist: f32,
         beam_dist: f32,
-        rng: &mut fastrand::Rng,
+        rng: &mut gource_core::crand::CRand,
     ) {
         let dir = target_pos - self.pawn.pos;
         let dist = dir.length();
         let desired_dist = action_dist;
 
         if dist < 0.001 {
-            let rx = (rng.i32(0..100) - 50) as f32;
-            let ry = (rng.i32(0..100) - 50) as f32;
-            let v = Vec2::new(rx, ry);
-            let len = v.length();
-            let norm = if len > 0.0 { v / len } else { Vec2::X };
-            self.pawn.accel += norm;
+            self.pawn.accel += crate::world::random_direction(rng);
             return;
         }
 
@@ -366,7 +382,7 @@ mod tests {
         assert_eq!(u.action_count(), 1);
 
         // Forces
-        let mut rng = fastrand::Rng::with_seed(123);
+        let mut rng = gource_core::crand::CRand::new(123);
         u.apply_force_user(Vec2::new(5.0, 0.0), 100.0, &mut rng);
         assert!(u.pawn.accel.x < 0.0);
 

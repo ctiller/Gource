@@ -132,12 +132,7 @@ where
     // Note that the C++ cvs2cl.cpp uses mktime with the parsed components,
     // which treats them as local time even though there is a Z in the regex!
     // Let's check cvs2cl.cpp line 128: mktime(&time_str).
-    use chrono::TimeZone;
-    commit.timestamp = match chrono::Local.from_local_datetime(&naive_dt) {
-        chrono::LocalResult::Single(dt) => dt.timestamp(),
-        chrono::LocalResult::Ambiguous(dt1, _) => dt1.timestamp(),
-        chrono::LocalResult::None => 0,
-    };
+    commit.timestamp = gource_core::datetime::local_timestamp(&naive_dt);
 
     // Author
     let author = entry

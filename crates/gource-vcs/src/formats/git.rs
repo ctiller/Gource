@@ -3,6 +3,8 @@
 
 use crate::commit::Commit;
 use crate::options::VcsOptions;
+use regex::Regex;
+use std::sync::LazyLock;
 
 /// Build the git log command string.
 /// Matches `GitCommitLog::logCommand()` in `src/formats/git.cpp`.
@@ -52,33 +54,30 @@ fn format_timestamp_date(timestamp: i64) -> String {
 }
 
 fn read_git_version() -> (u32, u32, u32) {
-    let output = match std::process::Command::new("git").arg("--version").output() {
-        Ok(out) => out,
-        Err(_) => return (0, 0, 0),
-    };
-    if !output.status.success() {
+    std::process::Command::new("git")
+        .arg("--version")
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map_or((0, 0, 0), |out| {
+            parse_git_version(&String::from_utf8_lossy(&out.stdout))
+        })
+}
+
+/// Parses the first `major[.minor[.patch]]` in `git --version` output;
+/// missing parts are 0.
+fn parse_git_version(text: &str) -> (u32, u32, u32) {
+    static VERSION_REGEX: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"([0-9]+)(?:\.([0-9]+))?(?:\.([0-9]+))?").unwrap());
+    let Some(caps) = VERSION_REGEX.captures(text) else {
         return (0, 0, 0);
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    // Regex: ([0-9]+)(?:\.([0-9]+))?(?:\.([0-9]+))?
-    let re = regex::Regex::new(r"([0-9]+)(?:\.([0-9]+))?(?:\.([0-9]+))?").unwrap();
-    if let Some(caps) = re.captures(&text) {
-        let major = caps
-            .get(1)
+    };
+    let part = |i| {
+        caps.get(i)
             .and_then(|m| m.as_str().parse().ok())
-            .unwrap_or(0);
-        let minor = caps
-            .get(2)
-            .and_then(|m| m.as_str().parse().ok())
-            .unwrap_or(0);
-        let patch = caps
-            .get(3)
-            .and_then(|m| m.as_str().parse().ok())
-            .unwrap_or(0);
-        (major, minor, patch)
-    } else {
-        (0, 0, 0)
-    }
+            .unwrap_or(0)
+    };
+    (part(1), part(2), part(3))
 }
 
 /// Parse a git commit from a line reader.
@@ -118,12 +117,11 @@ where
             continue;
         }
 
-        let status = &line[tab - 1..tab];
+        // One byte, like C++'s substr(tab - 1, 1). Half of a multi-byte
+        // character isn't a status; `get` avoids panicking on it.
+        let status = line.get(tab - 1..tab).unwrap_or("");
+        // Non-empty: the tab isn't the last byte.
         let mut file = &line[tab + 1..];
-
-        if file.is_empty() {
-            continue;
-        }
 
         // Check for and remove double quotes
         if file.starts_with('"') && file.ends_with('"') {
@@ -137,4 +135,43 @@ where
     }
 
     !commit.username.is_empty()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn git_version_parsing() {
+        assert_eq!(parse_git_version("git version 2.39.5\n"), (2, 39, 5));
+        assert_eq!(parse_git_version("git version 2.10"), (2, 10, 0));
+        assert_eq!(parse_git_version("git version 3"), (3, 0, 0));
+        assert_eq!(parse_git_version("no version here"), (0, 0, 0));
+    }
+
+    #[test]
+    fn multibyte_character_before_tab_is_not_a_status() {
+        let lines = [
+            "user:Alice",
+            "1600000000",
+            "\u{e9}\tsrc/main.rs",
+            "M\tREADME",
+        ];
+        let mut it = lines.iter();
+        let mut commit = Commit::default();
+        let ok = parse_commit(
+            |line: &mut String| match it.next() {
+                Some(l) => {
+                    *line = (*l).to_string();
+                    true
+                }
+                None => false,
+            },
+            &mut commit,
+            &VcsOptions::default(),
+        );
+        assert!(ok);
+        let names: Vec<_> = commit.files.iter().map(|f| f.filename.as_str()).collect();
+        assert_eq!(names, ["/src/main.rs", "/README"]);
+    }
 }

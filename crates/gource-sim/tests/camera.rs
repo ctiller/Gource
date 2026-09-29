@@ -61,10 +61,12 @@ fn test_from_settings() {
     };
     settings.crop_vertical = true;
 
+    // Like C++: starts at starting_z, and camera_zoom_default is the
+    // closest automatic framing gets (camera_zoom_min is for manual zoom).
     let cam = ZoomCamera::from_settings(&settings);
-    assert_eq!(cam.pos(), Vec3::new(0.0, 0.0, -400.0));
-    assert_eq!(cam.dest(), Vec3::new(0.0, 0.0, -400.0));
-    assert_eq!(cam.min_distance(), 100.0);
+    assert_eq!(cam.pos(), Vec3::new(0.0, 0.0, -300.0));
+    assert_eq!(cam.dest(), Vec3::new(0.0, 0.0, -300.0));
+    assert_eq!(cam.min_distance(), 400.0);
     assert_eq!(cam.max_distance(), 20000.0);
     assert_eq!(cam.padding(), 1.15);
     assert_eq!(CameraCrop::from_settings(&settings), CameraCrop::Vertical);
