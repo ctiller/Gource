@@ -36,6 +36,7 @@ fn test_file_weights_and_pulse_animation() {
 
     let initial_size = file.pawn.size;
     let initial_timer = file.pulse_timer;
+    file.pawn.set_hidden(false);
     file.logic(0.1, 10.0);
     assert!(file.pawn.size > initial_size);
     assert!(file.pulse_timer < initial_timer);
@@ -391,9 +392,9 @@ fn test_directory_contact_model_resolution() {
 
     world.update_weighted_layout();
 
-    // Verify d1 and d2 are pushed apart so their dir_radius circles do not overlap
-    let r1 = world.dirs[d1].dir_radius;
-    let r2 = world.dirs[d2].dir_radius;
+    // Verify d1 and d2 are pushed apart so their parent_radius circles do not overlap
+    let r1 = world.dirs[d1].parent_radius;
+    let r2 = world.dirs[d2].parent_radius;
     let dist = (world.dirs[d1].pos - world.dirs[d2].pos).length();
     assert!(
         dist >= (r1 + r2) - 1e-2,
@@ -441,13 +442,13 @@ fn test_multi_directory_cluster_rapier_resolution() {
     // Verify root is still at origin
     assert_eq!(world.dirs[world.root].pos, Vec2::ZERO);
 
-    // Verify all pairwise directory circles do not overlap
+    // Verify all pairwise directory circles do not overlap their parent_radius
     for i in 0..dir_ids.len() {
         for j in (i + 1)..dir_ids.len() {
             let id_a = dir_ids[i];
             let id_b = dir_ids[j];
-            let r_a = world.dirs[id_a].dir_radius;
-            let r_b = world.dirs[id_b].dir_radius;
+            let r_a = world.dirs[id_a].parent_radius.max(10.0);
+            let r_b = world.dirs[id_b].parent_radius.max(10.0);
             let dist = (world.dirs[id_a].pos - world.dirs[id_b].pos).length();
             assert!(
                 dist >= (r_a + r_b) - 1e-2,
@@ -702,6 +703,7 @@ fn test_no_jitter_on_file_edit_and_smooth_swirl() {
         "new file should start near zero size"
     );
     let initial_size = world.files[new_fid].pawn.size;
+    world.files[new_fid].pawn.set_hidden(false);
     world.files[new_fid].logic(0.1, 0.0);
     assert!(
         world.files[new_fid].pawn.size > initial_size,
@@ -716,5 +718,54 @@ fn test_no_jitter_on_file_edit_and_smooth_swirl() {
     assert!(
         world.files[removed_fid].pawn.size < size_before,
         "removing file should shrink smoothly toward zero"
+    );
+}
+
+#[test]
+fn test_laser_touch_applies_push_force() {
+    let mut world = World::new(42, 31);
+    let settings = GourceSettings {
+        file_size_metric: FileSizeMetric::Lines,
+        ..Default::default()
+    };
+    world.weighted_mode = true;
+
+    let uid = world.add_user("alice", &settings);
+    let cf = gource_vcs::CommitFile {
+        filename: "/src/laser_target.rs".to_string(),
+        action: gource_vcs::FileAction::Modify,
+        colour: Vec3::ONE,
+        lines_added: Some(10),
+        lines_removed: None,
+        is_binary: false,
+    };
+    let fid = world.add_file(&cf, &settings).expect("file added");
+    world.files[fid].pawn.set_hidden(false);
+
+    // Place user at (-50.0, 0.0) and file at (0.0, 0.0)
+    world.users[uid].pawn.set_pos(Vec2::new(-50.0, 0.0));
+    let dir_id = world.files[fid].dir.unwrap();
+    world.dirs[dir_id].pos = Vec2::ZERO;
+    world.files[fid].pawn.pos = Vec2::ZERO;
+    world.files[fid].vel = Vec2::ZERO;
+
+    let commit = gource_vcs::Commit {
+        timestamp: 1000,
+        username: "alice".to_string(),
+        files: vec![cf.clone()],
+    };
+    world.add_file_action(&commit, &cf, fid, 1.0, &settings);
+
+    // Initial velocity should be zero
+    assert_eq!(world.files[fid].vel, Vec2::ZERO);
+
+    // Run update_users to trigger the laser touch action
+    world.update_users(1.0, 0.25, &settings);
+
+    // File should have received an impulse away from the author (i.e. positive X direction)
+    assert!(
+        world.files[fid].vel.x > 0.0,
+        "expected file velocity x > 0 away from user, got {:?}",
+        world.files[fid].vel
     );
 }

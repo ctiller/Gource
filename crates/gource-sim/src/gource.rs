@@ -383,7 +383,8 @@ impl Gource {
             Some(s) if s != 0 => s as u64,
             _ => 1,
         };
-        let world = World::new(seed, settings.hash_seed);
+        let mut world = World::new(seed, settings.hash_seed);
+        world.weighted_mode = settings.file_size_metric != FileSizeMetric::None;
         let tuning_settings = TuningSettings {
             gravity: world.tuning.force_gravity,
             min_dir_size: world.tuning.min_dir_size,
@@ -590,8 +591,10 @@ impl Gource {
         // reset leaves alone.
         let rng = std::mem::take(&mut self.world.rng);
         let hash_seed = self.world.hasher.seed;
-        self.world = World::new(1, hash_seed);
-        self.world.rng = rng;
+        let mut world = World::new(1, hash_seed);
+        world.weighted_mode = self.settings.file_size_metric != FileSizeMetric::None;
+        world.rng = rng;
+        self.world = world;
         self.file_key.clear();
 
         self.captions.clear();
@@ -1908,9 +1911,7 @@ impl Gource {
             self.recolour = false;
         }
 
-        if self.settings.file_size_metric != FileSizeMetric::None {
-            self.world.update_weighted_layout();
-        }
+        self.world.weighted_mode = self.settings.file_size_metric != FileSizeMetric::None;
 
         if self.paused {
             self.world.update_bounds();

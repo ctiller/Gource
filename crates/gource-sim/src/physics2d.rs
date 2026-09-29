@@ -187,15 +187,15 @@ pub fn step_directory_files_incremental(files: &mut [(Vec2, Vec2, f32)], dt: f32
                 let v = rb.linvel();
                 let to_center_x = -p.x;
                 let to_center_y = -p.y;
-                let pull_x = to_center_x * 6.0;
-                let pull_y = to_center_y * 6.0;
-                let mut new_vx = v.x * 0.85 + pull_x * step_dt;
-                let mut new_vy = v.y * 0.85 + pull_y * step_dt;
+                let pull_x = to_center_x * 2.0;
+                let pull_y = to_center_y * 2.0;
+                let mut new_vx = v.x + pull_x * step_dt;
+                let mut new_vy = v.y + pull_y * step_dt;
                 let speed_sq = new_vx * new_vx + new_vy * new_vy;
-                if speed_sq > 60.0 * 60.0 {
+                if speed_sq > 25.0 * 25.0 {
                     let speed = speed_sq.sqrt();
-                    new_vx = (new_vx / speed) * 60.0;
-                    new_vy = (new_vy / speed) * 60.0;
+                    new_vx = (new_vx / speed) * 25.0;
+                    new_vy = (new_vy / speed) * 25.0;
                 }
                 rb.set_linvel(vector![new_vx, new_vy], true);
             }
@@ -228,7 +228,7 @@ pub fn step_directory_files_incremental(files: &mut [(Vec2, Vec2, f32)], dt: f32
     }
 
     // Gentle overlap resolution pass without recentering
-    for _ in 0..32 {
+    for _ in 0..16 {
         let mut any_overlap = false;
         for i in 0..n {
             let r_i = files[i].2;
@@ -246,8 +246,11 @@ pub fn step_directory_files_incremental(files: &mut [(Vec2, Vec2, f32)], dt: f32
                         let angle = ((i * 31 + j * 17) as f32) * 0.1;
                         Vec2::new(angle.cos(), angle.sin())
                     };
-                    files[i].0 -= norm * (overlap * 0.501);
-                    files[j].0 += norm * (overlap * 0.501);
+                    let total_r = (r_i + r_j).max(1e-5);
+                    let w_i = r_j / total_r;
+                    let w_j = r_i / total_r;
+                    files[i].0 -= norm * (overlap * 0.35 * w_i);
+                    files[j].0 += norm * (overlap * 0.35 * w_j);
                 }
             }
         }
@@ -282,7 +285,7 @@ pub struct DirCircleDesc {
 /// Root directories remain fixed, dynamic directories resolve contacts via Rapier.
 pub fn resolve_directory_contacts_rapier(
     dirs: &[DirCircleDesc],
-    ancestor_pairs: &[(usize, usize)],
+    _ancestor_pairs: &[(usize, usize)],
     steps: usize,
 ) -> Vec<Vec2> {
     let n = dirs.len();
@@ -313,7 +316,8 @@ pub fn resolve_directory_contacts_rapier(
         };
         let handle = rigid_body_set.insert(rb);
 
-        let col = ColliderBuilder::ball(d.dir_radius)
+        let contact_r = d.parent_radius.max(10.0);
+        let col = ColliderBuilder::ball(contact_r)
             .restitution(0.0)
             .friction(0.05)
             .density(1.0)
@@ -333,32 +337,6 @@ pub fn resolve_directory_contacts_rapier(
     let mut ccd_solver = CCDSolver::new();
 
     for _ in 0..steps {
-        // Parent-child radial attraction impulses when dist > parent_radius_A + parent_radius_B
-        for (i, d) in dirs.iter().enumerate() {
-            if let Some(p_idx) = d.parent_idx
-                && let (Some(&(handle_child, _)), Some(&(handle_parent, _))) =
-                    (body_handles[i].as_ref(), body_handles[p_idx].as_ref())
-            {
-                let p_child = rigid_body_set[handle_child].translation();
-                let p_parent = rigid_body_set[handle_parent].translation();
-                let delta_x = p_parent.x - p_child.x;
-                let delta_y = p_parent.y - p_child.y;
-                let dist = (delta_x * delta_x + delta_y * delta_y).sqrt();
-                let max_dist = d.parent_radius + dirs[p_idx].parent_radius;
-
-                if dist > max_dist && dist > 1e-4 {
-                    let pull = ((dist - max_dist) * 2.0).min(30.0);
-                    let dir_x = delta_x / dist;
-                    let dir_y = delta_y / dist;
-                    if !dirs[i].is_root {
-                        let rb = &mut rigid_body_set[handle_child];
-                        let v = rb.linvel();
-                        rb.set_linvel(vector![v.x + dir_x * pull, v.y + dir_y * pull], true);
-                    }
-                }
-            }
-        }
-
         physics_pipeline.step(
             &gravity,
             &integration_parameters,
@@ -385,27 +363,21 @@ pub fn resolve_directory_contacts_rapier(
         }
     }
 
-    // Direct collision relaxation pass to ensure parent_radius for ancestor pairs
-    // and strict non-overlap for non-ancestor pairs
+    // Direct collision relaxation pass: only push apart directories whose file-cluster
+    // circles (parent_radius_A + parent_radius_B) actually overlap.
     for _ in 0..12 {
         let mut any_collision = false;
         for i in 0..n {
             if dirs[i].is_empty {
                 continue;
             }
+            let r_i = dirs[i].parent_radius.max(10.0);
             for j in (i + 1)..n {
                 if dirs[j].is_empty {
                     continue;
                 }
-
-                let is_anc = ancestor_pairs
-                    .iter()
-                    .any(|&(a, b)| (a == i && b == j) || (a == j && b == i));
-                let min_dist = if is_anc {
-                    dirs[i].parent_radius + dirs[j].parent_radius
-                } else {
-                    dirs[i].dir_radius + dirs[j].dir_radius
-                };
+                let r_j = dirs[j].parent_radius.max(10.0);
+                let min_dist = r_i + r_j;
 
                 let delta = result[j] - result[i];
                 let dist = delta.length();

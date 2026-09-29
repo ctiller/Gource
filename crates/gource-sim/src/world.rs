@@ -160,6 +160,7 @@ pub struct World {
     /// Users created since the owner last drained this list. `Gource` assigns
     /// their images (`RUser::assignUserImage`), which needs the texture store.
     pub new_users: Vec<UserId>,
+    pub weighted_mode: bool,
 }
 
 /// C++ `normalise(vec2((rand() % 100) - 50, (rand() % 100) - 50))`, the
@@ -205,6 +206,7 @@ impl World {
             rng: CRand::new(seed as u32),
             tuning,
             new_users: Vec::new(),
+            weighted_mode: false,
         }
     }
 
@@ -341,6 +343,7 @@ impl World {
         file.created_timestamp = 0;
 
         if settings.file_size_metric != gource_settings::FileSizeMetric::None {
+            file.weighted = true;
             file.pawn.size = 0.1;
             file.radius = 0.05;
             file.target_size = self.tuning.file_diameter;
@@ -766,7 +769,15 @@ impl World {
 
     fn on_file_updated(&mut self, dir_id: DirId) {
         let children_areas = self.children_areas(dir_id);
-        self.dirs[dir_id].calc_radius(self.tuning.dir_padding, children_areas);
+        if self.weighted_mode {
+            self.dirs[dir_id].calc_weighted_radius(
+                self.tuning.dir_padding,
+                children_areas,
+                &self.files,
+            );
+        } else {
+            self.dirs[dir_id].calc_radius(self.tuning.dir_padding, children_areas);
+        }
         self.dirs[dir_id].since_last_file_change = 0.0;
         self.on_node_updated(dir_id, false);
     }
@@ -776,8 +787,16 @@ impl World {
             self.dirs[dir_id].since_last_node_change = 0.0;
         }
         let children_areas = self.children_areas(dir_id);
-        self.dirs[dir_id].calc_radius(self.tuning.dir_padding, children_areas);
-        self.dirs[dir_id].update_file_positions(self.tuning.file_diameter, &mut self.files);
+        if self.weighted_mode {
+            self.dirs[dir_id].calc_weighted_radius(
+                self.tuning.dir_padding,
+                children_areas,
+                &self.files,
+            );
+        } else {
+            self.dirs[dir_id].calc_radius(self.tuning.dir_padding, children_areas);
+            self.dirs[dir_id].update_file_positions(self.tuning.file_diameter, &mut self.files);
+        }
         if self.dirs[dir_id].visible
             && self.dirs[dir_id].children.is_empty()
             && self.dirs[dir_id].files.is_empty()
@@ -928,13 +947,45 @@ impl World {
             self.dir_tree = Some(tree);
         }
         self.logic_dirs_recursive(self.root, dt, elasticity, file_idle_time);
+
+        if self.weighted_mode {
+            self.update_weighted_layout_step(dt);
+        }
+    }
+
+    fn post_order_dirs(&self, dir_id: DirId, out: &mut Vec<DirId>) {
+        if let Some(dir) = self.dirs.get(dir_id) {
+            let children = dir.children.clone();
+            for cid in children {
+                self.post_order_dirs(cid, out);
+            }
+            out.push(dir_id);
+        }
+    }
+
+    /// Incremental per-frame layout step for weighted mode: steps internal file physics,
+    /// recomputes radii, and resolves contact between directories in post-order traversal.
+    pub fn update_weighted_layout_step(&mut self, dt: f32) {
+        let mut dir_ids = Vec::with_capacity(self.dirs.len());
+        self.post_order_dirs(self.root, &mut dir_ids);
+        for &did in &dir_ids {
+            self.dirs[did].step_weighted_files(dt, self.tuning.file_diameter, &mut self.files);
+            let children_areas = self.children_areas(did);
+            self.dirs[did].calc_weighted_radius(
+                self.tuning.dir_padding,
+                children_areas,
+                &self.files,
+            );
+        }
+        self.resolve_directory_contacts();
     }
 
     /// Walk directories and invoke [`DirNode::calc_weighted_radius`] and
     /// [`DirNode::update_weighted_file_positions`] for variable-sized file packing,
     /// and resolve directory circle-edge collisions so directories do not overlap.
     pub fn update_weighted_layout(&mut self) {
-        let dir_ids: Vec<DirId> = self.dir_map.values().copied().collect();
+        let mut dir_ids = Vec::with_capacity(self.dirs.len());
+        self.post_order_dirs(self.root, &mut dir_ids);
         for &did in &dir_ids {
             self.dirs[did]
                 .update_weighted_file_positions(self.tuning.file_diameter, &mut self.files);
@@ -985,6 +1036,15 @@ impl World {
             crate::physics2d::resolve_directory_contacts_rapier(&descs, &ancestor_pairs, 15);
 
         for (i, &id) in dir_ids.iter().enumerate() {
+            let delta = resolved_positions[i] - self.dirs[id].pos;
+            if delta.length_squared() > 1e-6 {
+                let v = self.dirs[id].vel;
+                if v.dot(delta) < 0.0 {
+                    let norm = delta.normalize();
+                    self.dirs[id].vel -= norm * v.dot(norm);
+                }
+                self.dirs[id].spos += delta;
+            }
             self.dirs[id].pos = resolved_positions[i];
             self.dirs[id].update_quad_item_bounds();
         }
@@ -1176,6 +1236,42 @@ impl World {
                     if unexpired {
                         self.removed_files.retain(|&rf| rf != action.target);
                     }
+                    if self.weighted_mode {
+                        let user_pos = self.users[uid].pawn.pos;
+                        let dir_pos = file
+                            .dir
+                            .and_then(|d| self.dirs.get(d))
+                            .map(|d| d.pos)
+                            .unwrap_or(Vec2::ZERO);
+                        let file_world_pos = file.absolute_pos(dir_pos);
+                        let beam_vec = file_world_pos - user_pos;
+                        let beam_dir = beam_vec.normalize_or_zero();
+
+                        if was_hidden {
+                            file.pawn.size = 0.1;
+                            file.radius = 0.05;
+                            file.pawn.dims = Vec2::splat(0.1);
+                            let init_nudge = if beam_dir != Vec2::ZERO {
+                                -beam_dir * 0.5
+                            } else {
+                                let angle = (file.pawn.tagid as f32) * 2.399_963_1;
+                                Vec2::new(angle.cos(), angle.sin()) * 0.5
+                            };
+                            file.pawn.pos = init_nudge;
+                            file.distance = init_nudge.length();
+                            file.dest = init_nudge.normalize_or_zero();
+                        }
+
+                        if beam_dir != Vec2::ZERO {
+                            file.vel = (file.vel + beam_dir * 6.0).clamp_length_max(25.0);
+                            if let Some(did) = file.dir
+                                && did != self.root
+                                && let Some(dir) = self.dirs.get_mut(did)
+                            {
+                                dir.accel += beam_dir * 4.0;
+                            }
+                        }
+                    }
                     if let Some(did) = file.dir {
                         if was_hidden {
                             self.dirs[did].add_visible();
@@ -1189,6 +1285,38 @@ impl World {
                     && let Some(file) = self.files.get_mut(action.target)
                 {
                     file.remove_with_timestamp(action.timestamp);
+                }
+            }
+
+            // Continuous gentle laser push away from author while laser is active
+            if self.weighted_mode {
+                let user_pos = self.users[uid].pawn.pos;
+                let active_fids: Vec<FileId> = self.users[uid]
+                    .active_actions
+                    .iter()
+                    .map(|a| a.target)
+                    .collect();
+                for target_fid in active_fids {
+                    if let Some(file) = self.files.get_mut(target_fid)
+                        && !file.pawn.is_hidden()
+                    {
+                        let dir_pos = file
+                            .dir
+                            .and_then(|d| self.dirs.get(d))
+                            .map(|d| d.pos)
+                            .unwrap_or(Vec2::ZERO);
+                        let file_world_pos = file.absolute_pos(dir_pos);
+                        let beam_dir = (file_world_pos - user_pos).normalize_or_zero();
+                        if beam_dir != Vec2::ZERO {
+                            file.vel = (file.vel + beam_dir * (18.0 * dt)).clamp_length_max(20.0);
+                            if let Some(did) = file.dir
+                                && did != self.root
+                                && let Some(dir) = self.dirs.get_mut(did)
+                            {
+                                dir.accel += beam_dir * 2.0;
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1791,6 +1919,8 @@ impl World {
         self.user_tree = None;
         self.dir_tree = None;
 
+        self.weighted_mode = settings.file_size_metric != gource_settings::FileSizeMetric::None;
+
         self.dirs.clear();
         self.dir_map.clear();
         let root_node = DirNode::new("/", self.tuning.file_diameter, self.tuning.dir_padding);
@@ -1857,6 +1987,7 @@ impl World {
                     }
                 };
                 if weight > 0.0 {
+                    file.weighted = true;
                     let ref_weight = match settings.file_size_metric {
                         gource_settings::FileSizeMetric::Size => 1024.0,
                         gource_settings::FileSizeMetric::Lines => 100.0,

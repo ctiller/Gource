@@ -52,6 +52,7 @@ pub struct File {
     pub total_removed: u64,
     pub created_timestamp: i64,
     pub dominant_cohort_colour: Option<Vec3>,
+    pub weighted: bool,
 }
 
 impl File {
@@ -111,6 +112,7 @@ impl File {
             total_removed: 0,
             created_timestamp: 0,
             dominant_cohort_colour: None,
+            weighted: false,
         }
     }
 
@@ -241,15 +243,17 @@ impl File {
         self.pawn.pos += accel2;
         self.pawn.accel = Vec2::ZERO;
 
-        let target = if self.removing || self.fade_start > 0.0 {
-            0.0
-        } else {
-            self.target_size
-        };
-        if (self.pawn.size - target).abs() > 1e-4 {
-            self.pawn.size += (target - self.pawn.size) * (dt * 6.0).min(1.0);
-            self.radius = (self.pawn.size * 0.5).max(0.0);
-            self.pawn.dims = Vec2::splat(self.pawn.size);
+        if self.weighted {
+            let target = if self.pawn.is_hidden() || self.removing || self.fade_start > 0.0 {
+                0.0
+            } else {
+                self.target_size
+            };
+            if (self.pawn.size - target).abs() > 1e-4 {
+                self.pawn.size += (target - self.pawn.size) * (dt * 4.0).min(1.0);
+                self.radius = (self.pawn.size * 0.5).max(0.05);
+                self.pawn.dims = Vec2::splat(self.pawn.size);
+            }
         }
         if self.pulse_timer > 0.0 {
             self.pulse_timer = (self.pulse_timer - dt).max(0.0);
@@ -296,6 +300,7 @@ impl File {
 
     /// Set target diameter based on weight relative to a reference weight.
     pub fn set_weight_target(&mut self, weight: f32, ref_weight: f32, base_diameter: f32) {
+        self.weighted = true;
         let factor = (weight.max(1.0) / ref_weight.max(1.0))
             .sqrt()
             .clamp(0.5, 4.0);

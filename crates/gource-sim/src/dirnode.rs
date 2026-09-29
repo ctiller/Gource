@@ -363,7 +363,7 @@ impl DirNode {
                 }
             }
         }
-        let packed_area = ((max_extent * max_extent) as f64 * CPP_PI) as f32;
+        let packed_area = max_extent * max_extent;
         total_file_area = total_file_area.max(packed_area);
 
         let mut dir_area = total_file_area;
@@ -388,7 +388,7 @@ impl DirNode {
     pub fn step_weighted_files(
         &mut self,
         dt: f32,
-        base_diameter: f32,
+        _base_diameter: f32,
         files: &mut SlotMap<FileId, File>,
     ) {
         let mut visible_fids = Vec::new();
@@ -423,7 +423,7 @@ impl DirNode {
                 let angle = (i as f32) * 2.399_963_1;
                 pos = Vec2::new(angle.cos(), angle.sin()) * 0.5;
             }
-            let r = (f.pawn.size * 0.5).max(base_diameter * 0.25);
+            let r = (f.pawn.size * 0.5).max(0.05);
             sim_files.push((pos, f.vel, r));
         }
 
