@@ -101,6 +101,7 @@ pub struct SearchWidget {
     pub fade_time: f32,
     pub query: String,
     pub selected_index: usize,
+    pub scroll_offset: usize,
     pub results: Vec<SearchItem>,
     pub cursor_blink: f32,
 }
@@ -117,6 +118,7 @@ impl SearchWidget {
             fade_time: SEARCH_FADE_TIME,
             query: String::new(),
             selected_index: 0,
+            scroll_offset: 0,
             results: Vec::new(),
             cursor_blink: 0.0,
         }
@@ -145,6 +147,7 @@ impl SearchWidget {
         self.query.clear();
         self.results.clear();
         self.selected_index = 0;
+        self.scroll_offset = 0;
     }
 
     /// Toggle visibility.
@@ -174,10 +177,24 @@ impl SearchWidget {
         self.cursor_blink = (self.cursor_blink + dt * 2.5) % 2.0;
     }
 
+    /// Ensure the selected item is within the visible scrolled window.
+    fn update_scroll(&mut self) {
+        if self.results.is_empty() {
+            self.scroll_offset = 0;
+            return;
+        }
+        if self.selected_index < self.scroll_offset {
+            self.scroll_offset = self.selected_index;
+        } else if self.selected_index >= self.scroll_offset + MAX_DISPLAY_RESULTS {
+            self.scroll_offset = self.selected_index - MAX_DISPLAY_RESULTS + 1;
+        }
+    }
+
     /// Push a character to query.
     pub fn push_char(&mut self, c: char) {
         self.query.push(c);
         self.selected_index = 0;
+        self.scroll_offset = 0;
         self.cursor_blink = 0.0;
     }
 
@@ -185,6 +202,7 @@ impl SearchWidget {
     pub fn backspace(&mut self) {
         self.query.pop();
         self.selected_index = 0;
+        self.scroll_offset = 0;
         self.cursor_blink = 0.0;
     }
 
@@ -196,6 +214,7 @@ impl SearchWidget {
             } else {
                 self.selected_index -= 1;
             }
+            self.update_scroll();
         }
     }
 
@@ -203,6 +222,7 @@ impl SearchWidget {
     pub fn select_next(&mut self) {
         if !self.results.is_empty() {
             self.selected_index = (self.selected_index + 1) % self.results.len();
+            self.update_scroll();
         }
     }
 
@@ -345,7 +365,14 @@ impl SearchWidget {
 
         // 7. Results List
         let mut curr_y = pos.y + input_h;
-        for (idx, item) in self.results.iter().take(MAX_DISPLAY_RESULTS).enumerate() {
+        let start_idx = self.scroll_offset;
+        for (idx, item) in self
+            .results
+            .iter()
+            .enumerate()
+            .skip(start_idx)
+            .take(MAX_DISPLAY_RESULTS)
+        {
             let is_selected = idx == self.selected_index;
             let row_pos = Vec2::new(pos.x, curr_y);
             let row_size = Vec2::new(w, row_h);
@@ -390,7 +417,25 @@ impl SearchWidget {
                 pos.x + 56.0 * self.font_scale,
                 curr_y + 4.0 * self.font_scale,
             );
-            gfx.draw_text(list, self.font, name_pos, &item.detail, &name_style);
+
+            let max_w = w - (68.0 * self.font_scale);
+            let mut display_buf = String::new();
+            let mut display_text = item.detail.as_str();
+            if gfx.text_width(self.font, display_text) > max_w {
+                let suffix_w = gfx.text_width(self.font, "...");
+                let avail = (max_w - suffix_w).max(0.0);
+                for c in display_text.chars() {
+                    display_buf.push(c);
+                    if gfx.text_width(self.font, &display_buf) > avail {
+                        display_buf.pop();
+                        break;
+                    }
+                }
+                display_buf.push_str("...");
+                display_text = &display_buf;
+            }
+
+            gfx.draw_text(list, self.font, name_pos, display_text, &name_style);
 
             curr_y += row_h;
         }

@@ -317,6 +317,11 @@ fn compute_line_diff(
     let old_str = String::from_utf8_lossy(&old_bytes);
     let new_str = String::from_utf8_lossy(&new_bytes);
 
+    let (added, removed) = compute_diff_lines(&old_str, &new_str);
+    (added, removed, false)
+}
+
+fn compute_diff_lines(old_str: &str, new_str: &str) -> (u32, u32) {
     let mut added = 0;
     let mut removed = 0;
 
@@ -348,5 +353,39 @@ fn compute_line_diff(
         added += (new_lines.len() - new_idx) as u32;
     }
 
-    (added, removed, false)
+    (added, removed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_binary_buffer() {
+        assert!(is_binary_buffer(b"hello\0world"));
+        assert!(!is_binary_buffer(b"hello world\nline 2"));
+    }
+
+    #[test]
+    fn test_compute_diff_lines() {
+        // Complete replacement
+        assert_eq!(compute_diff_lines("a\nb\nc", "x\ny\nz"), (3, 3));
+
+        // Match in middle
+        assert_eq!(compute_diff_lines("a\nb\nc", "x\nb\nz"), (2, 2));
+
+        // Additions only
+        assert_eq!(compute_diff_lines("a", "a\nb\nc"), (2, 0));
+
+        // Deletions only
+        assert_eq!(compute_diff_lines("a\nb\nc", "a"), (0, 2));
+
+        // Empty file handling
+        assert_eq!(compute_diff_lines("", "a\n"), (1, 0));
+        assert_eq!(compute_diff_lines("a\n", ""), (0, 1));
+        assert_eq!(compute_diff_lines("", ""), (0, 0));
+
+        // Unchanged
+        assert_eq!(compute_diff_lines("a\nb", "a\nb"), (0, 0));
+    }
 }

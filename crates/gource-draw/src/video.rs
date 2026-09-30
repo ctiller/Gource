@@ -345,13 +345,13 @@ impl VideoExporter {
             err_str
         });
 
+        let mut write_error = None;
         while let Ok(msg) = receiver.recv() {
             match msg {
                 VideoMessage::WriteFrame(frame) => {
                     if let Err(e) = stdin.write_all(&frame.rgba) {
-                        let err_msg = format!("failed to write frame to ffmpeg: {e}");
-                        *error.lock().unwrap() = Some((e.kind(), err_msg));
-                        return Err(e);
+                        write_error = Some(e);
+                        break;
                     }
                 }
                 VideoMessage::Flush(ack) => {
@@ -374,6 +374,15 @@ impl VideoExporter {
         };
 
         let stderr_out = stderr_handle.join().unwrap_or_default();
+
+        if let Some(e) = write_error {
+            let err_msg = format!(
+                "failed to write frame to ffmpeg: {e}. Stderr logs: {}",
+                stderr_out.trim()
+            );
+            *error.lock().unwrap() = Some((e.kind(), err_msg.clone()));
+            return Err(io::Error::new(e.kind(), err_msg));
+        }
 
         if !status.success() {
             let err_msg = format!(
