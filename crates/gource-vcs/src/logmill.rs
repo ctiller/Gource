@@ -422,8 +422,14 @@ fn try_fetch_format(
             _ => return None,
         }
 
-        let (temp_file, command_str) =
-            generate_log(format, path, options, abort_flag, child_process).ok()?;
+        let (temp_file, command_str) = if format == "git" && options.git_backend == "in-process" {
+            match crate::in_process_git::generate_in_process_git_log(path, options) {
+                Ok(temp) => (temp, "in-process git (gitoxide)".to_string()),
+                Err(_) => return None,
+            }
+        } else {
+            generate_log(format, path, options, abort_flag, child_process).ok()?
+        };
         let file = File::open(temp_file.path()).ok()?;
         let seekable = SeekableLog::new(file, Some(temp_file)).ok()?;
         let mut clog =

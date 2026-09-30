@@ -22,7 +22,7 @@ use bevy::{
         view::screenshot::{Screenshot, ScreenshotCaptured},
     },
 };
-use gource_draw::PpmExporter;
+use gource_draw::VideoSink;
 
 /// Video frames that may be requested but not yet written before the
 /// simulation is held back (keeps memory bounded if the GPU or the output
@@ -157,10 +157,10 @@ impl<T> ReorderBuffer<T> {
     }
 }
 
-/// Writes video frames in order to a [`PpmExporter`].
+/// Writes video frames in order to a [`VideoSink`].
 #[derive(Resource)]
 pub struct Recorder {
-    exporter: Option<PpmExporter>,
+    exporter: Option<Box<dyn VideoSink>>,
     /// Number assigned to the next requested video frame.
     requested: u64,
     received: Arc<Mutex<ReorderBuffer<Option<Frame>>>>,
@@ -170,7 +170,7 @@ pub struct Recorder {
 }
 
 impl Recorder {
-    pub fn new(exporter: Option<PpmExporter>) -> Self {
+    pub fn new(exporter: Option<Box<dyn VideoSink>>) -> Self {
         Self {
             exporter,
             requested: 0,
@@ -243,7 +243,7 @@ impl Recorder {
             return;
         }
         if let Some(exporter) = self.exporter.as_mut()
-            && let Err(e) = exporter.write_frame_rgba(frame.width, frame.height, &frame.rgba)
+            && let Err(e) = exporter.write_frame(frame.width, frame.height, &frame.rgba)
         {
             self.error = Some(e.to_string());
         }
@@ -336,6 +336,7 @@ mod tests {
         asset::RenderAssetUsages,
         render::render_resource::{Extent3d, TextureDimension},
     };
+    use gource_draw::PpmExporter;
 
     fn image(format: TextureFormat, data: Vec<u8>, width: u32, height: u32) -> Image {
         Image::new(
@@ -427,7 +428,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("out.ppm");
         let exporter = PpmExporter::new(path.to_str().unwrap()).unwrap();
-        let mut recorder = Recorder::new(Some(exporter));
+        let mut recorder = Recorder::new(Some(Box::new(exporter)));
         assert!(recorder.is_recording());
         let sink = recorder.sink();
         let indices: Vec<u64> = (0..4).map(|_| recorder.next_frame_index()).collect();

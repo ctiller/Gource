@@ -25,6 +25,14 @@ pub struct DisplaySettings {
     pub output_ppm_filename: String,
     /// `--output-framerate` (25, 30 or 60).
     pub output_framerate: i32,
+    /// `--output-video FILE` direct video export (mp4, webm, mkv, gif, etc.).
+    pub output_video: String,
+    /// `--video-codec CODEC` video codec (auto, h264, h265, vp8, vp9, av1, prores, gif).
+    pub video_codec: String,
+    /// `--video-bitrate RATE` video bitrate (e.g. 10M, 5000k).
+    pub video_bitrate: String,
+    /// `--video-fps FPS` framerate for video export (defaults to output_framerate).
+    pub video_fps: u32,
 }
 
 impl Default for DisplaySettings {
@@ -46,6 +54,10 @@ impl Default for DisplaySettings {
             high_dpi: false,
             output_ppm_filename: String::new(),
             output_framerate: 60,
+            output_video: String::new(),
+            video_codec: "auto".to_string(),
+            video_bitrate: String::new(),
+            video_fps: 60,
         }
     }
 }
@@ -150,6 +162,38 @@ impl DisplaySettings {
             }
         }
 
+        if let Some(entry) = display_settings.entry("output-video") {
+            if !entry.has_value() {
+                return Err(conf.missing_value_error(entry));
+            }
+            settings.output_video = entry.value.clone();
+        }
+
+        if let Some(entry) = display_settings.entry("video-codec") {
+            if !entry.has_value() {
+                return Err(conf.missing_value_error(entry));
+            }
+            settings.video_codec = entry.value.clone();
+        }
+
+        if let Some(entry) = display_settings.entry("video-bitrate") {
+            if !entry.has_value() {
+                return Err(conf.missing_value_error(entry));
+            }
+            settings.video_bitrate = entry.value.clone();
+        }
+
+        if let Some(entry) = display_settings.entry("video-fps") {
+            if !entry.has_value() {
+                return Err(conf.missing_value_error(entry));
+            }
+            let fps = entry.get_int();
+            if fps <= 0 {
+                return Err(conf.invalid_value_error(entry));
+            }
+            settings.video_fps = fps as u32;
+        }
+
         Ok(settings)
     }
 
@@ -197,6 +241,19 @@ impl DisplaySettings {
 
         if self.high_dpi {
             section.set_entry("high-dpi", "true");
+        }
+
+        if !self.output_video.is_empty() {
+            section.set_entry("output-video", &self.output_video);
+        }
+        if self.video_codec != "auto" {
+            section.set_entry("video-codec", &self.video_codec);
+        }
+        if !self.video_bitrate.is_empty() {
+            section.set_entry("video-bitrate", &self.video_bitrate);
+        }
+        if self.video_fps != 60 {
+            section.set_entry("video-fps", &self.video_fps.to_string());
         }
 
         // C++: conf.setSection(section) -> replaces first section with that name
@@ -341,5 +398,46 @@ mod tests {
             DisplaySettings::import(&conf).unwrap_err().0,
             "test.conf, line 2: invalid 'screen' value"
         );
+    }
+
+    #[test]
+    fn test_import_video_settings() {
+        let mut conf = ConfFile::new();
+        conf.set_entry("display", "output-video", "out.mp4");
+        conf.set_entry("display", "video-codec", "h265");
+        conf.set_entry("display", "video-bitrate", "5000k");
+        conf.set_entry("display", "video-fps", "30");
+
+        let settings = DisplaySettings::import(&conf).unwrap();
+        assert_eq!(settings.output_video, "out.mp4");
+        assert_eq!(settings.video_codec, "h265");
+        assert_eq!(settings.video_bitrate, "5000k");
+        assert_eq!(settings.video_fps, 30);
+
+        let mut conf_out = ConfFile::new();
+        settings.export(&mut conf_out);
+        let sec = conf_out.section("display").unwrap();
+        assert_eq!(sec.get_string("output-video"), "out.mp4");
+        assert_eq!(sec.get_string("video-codec"), "h265");
+        assert_eq!(sec.get_string("video-bitrate"), "5000k");
+        assert_eq!(sec.get_string("video-fps"), "30");
+    }
+
+    #[test]
+    fn test_import_video_errors() {
+        let mut conf = ConfFile::parse("[display]\noutput-video=\n", "test.conf").unwrap();
+        assert!(DisplaySettings::import(&conf).is_err());
+
+        conf = ConfFile::parse("[display]\nvideo-codec=\n", "test.conf").unwrap();
+        assert!(DisplaySettings::import(&conf).is_err());
+
+        conf = ConfFile::parse("[display]\nvideo-bitrate=\n", "test.conf").unwrap();
+        assert!(DisplaySettings::import(&conf).is_err());
+
+        conf = ConfFile::parse("[display]\nvideo-fps=\n", "test.conf").unwrap();
+        assert!(DisplaySettings::import(&conf).is_err());
+
+        conf = ConfFile::parse("[display]\nvideo-fps=0\n", "test.conf").unwrap();
+        assert!(DisplaySettings::import(&conf).is_err());
     }
 }

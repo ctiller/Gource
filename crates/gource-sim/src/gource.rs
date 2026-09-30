@@ -28,6 +28,7 @@ use gource_widgets::dashboard::{
     TheseusCohortAreaPanel, format_compact_u64,
 };
 use gource_widgets::key::FileKey;
+use gource_widgets::search::{SearchItemKind, SearchWidget};
 use gource_widgets::slider::PositionSlider;
 use gource_widgets::textbox::TextBox;
 use gource_widgets::timeline_bar::{
@@ -311,6 +312,7 @@ pub struct Gource {
     pub tuning_tab: TuningTab,
     pub tuning_scroll: usize,
     pub tuning_status: Option<String>,
+    pub search_widget: SearchWidget,
 }
 
 impl Gource {
@@ -428,6 +430,9 @@ impl Gource {
         );
         tuning_panel.show(false);
 
+        let mut search_widget = SearchWidget::new(fonts.medium, settings.font_scale);
+        search_widget.resize(viewport.width, viewport.height, settings.font_scale);
+
         let mut g = Self {
             settings,
             world,
@@ -505,6 +510,7 @@ impl Gource {
             tuning_tab: TuningTab::Visual,
             tuning_scroll: 0,
             tuning_status: None,
+            search_widget,
         };
 
         if !g.settings.caption_file.is_empty() {
@@ -567,6 +573,10 @@ impl Gource {
             self.fonts.slider,
             self.settings.font_scale,
         );
+
+        self.search_widget.font = self.fonts.medium;
+        self.search_widget
+            .resize(viewport.width, viewport.height, self.settings.font_scale);
 
         for cap in &mut self.captions {
             cap.font = self.fonts.caption;
@@ -1149,6 +1159,7 @@ impl Gource {
                         self.lasttime = target_ts;
                         self.subseconds = 0.0;
                         self.scrubber.sync_playhead_from_time(self.currtime);
+                        self.scrubber.state.playhead_fraction = frac;
                         self.commit_cursor = tree_snap.commit_index + 1;
                         self.commitqueue.clear();
                         self.stop_position_reached = false;
@@ -1195,6 +1206,7 @@ impl Gource {
                             self.lasttime = target_ts;
                             self.subseconds = 0.0;
                             self.scrubber.sync_playhead_from_time(self.currtime);
+                            self.scrubber.state.playhead_fraction = frac;
                             self.commit_cursor = tree_snap.commit_index + 1;
                             self.commitqueue.clear();
                             self.stop_position_reached = false;
@@ -1491,6 +1503,93 @@ impl Gource {
         };
     }
 
+    /// Refresh candidate results in the search widget from world entities.
+    pub fn refresh_search_filter(&mut self) {
+        let users: Vec<(u64, String)> = self
+            .world
+            .users
+            .iter()
+            .map(|(k, u)| {
+                let id = slotmap::Key::data(&k).as_ffi();
+                (id, u.name().to_string())
+            })
+            .collect();
+
+        let dirs: Vec<(u64, String)> = self
+            .world
+            .dirs
+            .iter()
+            .map(|(k, d)| {
+                let id = slotmap::Key::data(&k).as_ffi();
+                (id, d.path().to_string())
+            })
+            .collect();
+
+        let files: Vec<(u64, String, String)> = self
+            .world
+            .files
+            .iter()
+            .map(|(k, f)| {
+                let id = slotmap::Key::data(&k).as_ffi();
+                (id, f.pawn.name.clone(), f.path.clone())
+            })
+            .collect();
+
+        self.search_widget.update_filter(
+            files.iter().map(|(id, n, p)| (*id, n.as_str(), p.as_str())),
+            dirs.iter().map(|(id, p)| (*id, p.as_str())),
+            users.iter().map(|(id, n)| (*id, n.as_str())),
+        );
+    }
+
+    /// Commit the currently highlighted search result: focus camera and select entity.
+    pub fn commit_search_selection(&mut self) {
+        if let Some(item) = self.search_widget.selected_result().cloned() {
+            match item.kind {
+                SearchItemKind::User => {
+                    let target_key = slotmap::KeyData::from_ffi(item.id).into();
+                    if self.world.users.contains_key(target_key) {
+                        self.select_user(Some(target_key));
+                        if let Some(u) = self.world.users.get(target_key) {
+                            let mut pos = self.camera.pos();
+                            pos.x = u.pawn.pos.x;
+                            pos.y = u.pawn.pos.y;
+                            self.camera.set_pos(pos, false);
+                        }
+                    }
+                }
+                SearchItemKind::File => {
+                    let target_key = slotmap::KeyData::from_ffi(item.id).into();
+                    if self.world.files.contains_key(target_key) {
+                        self.select_file(Some(target_key));
+                        if let Some(f) = self.world.files.get(target_key) {
+                            let dir_pos = f
+                                .dir
+                                .and_then(|d| self.world.dirs.get(d))
+                                .map(|d| d.pos)
+                                .unwrap_or(Vec2::ZERO);
+                            let abs_pos = f.absolute_pos(dir_pos);
+                            let mut pos = self.camera.pos();
+                            pos.x = abs_pos.x;
+                            pos.y = abs_pos.y;
+                            self.camera.set_pos(pos, false);
+                        }
+                    }
+                }
+                SearchItemKind::Directory => {
+                    let target_key = slotmap::KeyData::from_ffi(item.id).into();
+                    if let Some(dir) = self.world.dirs.get(target_key) {
+                        let mut pos = self.camera.pos();
+                        pos.x = dir.pos.x;
+                        pos.y = dir.pos.y;
+                        self.camera.set_pos(pos, false);
+                    }
+                }
+            }
+        }
+        self.search_widget.hide();
+    }
+
     /// Zoom in / out.
     pub fn zoom(&mut self, zoom_in: bool) {
         self.manual_zoom = true;
@@ -1567,12 +1666,62 @@ impl Gource {
                 repeat,
             } => {
                 if *key == Key::Escape && !*repeat {
+                    if self.search_widget.is_active() {
+                        self.search_widget.hide();
+                        return;
+                    }
                     self.is_finished = true;
                     self.pending_requests.push(PlatformRequest::Quit);
                     return;
                 }
 
                 if self.commitlog.is_none() {
+                    return;
+                }
+
+                // If search widget is active, intercept search input
+                if self.search_widget.is_active() {
+                    match key {
+                        Key::Return => {
+                            self.commit_search_selection();
+                            return;
+                        }
+                        Key::Up => {
+                            self.search_widget.select_prev();
+                            return;
+                        }
+                        Key::Down => {
+                            self.search_widget.select_next();
+                            return;
+                        }
+                        Key::Char(c) => {
+                            self.search_widget.push_char(*c);
+                            self.refresh_search_filter();
+                            return;
+                        }
+                        Key::Space => {
+                            self.search_widget.push_char(' ');
+                            self.refresh_search_filter();
+                            return;
+                        }
+                        Key::Backspace => {
+                            self.search_widget.backspace();
+                            self.refresh_search_filter();
+                            return;
+                        }
+                        Key::Other => {
+                            return;
+                        }
+                        _ => return,
+                    }
+                }
+
+                // Activate search via Ctrl+F or Ctrl+/
+                if (*key == Key::Char('f') && modifiers.ctrl)
+                    || (*key == Key::Char('/') && modifiers.ctrl)
+                {
+                    self.search_widget.show();
+                    self.refresh_search_filter();
                     return;
                 }
 
@@ -2142,6 +2291,7 @@ impl Gource {
         self.slider.logic(dt);
         self.timeline_bar.logic(dt);
         self.tuning_panel.logic(dt);
+        self.search_widget.logic(dt);
 
         // Apply tree rotation
         if self.rotate_angle != 0.0 {
@@ -2856,6 +3006,9 @@ impl Gource {
 
         // Tuning Panel
         self.draw_tuning_panel(gfx, list);
+
+        // Search Widget
+        self.search_widget.draw(gfx, list);
 
         self.mouse_moved = false;
         self.mouse_clicked = false;

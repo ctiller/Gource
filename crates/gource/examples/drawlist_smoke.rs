@@ -163,9 +163,10 @@ fn main() {
         .next()
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("drawlist_smoke.png"));
-    let exporter = args
-        .next()
-        .map(|path| gource_draw::PpmExporter::new(&path).expect("open PPM output"));
+    let exporter: Option<Box<dyn gource_draw::VideoSink>> = args.next().map(|path| {
+        Box::new(gource_draw::PpmExporter::new(&path).expect("open PPM output"))
+            as Box<dyn gource_draw::VideoSink>
+    });
     let display = DisplaySettings {
         display_width: 1024,
         display_height: 640,

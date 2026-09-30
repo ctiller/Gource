@@ -191,6 +191,34 @@ impl DashboardPeriod {
     }
 }
 
+/// `--git-backend` (`auto`, `cli`, `in-process`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum GitBackend {
+    #[default]
+    Auto,
+    Cli,
+    InProcess,
+}
+
+impl GitBackend {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "auto" => Some(GitBackend::Auto),
+            "cli" | "git" => Some(GitBackend::Cli),
+            "in-process" | "inprocess" | "gix" | "native" => Some(GitBackend::InProcess),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            GitBackend::Auto => "auto",
+            GitBackend::Cli => "cli",
+            GitBackend::InProcess => "in-process",
+        }
+    }
+}
+
 /// All `[gource]` section settings. Field names follow the C++ members.
 ///
 /// Runtime state that the C++ code kept in the settings global (`shutdown`,
@@ -359,6 +387,7 @@ pub struct GourceSettings {
     pub live_fetch: bool,
     pub github: String,
     pub github_token: String,
+    pub git_backend: GitBackend,
 }
 
 impl Default for GourceSettings {
@@ -511,6 +540,7 @@ impl Default for GourceSettings {
             live_fetch: false,
             github: String::new(),
             github_token: String::new(),
+            git_backend: GitBackend::Auto,
         };
         s.set_scaled_font_sizes();
         s
@@ -1827,6 +1857,17 @@ impl GourceSettings {
             settings.live = true;
         }
 
+        if let Some(entry) = gource_settings.entry("git-backend") {
+            if !entry.has_value() {
+                return Err(conf.missing_value_error(entry));
+            }
+            if let Some(backend) = GitBackend::parse(&entry.value) {
+                settings.git_backend = backend;
+            } else {
+                return Err(conf.invalid_value_error(entry));
+            }
+        }
+
         Ok(settings)
     }
 }
@@ -2186,5 +2227,32 @@ mod tests {
 
         let conf_cache_missing = ConfFile::parse("[gource]\ncache-dir=\n", "test.conf").unwrap();
         assert!(GourceSettings::import(&conf_cache_missing, None).is_err());
+    }
+
+    #[test]
+    fn test_git_backend_parsing_and_import() {
+        assert_eq!(GitBackend::parse("auto"), Some(GitBackend::Auto));
+        assert_eq!(GitBackend::parse("cli"), Some(GitBackend::Cli));
+        assert_eq!(GitBackend::parse("git"), Some(GitBackend::Cli));
+        assert_eq!(GitBackend::parse("in-process"), Some(GitBackend::InProcess));
+        assert_eq!(GitBackend::parse("inprocess"), Some(GitBackend::InProcess));
+        assert_eq!(GitBackend::parse("gix"), Some(GitBackend::InProcess));
+        assert_eq!(GitBackend::parse("unknown"), None);
+
+        assert_eq!(GitBackend::Auto.as_str(), "auto");
+        assert_eq!(GitBackend::Cli.as_str(), "cli");
+        assert_eq!(GitBackend::InProcess.as_str(), "in-process");
+
+        let mut conf = ConfFile::new();
+        conf.set_entry("gource", "git-backend", "in-process");
+        let s = GourceSettings::import(&conf, None).unwrap();
+        assert_eq!(s.git_backend, GitBackend::InProcess);
+
+        let mut conf_err = ConfFile::new();
+        conf_err.set_entry("gource", "git-backend", "invalid_backend");
+        assert!(GourceSettings::import(&conf_err, None).is_err());
+
+        let conf_missing = ConfFile::parse("[gource]\ngit-backend=\n", "test.conf").unwrap();
+        assert!(GourceSettings::import(&conf_missing, None).is_err());
     }
 }

@@ -11,7 +11,7 @@ use bevy::{
     render::RenderPlugin,
     window::{CursorOptions, ExitCondition, PrimaryWindow, WindowCloseRequested, WindowPlugin},
 };
-use gource_draw::PpmExporter;
+use gource_draw::VideoSink;
 use gource_settings::{DisplaySettings, LogLevel, help::help_text};
 use gource_sim::{PlatformRequest, Viewport};
 
@@ -32,8 +32,8 @@ pub const EXIT_FLUSH_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct AppConfig {
     pub display: DisplaySettings,
     pub log_level: LogLevel,
-    /// `--output-ppm-stream` writer, when recording.
-    pub exporter: Option<PpmExporter>,
+    /// Video or PPM stream writer, when recording.
+    pub exporter: Option<Box<dyn VideoSink>>,
 }
 
 /// Map `--log-level` to the tracing level of Bevy's logger. The C++ default

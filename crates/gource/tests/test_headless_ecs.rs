@@ -321,7 +321,14 @@ fn test_handle_requests_execution() {
     let dir = tempfile::tempdir().unwrap();
     let ppm_path = dir.path().join("out.ppm");
     let exporter = PpmExporter::new(ppm_path.to_str().unwrap()).unwrap();
-    let mut app = create_headless_app(sim, Recorder::new(Some(exporter)), 1, 800, 600, 1.0);
+    let mut app = create_headless_app(
+        sim,
+        Recorder::new(Some(Box::new(exporter))),
+        1,
+        800,
+        600,
+        1.0,
+    );
 
     // Queue requests in the simulation
     let snap_path = dir.path().join("snap.png");
@@ -662,7 +669,14 @@ fn test_finish_exit_with_error_and_timeout() {
     let dir = tempfile::tempdir().unwrap();
     let ppm_path = dir.path().join("out.ppm");
     let exporter = PpmExporter::new(ppm_path.to_str().unwrap()).unwrap();
-    let mut app = create_headless_app(sim, Recorder::new(Some(exporter)), 0, 800, 600, 1.0);
+    let mut app = create_headless_app(
+        sim,
+        Recorder::new(Some(Box::new(exporter))),
+        0,
+        800,
+        600,
+        1.0,
+    );
 
     // Queue frame capture so recorder has in_flight > 0
     app.world_mut()

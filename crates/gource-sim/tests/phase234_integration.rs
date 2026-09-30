@@ -772,3 +772,109 @@ fn test_gource_textures_error_paths() {
     assert!(err2.is_err());
     assert!(err2.unwrap_err().0.contains("failed to load resource"));
 }
+
+#[test]
+fn test_interactive_search_and_caret_positioning() {
+    use gource_sim::input::{Key, Modifiers};
+    use gource_widgets::timeline_bar::TimelineHit;
+
+    let mut app = load_test_app(&[]);
+    let gource = app.shell_mut().gource.as_mut().unwrap();
+
+    // Pre-populate World with users and files
+    let cf = gource_vcs::commit::CommitFile {
+        filename: "/src/search_test.rs".to_string(),
+        action: gource_vcs::commit::FileAction::Add,
+        colour: glam::Vec3::ONE,
+        ..Default::default()
+    };
+    let fid = gource
+        .world
+        .add_file(&cf, &gource.settings)
+        .expect("file added");
+    let uid = gource.world.add_user("search_hero", &gource.settings);
+
+    // 1. Activate search via Ctrl+/
+    assert!(!gource.search_widget.is_active());
+    gource.input(&InputEvent::KeyDown {
+        key: Key::Char('/'),
+        modifiers: Modifiers {
+            ctrl: true,
+            ..Default::default()
+        },
+        repeat: false,
+    });
+    assert!(gource.search_widget.is_active());
+
+    // 2. Type query "hero"
+    for c in "hero".chars() {
+        gource.input(&InputEvent::KeyDown {
+            key: Key::Char(c),
+            modifiers: Modifiers::default(),
+            repeat: false,
+        });
+    }
+    assert_eq!(gource.search_widget.query, "hero");
+    assert!(!gource.search_widget.results.is_empty());
+    assert_eq!(gource.search_widget.results[0].name, "search_hero");
+
+    // 3. Press Return to commit search and focus
+    gource.input(&InputEvent::KeyDown {
+        key: Key::Return,
+        modifiers: Modifiers::default(),
+        repeat: false,
+    });
+    assert!(!gource.search_widget.visible);
+    assert_eq!(gource.selected_user, Some(uid));
+
+    // 4. Activate search via Ctrl+F for file search
+    gource.input(&InputEvent::KeyDown {
+        key: Key::Char('f'),
+        modifiers: Modifiers {
+            ctrl: true,
+            ..Default::default()
+        },
+        repeat: false,
+    });
+    assert!(gource.search_widget.is_active());
+
+    for c in "search_test".chars() {
+        gource.input(&InputEvent::KeyDown {
+            key: Key::Char(c),
+            modifiers: Modifiers::default(),
+            repeat: false,
+        });
+    }
+    assert!(!gource.search_widget.results.is_empty());
+    gource.input(&InputEvent::KeyDown {
+        key: Key::Return,
+        modifiers: Modifiers::default(),
+        repeat: false,
+    });
+    assert_eq!(gource.selected_file, Some(fid));
+
+    // 5. Test timeline caret clicking and fraction preservation
+    gource.timeline_bar.show(true);
+    let target_fraction = 0.42f32;
+    gource.handle_timeline_hit(TimelineHit::Track(target_fraction));
+    assert_eq!(gource.scrubber.state.playhead_fraction, target_fraction);
+    assert_eq!(gource.last_percent, target_fraction);
+
+    // Escape closes search if opened again
+    gource.input(&InputEvent::KeyDown {
+        key: Key::Char('/'),
+        modifiers: Modifiers {
+            ctrl: true,
+            ..Default::default()
+        },
+        repeat: false,
+    });
+    assert!(gource.search_widget.is_active());
+    gource.input(&InputEvent::KeyDown {
+        key: Key::Escape,
+        modifiers: Modifiers::default(),
+        repeat: false,
+    });
+    assert!(!gource.search_widget.visible);
+    assert!(!gource.is_finished); // did not quit the application
+}

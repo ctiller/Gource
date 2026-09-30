@@ -15,6 +15,7 @@
 pub mod commit;
 pub mod formats;
 pub mod github;
+pub mod in_process_git;
 pub mod live;
 pub mod log;
 pub mod logmill;

@@ -22,12 +22,14 @@ pub mod ppm;
 pub mod projection;
 pub mod resources;
 pub mod texture;
+pub mod video;
 
 pub use font::{FaceId, FontError, FontId, FontStore, TextStyle};
 pub use list::{Batch, DrawList, Material, TextureId, Vertex};
 pub use ppm::PpmExporter;
 pub use projection::Projection;
 pub use texture::{Filter, Texture, TextureError, TextureOptions, TextureStore, Wrap};
+pub use video::{VideoCodec, VideoConfig, VideoExporter, VideoSink};
 
 use glam::Vec2;
 

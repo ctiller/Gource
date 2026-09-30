@@ -11,6 +11,7 @@ pub enum Key {
     Return,
     Tab,
     Space,
+    Backspace,
     Up,
     Down,
     Left,

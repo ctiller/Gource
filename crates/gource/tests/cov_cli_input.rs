@@ -282,7 +282,7 @@ fn test_input_map_key_all_cases() {
         ),
         Key::Other
     );
-    assert_eq!(map_key(dummy, &BevyKey::Backspace, false), Key::Other);
+    assert_eq!(map_key(dummy, &BevyKey::Backspace, false), Key::Backspace);
 }
 
 #[test]

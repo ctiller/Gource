@@ -64,4 +64,6 @@ pub struct VcsOptions {
     pub github: String,
     /// Personal access token for GitHub API (or via GITHUB_TOKEN / GH_TOKEN env vars).
     pub github_token: String,
+    /// Git backend selection: "auto", "cli", or "in-process".
+    pub git_backend: String,
 }

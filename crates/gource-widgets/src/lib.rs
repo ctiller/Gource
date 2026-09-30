@@ -9,6 +9,7 @@ pub mod caption;
 pub mod cursor;
 pub mod dashboard;
 pub mod key;
+pub mod search;
 pub mod slider;
 pub mod textbox;
 pub mod timeline_bar;

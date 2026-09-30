@@ -24,8 +24,8 @@ pub mod patch;
 pub use conffile::{ConfEntry, ConfFile, ConfSection};
 pub use display::DisplaySettings;
 pub use gource::{
-    CameraMode, DashboardPanel, DashboardPeriod, FileColourMode, FileSizeMetric, GourceSettings,
-    LogLevel,
+    CameraMode, DashboardPanel, DashboardPeriod, FileColourMode, FileSizeMetric, GitBackend,
+    GourceSettings, LogLevel,
 };
 pub use patch::*;
 
@@ -183,6 +183,10 @@ fn get_option_type(opt: &str) -> Option<&'static str> {
         "high-dpi" => Some("bool"),
         "output-ppm-stream" => Some("string"),
         "output-framerate" => Some("int"),
+        "output-video" => Some("string"),
+        "video-codec" => Some("string"),
+        "video-bitrate" => Some("string"),
+        "video-fps" => Some("int"),
 
         "help" => Some("bool"),
         "extended-help" => Some("bool"),
@@ -315,6 +319,7 @@ fn get_option_type(opt: &str) -> Option<&'static str> {
         "live-fetch" => Some("bool"),
         "github" => Some("string"),
         "github-token" => Some("string"),
+        "git-backend" => Some("string"),
 
         _ => None,
     }
@@ -350,7 +355,8 @@ fn get_option_section(opt: &str) -> &str {
     match opt {
         "viewport" | "windowed" | "fullscreen" | "frameless" | "screen" | "window-position"
         | "multi-sampling" | "output-ppm-stream" | "output-framerate" | "transparent"
-        | "no-vsync" | "high-dpi" => "display",
+        | "no-vsync" | "high-dpi" | "output-video" | "video-codec" | "video-bitrate"
+        | "video-fps" => "display",
 
         "help" | "extended-help" | "log-command" | "git-log-command" | "cvs-exp-command"
         | "cvs2cl-command" | "hg-log-command" | "bzr-log-command" | "svn-log-command"

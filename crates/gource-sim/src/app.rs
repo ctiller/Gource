@@ -146,5 +146,6 @@ pub fn vcs_options(settings: &GourceSettings) -> VcsOptions {
         live_fetch: settings.live_fetch,
         github: settings.github.clone(),
         github_token: settings.github_token.clone(),
+        git_backend: settings.git_backend.as_str().to_string(),
     }
 }
