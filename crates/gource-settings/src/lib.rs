@@ -320,6 +320,9 @@ fn get_option_type(opt: &str) -> Option<&'static str> {
         "github" => Some("string"),
         "github-token" => Some("string"),
         "git-backend" => Some("string"),
+        "watch-worktrees" => Some("bool"),
+        "worktree-poll-interval" => Some("float"),
+        "shadow-alpha" => Some("float"),
 
         _ => None,
     }

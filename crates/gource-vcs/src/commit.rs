@@ -51,6 +51,8 @@ pub struct CommitFile {
     pub lines_added: Option<u32>,
     pub lines_removed: Option<u32>,
     pub is_binary: bool,
+    /// Whether this file represents uncommitted in-flight worktree state.
+    pub is_shadow: bool,
 }
 
 /// A commit: who, when, and which files.
@@ -61,6 +63,8 @@ pub struct Commit {
     /// UTF-8 filtered user name.
     pub username: String,
     pub files: Vec<CommitFile>,
+    /// Whether this commit represents uncommitted in-flight worktree state.
+    pub is_shadow: bool,
 }
 
 impl Commit {
@@ -140,6 +144,7 @@ impl Commit {
             filtered.insert(0, '/');
         }
 
+        let is_shadow = self.is_shadow;
         self.files.push(CommitFile {
             filename: filtered,
             action: FileAction::from_code(action),
@@ -147,6 +152,7 @@ impl Commit {
             lines_added,
             lines_removed,
             is_binary,
+            is_shadow,
         });
     }
 

@@ -645,6 +645,7 @@ fn test_no_jitter_on_file_edit_and_smooth_swirl() {
                     lines_added: Some(50 + (i * 20) as u32),
                     lines_removed: None,
                     is_binary: false,
+                    ..Default::default()
                 },
                 &settings,
             )
@@ -695,6 +696,7 @@ fn test_no_jitter_on_file_edit_and_smooth_swirl() {
                 lines_added: Some(100),
                 lines_removed: None,
                 is_binary: false,
+                ..Default::default()
             },
             &settings,
         )
@@ -739,6 +741,7 @@ fn test_laser_touch_applies_push_force() {
         lines_added: Some(10),
         lines_removed: None,
         is_binary: false,
+        ..Default::default()
     };
     let fid = world.add_file(&cf, &settings).expect("file added");
     world.files[fid].pawn.set_hidden(false);
@@ -754,6 +757,7 @@ fn test_laser_touch_applies_push_force() {
         timestamp: 1000,
         username: "alice".to_string(),
         files: vec![cf.clone()],
+        ..Default::default()
     };
     world.add_file_action(&commit, &cf, fid, 1.0, &settings);
 

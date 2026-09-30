@@ -66,4 +66,10 @@ pub struct VcsOptions {
     pub github_token: String,
     /// Git backend selection: "auto", "cli", or "in-process".
     pub git_backend: String,
+    /// Watch all linked git worktrees for uncommitted in-flight changes.
+    pub watch_worktrees: bool,
+    /// Polling debounce interval for worktree status checks in seconds (default: 0.25).
+    pub worktree_poll_interval: f32,
+    /// Opacity multiplier for shadow in-flight files and beams (default: 0.45).
+    pub shadow_alpha: f32,
 }

@@ -216,6 +216,7 @@ fn test_world_uncovered_branches() {
         timestamp: 200,
         username: "unknown_user".to_string(),
         files: vec![cf.clone()],
+        ..Default::default()
     };
     world.add_file_action(&unknown_commit, &cf, fid, 1.0, &settings);
     assert!(world.users_by_name.contains_key("unknown_user"));

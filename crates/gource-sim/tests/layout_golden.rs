@@ -28,6 +28,7 @@ fn test_single_file_touch_increments_visible_count() {
         timestamp: 100,
         username: "alice".to_string(),
         files: vec![cf.clone()],
+        ..Default::default()
     };
     world.add_file_action(&commit, &cf, fid, 1.0, &settings);
 
@@ -67,6 +68,7 @@ fn test_repeated_touch_does_not_inflate_visible_count() {
         timestamp: 100,
         username: "alice".to_string(),
         files: vec![cf.clone()],
+        ..Default::default()
     };
     world.add_file_action(&commit1, &cf, fid, 1.0, &settings);
 
@@ -85,6 +87,7 @@ fn test_repeated_touch_does_not_inflate_visible_count() {
         timestamp: 110,
         username: "alice".to_string(),
         files: vec![cf.clone()],
+        ..Default::default()
     };
     world.add_file_action(&commit2, &cf, fid, 3.0, &settings);
 
@@ -125,6 +128,7 @@ fn test_dir_radius_parity_after_multiple_commits() {
             timestamp: 100 + i as i64 * 10,
             username: "alice".to_string(),
             files: vec![cf.clone()],
+            ..Default::default()
         };
         world.add_file_action(&commit, &cf, fid, base_t, &settings);
 

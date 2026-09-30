@@ -130,6 +130,7 @@ impl CustomParser {
         if commit.files.is_empty() {
             commit.timestamp = timestamp;
             commit.username = username.to_string();
+            commit.is_shadow = username.starts_with("worktree:");
         } else if commit.timestamp != timestamp || commit.username != username {
             return Ok(false); // belongs to next commit
         }

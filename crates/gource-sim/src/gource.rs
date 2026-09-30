@@ -2164,7 +2164,21 @@ impl Gource {
             }
 
             let file_id = match self.world.files_by_path.get(&cf.filename).copied() {
-                Some(fid) => Some(fid),
+                Some(fid) => {
+                    if let Some(file) = self.world.files.get_mut(fid) {
+                        if !commit.is_shadow && file.is_shadow {
+                            // Real commit solidifies the shadow file!
+                            file.solidify();
+                        } else if commit.is_shadow
+                            && cf.action == FileAction::Delete
+                            && file.is_shadow
+                        {
+                            // Uncommitted change discarded/reverted: dissolve shadow file
+                            file.remove_forced();
+                        }
+                    }
+                    Some(fid)
+                }
                 None => {
                     let fid_opt = self.world.add_file(cf, &self.settings);
                     if let Some(fid) = fid_opt {

@@ -55,6 +55,7 @@ fn test_world_scenarios_and_harden() {
         timestamp: 100,
         username: "alice".to_string(),
         files: vec![cf1.clone(), cf2.clone()],
+        ..Default::default()
     };
     world.add_file_action(&commit_alice, &cf1, fid1, 1.0, &settings);
     world.add_file_action(&commit_alice, &cf2, fid2, 1.0, &settings);
@@ -63,6 +64,7 @@ fn test_world_scenarios_and_harden() {
         timestamp: 105,
         username: "bob".to_string(),
         files: vec![cf3.clone()],
+        ..Default::default()
     };
     world.add_file_action(&commit_bob, &cf3, fid3, 1.0, &settings);
 

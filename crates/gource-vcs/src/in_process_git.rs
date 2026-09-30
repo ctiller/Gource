@@ -278,7 +278,7 @@ fn collect_tree_entries(
     }
 }
 
-fn is_binary_buffer(data: &[u8]) -> bool {
+pub(crate) fn is_binary_buffer(data: &[u8]) -> bool {
     let check_len = data.len().min(8000);
     data[..check_len].contains(&0)
 }

@@ -341,6 +341,8 @@ impl World {
             settings.file_extension_fallback,
         );
         file.created_timestamp = 0;
+        file.is_shadow = cf.is_shadow;
+        file.shadow_alpha = settings.shadow_alpha;
 
         if settings.file_size_metric != gource_settings::FileSizeMetric::None {
             file.weighted = true;
@@ -1646,12 +1648,20 @@ impl World {
                 let offset = perp * target_screen_size * 0.5;
                 let offset_src = offset * 0.3;
 
-                let alpha = 1.0 - a.progress;
+                let is_shadow_action = file.is_shadow || user.name().starts_with("worktree:");
+                let alpha_mult = if is_shadow_action { 0.45 } else { 1.0 };
+                let alpha = (1.0 - a.progress) * alpha_mult;
                 // C++: `alpha * 0.1` (a double literal).
                 let alpha2 = (alpha as f64 * 0.1) as f32;
 
-                let col1 = Vec4::new(a.colour.x, a.colour.y, a.colour.z, alpha);
-                let col2 = Vec4::new(a.colour.x, a.colour.y, a.colour.z, alpha2);
+                let beam_col = if is_shadow_action {
+                    a.colour.lerp(Vec3::new(0.6, 0.85, 1.0), 0.45)
+                } else {
+                    a.colour
+                };
+
+                let col1 = Vec4::new(beam_col.x, beam_col.y, beam_col.z, alpha);
+                let col2 = Vec4::new(beam_col.x, beam_col.y, beam_col.z, alpha2);
 
                 let v1 = Vertex::new(src - offset_src, Vec2::new(0.0, 0.0), col2);
                 let v2 = Vertex::new(src + offset_src, Vec2::new(0.0, 1.0), col2);
@@ -1689,11 +1699,16 @@ impl World {
 
                 let screen_size = proj.to_screen_len(file.pawn.size);
                 let dims = Vec2::new(screen_size, screen_size * file.pawn.graphic_ratio);
-                let c = if settings.file_colour_mode == gource_settings::FileColourMode::Extension {
-                    file.colour()
-                } else {
-                    file.display_colour(settings.file_colour_mode, 0)
-                };
+                let mut c =
+                    if settings.file_colour_mode == gource_settings::FileColourMode::Extension {
+                        file.colour()
+                    } else {
+                        file.display_colour(settings.file_colour_mode, 0)
+                    };
+                if file.is_shadow {
+                    // Blend towards ethereal cyan
+                    c = c.lerp(Vec3::new(0.6, 0.85, 1.0), 0.45);
+                }
                 let alpha = file.alpha();
                 let col = Vec4::new(c.x, c.y, c.z, alpha);
                 list.rect(file_tex, screen_pos - dims * 0.5, dims, col);
@@ -2074,6 +2089,7 @@ mod tests {
             timestamp: 1000,
             username: "alice".to_string(),
             files: vec![cf.clone()],
+            ..Default::default()
         };
 
         world.add_file_action(&commit, &cf, fid, 1.0, &settings);

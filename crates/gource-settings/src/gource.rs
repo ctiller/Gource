@@ -388,6 +388,9 @@ pub struct GourceSettings {
     pub github: String,
     pub github_token: String,
     pub git_backend: GitBackend,
+    pub watch_worktrees: bool,
+    pub worktree_poll_interval: f32,
+    pub shadow_alpha: f32,
 }
 
 impl Default for GourceSettings {
@@ -541,6 +544,9 @@ impl Default for GourceSettings {
             github: String::new(),
             github_token: String::new(),
             git_backend: GitBackend::Auto,
+            watch_worktrees: false,
+            worktree_poll_interval: 0.25,
+            shadow_alpha: 0.45,
         };
         s.set_scaled_font_sizes();
         s
@@ -789,6 +795,18 @@ impl GourceSettings {
             args.push(self.github.clone());
         }
         // Security: never persist or export github_token
+
+        if self.watch_worktrees {
+            args.push("--watch-worktrees".to_string());
+        }
+        if (self.worktree_poll_interval - def.worktree_poll_interval).abs() > 1e-4 {
+            args.push("--worktree-poll-interval".to_string());
+            args.push(self.worktree_poll_interval.to_string());
+        }
+        if (self.shadow_alpha - def.shadow_alpha).abs() > 1e-4 {
+            args.push("--shadow-alpha".to_string());
+            args.push(self.shadow_alpha.to_string());
+        }
 
         if !self.default_path && !self.path.is_empty() && self.path != "." {
             args.push(self.path.clone());
@@ -1866,6 +1884,32 @@ impl GourceSettings {
             } else {
                 return Err(conf.invalid_value_error(entry));
             }
+        }
+
+        if let Some(entry) = gource_settings.entry("watch-worktrees") {
+            settings.watch_worktrees = entry.get_bool();
+        }
+
+        if let Some(entry) = gource_settings.entry("worktree-poll-interval") {
+            if !entry.has_value() {
+                return Err(conf.missing_value_error(entry));
+            }
+            let v = entry.get_float();
+            if v <= 0.0 {
+                return Err(conf.invalid_value_error(entry));
+            }
+            settings.worktree_poll_interval = v;
+        }
+
+        if let Some(entry) = gource_settings.entry("shadow-alpha") {
+            if !entry.has_value() {
+                return Err(conf.missing_value_error(entry));
+            }
+            let v = entry.get_float();
+            if !(0.0..=1.0).contains(&v) {
+                return Err(conf.invalid_value_error(entry));
+            }
+            settings.shadow_alpha = v;
         }
 
         Ok(settings)

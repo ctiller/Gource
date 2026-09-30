@@ -147,5 +147,8 @@ pub fn vcs_options(settings: &GourceSettings) -> VcsOptions {
         github: settings.github.clone(),
         github_token: settings.github_token.clone(),
         git_backend: settings.git_backend.as_str().to_string(),
+        watch_worktrees: settings.watch_worktrees,
+        worktree_poll_interval: settings.worktree_poll_interval,
+        shadow_alpha: settings.shadow_alpha,
     }
 }

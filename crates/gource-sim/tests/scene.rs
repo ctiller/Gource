@@ -293,6 +293,7 @@ fn test_world_drawing_and_frustum() {
         timestamp: 100,
         username: "testuser".to_string(),
         files: vec![cf.clone()],
+        ..Default::default()
     };
     world.add_file_action(&commit, &cf, fid, 0.0, &settings);
 
@@ -601,6 +602,7 @@ fn test_world_comprehensive_coverage() {
                 ..Default::default()
             },
         ],
+        ..Default::default()
     };
     world.add_file_action(&commit_bob, &commit_bob.files[0], fid1, 0.0, &settings);
     world.add_file_action(&commit_bob, &commit_bob.files[1], fid2, 0.0, &settings);

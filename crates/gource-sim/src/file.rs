@@ -53,6 +53,11 @@ pub struct File {
     pub created_timestamp: i64,
     pub dominant_cohort_colour: Option<Vec3>,
     pub weighted: bool,
+
+    pub is_shadow: bool,
+    pub shadow_alpha: f32,
+    pub solidifying: bool,
+    pub solidify_timer: f32,
 }
 
 impl File {
@@ -113,6 +118,10 @@ impl File {
             created_timestamp: 0,
             dominant_cohort_colour: None,
             weighted: false,
+            is_shadow: false,
+            shadow_alpha: 0.45,
+            solidifying: false,
+            solidify_timer: 0.0,
         }
     }
 
@@ -202,7 +211,28 @@ impl File {
             let fade_elapsed = (self.pawn.elapsed - self.fade_start).clamp(0.0, 1.0);
             alpha = 1.0 - fade_elapsed;
         }
+        if self.is_shadow {
+            alpha *= self.shadow_alpha;
+        } else if self.solidifying && self.solidify_timer > 0.0 {
+            // Smoothly ramp up from shadow_alpha to 1.0 over solidify_timer (0.5s)
+            let progress = 1.0 - (self.solidify_timer / 0.5).clamp(0.0, 1.0);
+            let blend = self.shadow_alpha + (1.0 - self.shadow_alpha) * progress;
+            alpha *= blend;
+        }
         alpha
+    }
+
+    /// Solidify a shadow file into a permanent committed file.
+    pub fn solidify(&mut self) {
+        if self.is_shadow {
+            self.is_shadow = false;
+            self.solidifying = true;
+            self.solidify_timer = 0.5;
+            // Trigger visual pulse ring
+            self.pulse_timer = self.pulse_max_time;
+            self.pulse_scale = 1.5;
+            self.pulse_delta = 1;
+        }
     }
 
     /// Port of `RFile::touch(time_t touched_timestamp, const vec3 & colour)`.
@@ -242,6 +272,13 @@ impl File {
         }
         self.pawn.pos += accel2;
         self.pawn.accel = Vec2::ZERO;
+
+        if self.solidifying {
+            self.solidify_timer = (self.solidify_timer - dt).max(0.0);
+            if self.solidify_timer == 0.0 {
+                self.solidifying = false;
+            }
+        }
 
         if self.weighted {
             let target = if self.pawn.is_hidden() || self.removing || self.fade_start > 0.0 {

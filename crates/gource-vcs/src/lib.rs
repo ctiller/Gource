@@ -20,6 +20,7 @@ pub mod live;
 pub mod log;
 pub mod logmill;
 pub mod options;
+pub mod worktree;
 
 #[cfg(test)]
 mod coverage_tests;
@@ -33,6 +34,10 @@ pub use live::LiveGitWatcher;
 pub use log::CommitLog;
 pub use logmill::{LogMill, LogMillStatus};
 pub use options::{CommitFilters, VcsOptions};
+pub use worktree::{
+    WorktreeInfo, WorktreeWatcher, discover_worktrees, read_branch_name, read_head_sha,
+    scan_worktree_in_flight,
+};
 
 /// Errors produced while locating or reading logs.
 #[derive(Debug, thiserror::Error)]

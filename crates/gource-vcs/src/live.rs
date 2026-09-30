@@ -135,6 +135,22 @@ impl LiveGitWatcher {
             5.0
         };
 
+        let mut worktree_watcher = if options.watch_worktrees {
+            let mut watcher =
+                crate::worktree::WorktreeWatcher::new(repo_dir.clone(), options.clone());
+            // Initial poll on startup
+            let _ = watcher.poll_and_stream(&tx);
+            Some(watcher)
+        } else {
+            None
+        };
+        let worktree_interval = Duration::from_secs_f32(if options.worktree_poll_interval > 0.0 {
+            options.worktree_poll_interval
+        } else {
+            0.25
+        });
+        let mut last_worktree_poll = std::time::Instant::now();
+
         let sleep_step = Duration::from_millis(50);
         let total_sleep = Duration::from_secs_f32(interval_secs);
 
@@ -148,6 +164,13 @@ impl LiveGitWatcher {
                 let sleep_duration = sleep_step.min(total_sleep - elapsed);
                 thread::sleep(sleep_duration);
                 elapsed += sleep_duration;
+
+                if let Some(ref mut wt_watcher) = worktree_watcher
+                    && last_worktree_poll.elapsed() >= worktree_interval
+                {
+                    let _ = wt_watcher.poll_and_stream(&tx);
+                    last_worktree_poll = std::time::Instant::now();
+                }
             }
 
             if abort_flag.load(Ordering::SeqCst) {

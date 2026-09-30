@@ -314,7 +314,7 @@ fn fetch_internal(
     } else if crate::github::GitHubTarget::looks_like_github_path(path) {
         let target = crate::github::GitHubTarget::parse(path)?;
         return crate::github::GitHubWatcher::spawn(target, options.clone(), abort_clone);
-    } else if options.live {
+    } else if options.live || options.watch_worktrees {
         let path_obj = Path::new(path);
         if path_obj.is_dir()
             && let Some((repo_dir, fmt)) = find_repository(path_obj)
