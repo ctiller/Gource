@@ -1,0 +1,34 @@
+[package]
+name = "gource-app"
+description = "Engine-agnostic Gource simulation: the directory tree, files, users and camera"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["gix"]
+# In-process git reading via gource-vcs. Disable for wasm builds.
+gix = ["gource-vcs/gix"]
+
+[dependencies]
+gource-core = { workspace = true, features = ["glam"] }
+gource-draw = { workspace = true }
+gource-settings = { workspace = true }
+gource-vcs = { workspace = true }
+gource-widgets = { workspace = true }
+gource-history = { path = "../gource-history" }
+gource-model = { workspace = true }
+glam = { workspace = true }
+slotmap = { workspace = true }
+fastrand = { workspace = true }
+log = { workspace = true }
+gource-scene = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+# proptest forks processes (wait-timeout), which wasm32 lacks; examples such
+# as scene_hash still build for wasm32-wasip1.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+proptest = { workspace = true }

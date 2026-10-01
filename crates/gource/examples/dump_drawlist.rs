@@ -5,9 +5,9 @@
 //! cargo run -p gource --example dump_drawlist -- FRAMES [gource args...]
 //! ```
 
+use gource_app::{AppOptions, GourceApp, Viewport};
 use gource_draw::{DrawList, Material};
 use gource_settings::{CliAction, parse_command_line};
-use gource_sim::{AppOptions, GourceApp, Viewport};
 
 fn main() {
     let mut args = std::env::args().skip(1);

@@ -16,7 +16,7 @@ gource-model = { path = "crates/gource-model" }
 gource-draw = { path = "crates/gource-draw" }
 gource-vcs = { path = "crates/gource-vcs", default-features = false }
 gource-settings = { path = "crates/gource-settings" }
-gource-sim = { path = "crates/gource-sim" }
+gource-app = { path = "crates/gource-app" }
 gource-scene = { path = "crates/gource-scene" }
 gource-widgets = { path = "crates/gource-widgets" }
 

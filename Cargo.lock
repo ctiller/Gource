@@ -3037,14 +3037,34 @@ version = "0.57.0"
 dependencies = [
  "bevy",
  "glam",
+ "gource-app",
  "gource-core",
  "gource-draw",
  "gource-history",
  "gource-settings",
- "gource-sim",
  "gource-vcs",
  "image",
  "log",
+ "tempfile",
+]
+
+[[package]]
+name = "gource-app"
+version = "0.57.0"
+dependencies = [
+ "fastrand",
+ "glam",
+ "gource-core",
+ "gource-draw",
+ "gource-history",
+ "gource-model",
+ "gource-scene",
+ "gource-settings",
+ "gource-vcs",
+ "gource-widgets",
+ "log",
+ "proptest",
+ "slotmap",
  "tempfile",
 ]
 
@@ -3092,6 +3112,13 @@ dependencies = [
 [[package]]
 name = "gource-scene"
 version = "0.57.0"
+dependencies = [
+ "glam",
+ "gource-core",
+ "gource-model",
+ "gource-settings",
+ "slotmap",
+]
 
 [[package]]
 name = "gource-serve"
@@ -3122,25 +3149,6 @@ dependencies = [
  "log",
  "tempfile",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "gource-sim"
-version = "0.57.0"
-dependencies = [
- "fastrand",
- "glam",
- "gource-core",
- "gource-draw",
- "gource-history",
- "gource-scene",
- "gource-settings",
- "gource-vcs",
- "gource-widgets",
- "log",
- "proptest",
- "slotmap",
- "tempfile",
 ]
 
 [[package]]

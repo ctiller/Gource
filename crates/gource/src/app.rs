@@ -11,9 +11,9 @@ use bevy::{
     render::RenderPlugin,
     window::{CursorOptions, ExitCondition, PrimaryWindow, WindowCloseRequested, WindowPlugin},
 };
+use gource_app::{PlatformRequest, Viewport};
 use gource_draw::VideoSink;
 use gource_settings::{DisplaySettings, LogLevel, help::help_text};
-use gource_sim::{PlatformRequest, Viewport};
 
 use crate::{
     capture::{CaptureJob, Deadline, MAX_FRAMES_IN_FLIGHT, Recorder, spawn_capture},

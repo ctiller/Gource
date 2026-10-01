@@ -25,10 +25,10 @@ use gource::{
     render::{FrameDrawList, FrameTextures, GpuTextures},
     sim::{SimResource, Simulation},
 };
-use gource_draw::{DrawList, Gfx};
-use gource_sim::{
+use gource_app::{
     AppOptions, GourceApp, InputEvent, Key, Modifiers, MouseButton, PlatformRequest, Viewport,
 };
+use gource_draw::{DrawList, Gfx};
 use gource_vcs::VcsError;
 
 #[derive(Default, Clone)]

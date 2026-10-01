@@ -7,7 +7,7 @@ remain the behavioural reference until the port is complete.
 
 ```
 gource (bin, Bevy)        window, input, GPU upload of draw lists, PPM/PNG capture
-  └─ gource-sim           the simulation: tree, files, users, actions, camera,
+  └─ gource-app           the simulation: tree, files, users, actions, camera,
      │                    Gource state machine, multi-repo shell. Tessellates
      │                    each frame into a DrawList.
      ├─ gource-scene      integer-only layout kernels (Q24.8 fixed point):
@@ -37,7 +37,7 @@ Design rules:
   look as C++ Gource, but bit-exact layout parity is no longer a goal.
   Doc comments name the C++ function a piece derives from.
 * **Integer simulation, float view.** Layout runs in `gource-scene` integers
-  at a fixed 60 Hz tick (`gource-sim/src/step.rs`), so it is bit-identical
+  at a fixed 60 Hz tick (`gource-app/src/step.rs`), so it is bit-identical
   for any thread count and on wasm, and a tick can be undone exactly
   (reverse playback). Each frame `World::sync_view(alpha)` interpolates the
   integer state into the float fields the draw code reads; rotation is a

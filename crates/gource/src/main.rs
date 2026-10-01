@@ -6,8 +6,8 @@ use gource::{
     app::{self, AppConfig},
     cli::{self, Outcome},
 };
+use gource_app::{AppOptions, GourceApp};
 use gource_draw::{PpmExporter, VideoCodec, VideoConfig, VideoExporter, VideoSink};
-use gource_sim::{AppOptions, GourceApp};
 
 fn exit_with(stdout: &str, stderr: &str, code: u8) -> ExitCode {
     // Write errors (e.g. a closed pipe) can't be reported anywhere useful.

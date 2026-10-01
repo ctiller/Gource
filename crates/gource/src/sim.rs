@@ -3,8 +3,8 @@
 use std::sync::{Mutex, MutexGuard};
 
 use bevy::prelude::Resource;
+use gource_app::{InputEvent, PlatformRequest, Viewport};
 use gource_draw::{DrawList, Gfx};
-use gource_sim::{InputEvent, PlatformRequest, Viewport};
 
 /// What the frontend drives every frame. Implemented by the Gource
 /// simulation, and by test scenes.
@@ -43,20 +43,20 @@ impl SimResource {
     }
 }
 
-impl Simulation for gource_sim::GourceApp {
+impl Simulation for gource_app::GourceApp {
     fn input(&mut self, event: &InputEvent) {
-        gource_sim::GourceApp::input(self, event);
+        gource_app::GourceApp::input(self, event);
     }
 
     fn frame(&mut self, dt: f32, viewport: Viewport, list: &mut DrawList) {
-        gource_sim::GourceApp::frame(self, dt, viewport, list);
+        gource_app::GourceApp::frame(self, dt, viewport, list);
     }
 
     fn take_requests(&mut self) -> Vec<PlatformRequest> {
-        gource_sim::GourceApp::take_requests(self)
+        gource_app::GourceApp::take_requests(self)
     }
 
     fn gfx(&self) -> &Gfx {
-        gource_sim::GourceApp::gfx(self)
+        gource_app::GourceApp::gfx(self)
     }
 }

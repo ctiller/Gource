@@ -1,9 +1,14 @@
 [package]
 name = "gource-scene"
-description = "Integer-only, deterministic scene simulation for Gource (directories, files, users)"
+description = "Deterministic scene model and layout simulation for Gource"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+glam = { workspace = true }
+gource-core = { workspace = true, features = ["glam"] }
+gource-model = { workspace = true }
+gource-settings = { workspace = true }
+slotmap = { workspace = true }

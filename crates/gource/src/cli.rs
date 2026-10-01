@@ -57,7 +57,7 @@ pub fn write_stats_csv(
 ) -> Result<(), VcsError> {
     use std::io::Write;
 
-    let mut options = gource_sim::vcs_options(settings);
+    let mut options = gource_app::vcs_options(settings);
     options.include_numstat = true;
 
     let mut commitlog =
@@ -152,7 +152,7 @@ pub fn handle_command_line(args: &[String]) -> Outcome {
             Err(error) => Outcome::quit(&error.0),
         },
         CliAction::OutputCustomLog { output, config } => {
-            let options = gource_sim::vcs_options(&config.gource);
+            let options = gource_app::vcs_options(&config.gource);
             match gource_vcs::write_custom_log(&config.gource.path, &output, &options) {
                 Ok(()) => Outcome::success(""),
                 // `Gource::writeCustomLog` calls SDLAppQuit only when the log

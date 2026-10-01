@@ -1,4 +1,4 @@
-//! Translation of Bevy/winit input into [`gource_sim::InputEvent`]s.
+//! Translation of Bevy/winit input into [`gource_app::InputEvent`]s.
 //!
 //! Window events are read from the ordered [`WindowEvent`] stream so key and
 //! mouse events reach the simulation in the order they happened (like the
@@ -14,7 +14,7 @@ use bevy::{
     prelude::*,
     window::{CursorGrabMode, CursorOptions, PrimaryWindow, WindowEvent},
 };
-use gource_sim::{InputEvent, Key, Modifiers, MouseButton};
+use gource_app::{InputEvent, Key, Modifiers, MouseButton};
 
 use crate::sim::SimResource;
 

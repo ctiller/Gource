@@ -25,8 +25,8 @@ use gource::{
     render::{FrameDrawList, FrameTextures, GpuTextures},
     sim::Simulation,
 };
+use gource_app::{InputEvent, Key, MouseButton, PlatformRequest, Viewport};
 use gource_draw::{DrawList, Gfx, PpmExporter};
-use gource_sim::{InputEvent, Key, MouseButton, PlatformRequest, Viewport};
 
 #[derive(Default, Clone)]
 struct SimLog {
@@ -495,7 +495,7 @@ fn test_fatal_and_help_requests() {
 fn test_input_edge_cases_and_all_keys() {
     use bevy::input::keyboard::NativeKey;
     use gource::input::{map_key, map_mouse_button, unshift_us, update_modifiers, wheel_delta};
-    use gource_sim::Modifiers;
+    use gource_app::Modifiers;
 
     // Test unshift_us for all mapped characters
     let shifted = "+_><{}?:\"~|!@#$%^&*()";
@@ -710,7 +710,7 @@ fn test_finish_exit_with_error_and_timeout() {
 #[test]
 fn test_gource_app_simulation_methods() {
     use gource::cli::Outcome;
-    use gource_sim::{AppOptions, GourceApp};
+    use gource_app::{AppOptions, GourceApp};
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().to_str().unwrap().to_string();

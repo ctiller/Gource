@@ -19,7 +19,7 @@ gource-core = { workspace = true, features = ["glam"] }
 gource-draw = { workspace = true }
 gource-history = { path = "../gource-history" }
 gource-settings = { workspace = true }
-gource-sim = { workspace = true }
+gource-app = { workspace = true }
 gource-vcs = { workspace = true, features = ["gix"] }
 glam = { workspace = true }
 image = { workspace = true }

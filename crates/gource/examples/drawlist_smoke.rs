@@ -14,11 +14,11 @@ use gource::{
     app::{self, AppConfig},
     sim::Simulation,
 };
+use gource_app::{InputEvent, PlatformRequest, Viewport};
 use gource_draw::{
     DrawList, FontId, Gfx, TextStyle, TextureId, TextureOptions, resources::FILE_PNG,
 };
 use gource_settings::{DisplaySettings, LogLevel};
-use gource_sim::{InputEvent, PlatformRequest, Viewport};
 
 struct Smoke {
     gfx: Gfx,
@@ -54,7 +54,7 @@ impl Smoke {
 impl Simulation for Smoke {
     fn input(&mut self, event: &InputEvent) {
         if let InputEvent::KeyDown {
-            key: gource_sim::Key::Escape,
+            key: gource_app::Key::Escape,
             ..
         } = event
         {
