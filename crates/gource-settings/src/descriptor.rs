@@ -1696,6 +1696,34 @@ If path is omitted, gource will attempt to read a log from the current directory
 /// Additional settings not listed in help/man (internal, legacy aliases, headless video export).
 pub static EXTRA_SETTINGS: &[SettingDesc] = &[
     SettingDesc {
+        name: "user-idle-time",
+        short: None,
+        section: Section::Gource,
+        kind: Kind::Float,
+        metavar: Some("SECONDS"),
+        default: "0",
+        range: Some((0.0, 60.0)),
+        group: "extra",
+        help: "",
+        man: "",
+        extended: true,
+        live: None,
+    },
+    SettingDesc {
+        name: "highlight-all-users",
+        short: None,
+        section: Section::Gource,
+        kind: Kind::Flag,
+        metavar: None,
+        default: "",
+        range: None,
+        group: "extra",
+        help: "",
+        man: "",
+        extended: true,
+        live: Some(SettingId::HighlightColour),
+    },
+    SettingDesc {
         name: "windowed",
         short: None,
         section: Section::Display,
@@ -2076,7 +2104,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
 ];
 
 /// Option aliases (short flags, legacy names).
-pub static ALIASES: &[(&'static str, &'static str)] = &[
+pub static ALIASES: &[(&str, &str)] = &[
     ("p", "start-position"),
     ("a", "auto-skip-seconds"),
     ("s", "seconds-per-day"),
@@ -2178,8 +2206,6 @@ pub fn cli_flag_for_setting_id(id: SettingId) -> Option<&'static str> {
     }
 }
 
-/// Render the help text pure function from the descriptor table.
-
 pub const HELP_PATH_INFO: &str = r#"
 PATH may be a supported version control directory, a log file, a gource config
 file, or '-' to read STDIN. If omitted, gource will attempt to generate a log
@@ -2190,6 +2216,7 @@ pub const HELP_SHORT_SUFFIX: &str = r#"
 To see the full command line options use '-H'
 "#;
 
+/// Render the help text pure function from the descriptor table.
 pub fn generate_help_text(extended: bool) -> String {
     let mut out = format!(
         "Gource v{}\nUsage: gource [options] [path]\n\nOptions:\n",
@@ -2257,7 +2284,7 @@ pub fn generate_man_page() -> String {
             let flag_str = match (s.short, s.metavar) {
                 (Some(sh), Some(mv)) => {
                     let troff_mv = if mv.starts_with('"') && mv.ends_with('"') {
-                        format!("\"{}\"", &mv[1..mv.len() - 1].replace('-', "\\-"))
+                        format!("\"{}\"", mv[1..mv.len() - 1].replace('-', "\\-"))
                     } else {
                         mv.to_string()
                     };
@@ -2268,7 +2295,7 @@ pub fn generate_man_page() -> String {
                 }
                 (None, Some(mv)) => {
                     let troff_mv = if mv.starts_with('"') && mv.ends_with('"') {
-                        format!("\"{}\"", &mv[1..mv.len() - 1].replace('-', "\\-"))
+                        format!("\"{}\"", mv[1..mv.len() - 1].replace('-', "\\-"))
                     } else {
                         mv.to_string()
                     };
@@ -2503,4 +2530,190 @@ mod tests {
         let disk = std::fs::read_to_string(&man_path).expect("failed to read data/gource.1");
         assert_eq!(generated, disk);
     }
+}
+
+#[test]
+fn test_import_and_descriptor_parity() {
+    // Every option in SETTINGS should be known and have non-empty name, group, and help
+    for s in SETTINGS {
+        assert!(!s.name.is_empty(), "setting name cannot be empty");
+        assert!(
+            !s.group.is_empty(),
+            "setting group cannot be empty: {}",
+            s.name
+        );
+        assert!(
+            !s.help.is_empty(),
+            "setting help cannot be empty: {}",
+            s.name
+        );
+        assert!(
+            find_setting(s.name).is_some(),
+            "setting {} should be findable via find_setting",
+            s.name
+        );
+    }
+
+    // Test alias resolution
+    for &(alias, target) in ALIASES {
+        assert_eq!(resolve_alias(alias), target);
+        assert!(
+            find_setting(target).is_some(),
+            "alias {} targets unknown setting {}",
+            alias,
+            target
+        );
+    }
+
+    // Test option_type
+    assert_eq!(option_type("seconds-per-day"), Some("float"));
+    assert_eq!(option_type("fullscreen"), Some("bool"));
+    assert_eq!(option_type("s"), Some("float")); // via alias
+    assert_eq!(option_type("f"), Some("bool")); // via alias
+
+    // Test option_section
+    assert_eq!(option_section("viewport"), "display");
+    assert_eq!(option_section("help"), "command-line");
+    assert_eq!(option_section("seconds-per-day"), "gource");
+}
+
+#[test]
+fn test_descriptor_coverage() {
+    assert_eq!(Section::Display.as_str(), "display");
+    assert_eq!(Section::CommandLine.as_str(), "command-line");
+    assert_eq!(Section::Gource.as_str(), "gource");
+
+    assert_eq!(Kind::Int.type_name(), "int");
+    assert_eq!(Kind::MultiValue.type_name(), "multi-value");
+    assert_eq!(Kind::Colour.type_name(), "string");
+    assert_eq!(Kind::Enum(&["a"]).type_name(), "string");
+    assert_eq!(Kind::Custom.type_name(), "string");
+
+    // option_section fallback
+    assert_eq!(option_section("nonexistent-option"), "gource");
+
+    // cli_flag_for_setting_id coverage for None and mapped cases
+    assert_eq!(cli_flag_for_setting_id(SettingId::TuningGravity), None);
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::BackgroundColour),
+        Some("--background-colour")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::TextColour),
+        Some("--font-colour")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::UserSpeed),
+        Some("--max-user-speed")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::DashboardWindowDays),
+        Some("--dashboard-window")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::Elasticity),
+        Some("--elasticity")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::UserFriction),
+        Some("--user-friction")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::UserScale),
+        Some("--user-scale")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::FileIdleTime),
+        Some("--file-idle-time")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::MaxFileLag),
+        Some("--max-file-lag")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::FileSizeMetric),
+        Some("--file-size-metric")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::SecondsPerDay),
+        Some("--seconds-per-day")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::AutoSkipSeconds),
+        Some("--auto-skip-seconds")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::TimeScale),
+        Some("--time-scale")
+    );
+    assert_eq!(cli_flag_for_setting_id(SettingId::Loop), Some("--loop"));
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::MaxFiles),
+        Some("--max-files")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::FileFilterRegex),
+        Some("--file-filter")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::FileShowFilterRegex),
+        Some("--file-show-filter")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::UserFilterRegex),
+        Some("--user-filter")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::UserShowFilterRegex),
+        Some("--user-show-filter")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::DirColour),
+        Some("--dir-colour")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::HighlightColour),
+        Some("--highlight-colour")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::SelectionColour),
+        Some("--selection-colour")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::BloomMultiplier),
+        Some("--bloom-multiplier")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::BloomIntensity),
+        Some("--bloom-intensity")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::FontScale),
+        Some("--font-scale")
+    );
+    assert_eq!(cli_flag_for_setting_id(SettingId::Title), Some("--title"));
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::CameraMode),
+        Some("--camera-mode")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::HideFlags),
+        Some("--hide")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::FilePulse),
+        Some("--file-pulse")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::FileColourMode),
+        Some("--file-colour-mode")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::HideDashboards),
+        Some("--hide-dashboards")
+    );
+    assert_eq!(
+        cli_flag_for_setting_id(SettingId::DashboardPeriod),
+        Some("--dashboard-period")
+    );
 }
