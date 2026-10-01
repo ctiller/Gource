@@ -32,7 +32,7 @@ pub use github::{
     resolve_github_token,
 };
 pub use live::LiveGitWatcher;
-pub use log::CommitLog;
+pub use log::{CommitFeed, CommitLog};
 pub use logmill::{LogMill, LogMillStatus};
 pub use options::{CommitFilters, VcsOptions};
 pub use worktree::{

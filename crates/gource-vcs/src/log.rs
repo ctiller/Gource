@@ -9,13 +9,66 @@ use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufRead, BufReader, ErrorKind, Read, Seek, SeekFrom};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use tempfile::NamedTempFile;
 
 enum LogSource {
     Seekable(SeekableLog),
     Stream(StreamLog),
+    /// Already-parsed commits pushed by a remote decoder.
+    Feed(CommitFeed),
+}
+
+#[derive(Default)]
+struct FeedState {
+    queue: VecDeque<Commit>,
+    ended: bool,
+}
+
+/// A queue of parsed commits shared between a producer (e.g. the wire
+/// decoder of a remote stream) and a [`CommitLog`] reading from it.
+#[derive(Clone, Default)]
+pub struct CommitFeed {
+    inner: Arc<Mutex<FeedState>>,
+}
+
+impl CommitFeed {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Queue a commit (already filtered and post-processed).
+    pub fn push(&self, commit: Commit) {
+        self.state().queue.push_back(commit);
+    }
+
+    /// No more commits will be pushed.
+    pub fn end(&self) {
+        self.state().ended = true;
+    }
+
+    /// Commits queued but not yet read.
+    pub fn len(&self) -> usize {
+        self.state().queue.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn pop(&self) -> Option<Commit> {
+        self.state().queue.pop_front()
+    }
+
+    fn is_ended(&self) -> bool {
+        let s = self.state();
+        s.ended && s.queue.is_empty()
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, FeedState> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
 }
 
 impl LogSource {
@@ -28,7 +81,7 @@ impl LogSource {
     /// False if a stream parse ran out of input and was undone.
     fn end_parse(&mut self) -> bool {
         match self {
-            LogSource::Seekable(_) => true,
+            LogSource::Seekable(_) | LogSource::Feed(_) => true,
             LogSource::Stream(s) => s.end_parse(),
         }
     }
@@ -361,6 +414,21 @@ impl CommitLog {
         }
     }
 
+    /// A log reading parsed commits from `feed` (a remote stream). It is
+    /// finished once the feed has ended and been drained; until then it
+    /// behaves like a stream that has no new input yet.
+    pub fn from_feed(feed: CommitFeed, options: VcsOptions) -> Self {
+        Self {
+            format_name: "remote".to_string(),
+            log_command: None,
+            source: LogSource::Feed(feed),
+            options,
+            last_line: None,
+            buffered_commit: None,
+            live: false,
+        }
+    }
+
     pub fn with_live(mut self, live: bool) -> Self {
         self.live = live;
         self
@@ -407,6 +475,7 @@ impl CommitLog {
             match source {
                 LogSource::Seekable(s) => s.get_next_line(line),
                 LogSource::Stream(s) => s.get_next_line(line),
+                LogSource::Feed(_) => false,
             }
         };
 
@@ -486,6 +555,15 @@ impl CommitLog {
             return Some(c);
         }
 
+        if let LogSource::Feed(feed) = &self.source {
+            while let Some(commit) = feed.pop() {
+                if !validate || commit.is_valid(&self.options) {
+                    return Some(commit);
+                }
+            }
+            return None;
+        }
+
         loop {
             let mut commit = Commit::default();
             if !self.parse_commit(&mut commit) {
@@ -512,7 +590,11 @@ impl CommitLog {
     /// buffered. A stream is never finished, as more input may arrive.
     pub fn is_finished(&self) -> bool {
         self.buffered_commit.is_none()
-            && matches!(&self.source, LogSource::Seekable(s) if s.is_finished())
+            && match &self.source {
+                LogSource::Seekable(s) => s.is_finished(),
+                LogSource::Feed(f) => f.is_ended(),
+                LogSource::Stream(_) => false,
+            }
     }
 
     /// Everything has been read: the end of the file, or of a stream's input.
@@ -521,6 +603,7 @@ impl CommitLog {
             && match &self.source {
                 LogSource::Seekable(s) => s.is_finished(),
                 LogSource::Stream(s) => s.is_ended(),
+                LogSource::Feed(f) => f.is_ended(),
             }
     }
 
@@ -540,7 +623,7 @@ impl CommitLog {
     pub fn percent(&self) -> f32 {
         match &self.source {
             LogSource::Seekable(s) => s.get_percent(),
-            LogSource::Stream(_) => 0.0,
+            LogSource::Stream(_) | LogSource::Feed(_) => 0.0,
         }
     }
 
@@ -563,7 +646,7 @@ impl CommitLog {
                 self.last_line.clone(),
                 self.buffered_commit.clone(),
             ),
-            LogSource::Stream(_) => return None,
+            LogSource::Stream(_) | LogSource::Feed(_) => return None,
         };
 
         self.seek_to(percent);
@@ -596,14 +679,15 @@ impl CommitLog {
     /// Check format implementation: read one commit without validation.
     /// If successful: seek back to 0.0 if seekable, or buffer the commit if stream.
     pub fn check_format(&mut self) -> bool {
-        if self.format_name == "custom" && self.live {
+        if (self.format_name == "custom" && self.live) || matches!(self.source, LogSource::Feed(_))
+        {
             return true;
         }
 
         // Wait for a stream's first commit (C++ waits for input on stdin).
         let was_waiting = match &mut self.source {
             LogSource::Stream(s) => std::mem::replace(&mut s.blocking, true),
-            LogSource::Seekable(_) => false,
+            LogSource::Seekable(_) | LogSource::Feed(_) => false,
         };
         let first = self.next_commit_unvalidated();
         self.wait_for_input(was_waiting);
@@ -614,7 +698,7 @@ impl CommitLog {
                     self.last_line = None;
                     self.buffered_commit = None;
                 }
-                LogSource::Stream(_) => {
+                LogSource::Stream(_) | LogSource::Feed(_) => {
                     self.buffered_commit = Some(commit);
                 }
             }
