@@ -332,55 +332,9 @@ impl SettingId {
     }
 
     /// Associated CLI flag name, if one exists.
+    /// Associated CLI flag name, if one exists.
     pub fn cli_flag(&self) -> Option<&'static str> {
-        match self {
-            SettingId::BackgroundColour => Some("--background-colour"),
-            SettingId::DirColour => Some("--dir-colour"),
-            SettingId::TextColour => Some("--font-colour"),
-            SettingId::HighlightColour => Some("--highlight-colour"),
-            SettingId::SelectionColour => Some("--selection-colour"),
-            SettingId::BloomMultiplier => Some("--bloom-multiplier"),
-            SettingId::BloomIntensity => Some("--bloom-intensity"),
-            SettingId::FontScale => Some("--font-scale"),
-            SettingId::Title => Some("--title"),
-            SettingId::CameraMode => Some("--camera-mode"),
-            SettingId::HideFlags => Some("--hide"),
-            SettingId::FilePulse => Some("--file-pulse"),
-            SettingId::FileColourMode => Some("--file-colour-mode"),
-            SettingId::HideDashboards => Some("--hide-dashboards"),
-            SettingId::DashboardPeriod => Some("--dashboard-period"),
-            SettingId::DashboardWindowDays => Some("--dashboard-window"),
-
-            SettingId::Elasticity => Some("--elasticity"),
-            SettingId::UserFriction => Some("--user-friction"),
-            SettingId::UserSpeed => Some("--max-user-speed"),
-            SettingId::UserScale => Some("--user-scale"),
-            SettingId::FileIdleTime => Some("--file-idle-time"),
-            SettingId::MaxFileLag => Some("--max-file-lag"),
-            SettingId::FileSizeMetric => Some("--file-size-metric"),
-
-            SettingId::TuningDirPadding
-            | SettingId::TuningMinDirSize
-            | SettingId::TuningFileDiameter
-            | SettingId::TuningGravity
-            | SettingId::TuningParentPull
-            | SettingId::TuningSiblingPush
-            | SettingId::TuningBeamLength
-            | SettingId::TuningActionDistance
-            | SettingId::TuningPersonalSpace
-            | SettingId::TuningShadowStrength => None,
-
-            SettingId::SecondsPerDay => Some("--seconds-per-day"),
-            SettingId::AutoSkipSeconds => Some("--auto-skip-seconds"),
-            SettingId::TimeScale => Some("--time-scale"),
-            SettingId::Loop => Some("--loop"),
-
-            SettingId::MaxFiles => Some("--max-files"),
-            SettingId::FileFilterRegex => Some("--file-filter"),
-            SettingId::FileShowFilterRegex => Some("--file-show-filter"),
-            SettingId::UserFilterRegex => Some("--user-filter"),
-            SettingId::UserShowFilterRegex => Some("--user-show-filter"),
-        }
+        crate::descriptor::cli_flag_for_setting_id(*self)
     }
 
     /// Numeric range (min, max, step) for sliders / spin controls in the UI.
