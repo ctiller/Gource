@@ -2487,3 +2487,20 @@ Interactive keyboard commands:
  For supporting the development of Gource!
 .fi
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_man_page_is_up_to_date() {
+        let generated = generate_man_page();
+        let man_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/gource.1");
+        if std::env::var("GOURCE_BLESS").unwrap_or_default() == "1" {
+            std::fs::write(&man_path, &generated).expect("failed to bless data/gource.1");
+        }
+        let disk = std::fs::read_to_string(&man_path).expect("failed to read data/gource.1");
+        assert_eq!(generated, disk);
+    }
+}

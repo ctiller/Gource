@@ -25,6 +25,9 @@ Fullscreen.
 \fB\-\-screen SCREEN\fR
 Set the number of the screen to display on.
 .TP
+\fB\-\-multi\-sampling\fR
+Enable multi-sampling.
+.TP
 \fB\-\-high\-dpi\fR
 Request a high DPI display when creating the window.
 
@@ -32,20 +35,11 @@ On some platforms such as MacOS, the window resolution is specified in points in
 The \-\-high-dpi flag may be required to access some higher resolutions.
 
 E.g. requesting a high DPI 800x600 window may produce a window that is 1600x1200 pixels.
-
 .TP
-\fB\-\-window\-position XxY\fR
-Initial window position on your desktop which may be made up of multiple monitors.
-
-This will override the screen setting so don't specify both.
+\fB\-\-no\-vsync\fR
+Disable vsync.
 .TP
-\fB\-\-frameless\fR
-Frameless window.
-.TP
-\fB\-\-transparent\fR
-Make the background transparent. Only really useful for screenshots.
-.TP
-\fB\-\-start\-date "YYYY\-MM\-DD hh:mm:ss +tz"\fR
+\fB\-\-start\-date 'YYYY-MM-DD hh:mm:ss +tz'\fR
 Start with the first entry after the supplied date and optional time.
 
 If a time zone offset isn't specified the local time zone is used.
@@ -56,7 +50,7 @@ Example accepted formats:
     "2012-06-30 12:00"
     "2012-06-30 12:00:00 +12"
 .TP
-\fB\-\-stop\-date "YYYY\-MM\-DD hh:mm:ss +tz"\fR
+\fB\-\-stop\-date 'YYYY-MM-DD hh:mm:ss +tz'\fR
 Stop at the last entry prior to the supplied date and optional time.
 
 Uses the same format as \-\-start\-date.
@@ -64,7 +58,7 @@ Uses the same format as \-\-start\-date.
 \fB\-p, \-\-start\-position POSITION\fR
 Begin at some position in the log (between 0.0 and 1.0 or 'random').
 .TP
-\fB\-\-stop\-position  POSITION\fR
+\fB\-\-stop\-position POSITION\fR
 Stop (exit) at some position in the log (does not work with STDIN).
 .TP
 \fB\-t, \-\-stop\-at\-time SECONDS\fR
@@ -73,14 +67,17 @@ Stop (exit) after a specified number of seconds.
 \fB\-\-stop\-at\-end\fR
 Stop (exit) at the end of the log / stream.
 .TP
+\fB\-\-dont\-stop\fR
+Keep running after the end of the log.
+.TP
 \fB\-\-loop\fR
 Loop back to the start of the log when the end is reached.
 .TP
-\fB\-\-loop\-delay\-seconds SECONDS\fR
-Seconds to delay before looping.
-.TP
 \fB\-a, \-\-auto\-skip\-seconds SECONDS\fR
 Automatically skip to next entry if nothing happens for a specified number of seconds.
+.TP
+\fB\-\-disable\-auto\-skip\fR
+Disable auto skip.
 .TP
 \fB\-s, \-\-seconds\-per\-day SECONDS\fR
 Speed of simulation in seconds per day.
@@ -99,116 +96,11 @@ Change simulation time scale. This affects the movement speed of user avatars.
 
 E.g. 0.5 for half speed, 2 for double speed.
 .TP
-\fB\-i, \-\-file\-idle\-time SECONDS\fR
-Time in seconds files remain idle before they are removed or 0 for no limit.
-.TP
-\fB\-\-file\-idle\-time\-at\-end SECONDS\fR
-Time in seconds files remain idle at the end before they are removed.
-.TP
 \fB\-e, \-\-elasticity FLOAT\fR
 Elasticity of nodes.
 .TP
-\fB\-b, \-\-background-colour FFFFFF\fR
-Background colour in hex.
-.TP
-\fB\-\-background\-image IMAGE\fR
-Set a background image.
-.TP
-\fB\-\-title TITLE\fR
-Set a title
-.TP
-\fB\-\-font\-file FILE\fR
-Specify the font. Should work with most font file formats supported by FreeType, such as TTF and OTF, among others.
-.TP
-\fB\-\-font\-scale SCALE\fR
-Scale the size of all fonts.
-.TP
-\fB\-\-font\-size SIZE\fR
-Font size used by the date and title.
-.TP
-\fB\-\-file\-font\-size SIZE\fR
-Font size of filenames.
-.TP
-\fB\-\-dir\-font\-size SIZE\fR
-Font size of directory names.
-.TP
-\fB\-\-user\-font\-size SIZE\fR
-Font size of user names.
-.TP
-\fB\-\-font\-colour FFFFFF\fR
-Font colour used by the date and title in hex.
-.TP
 \fB\-\-key\fR
 Show file extension key.
-.TP
-\fB\-\-logo IMAGE\fR
-Logo to display in the foreground.
-.TP
-\fB\-\-logo\-offset XxY\fR
-Offset position of the logo.
-.TP
-\fB\-\-date\-format FORMAT\fR
-Specify display date string (strftime format).
-.TP
-\fB\-\-log\-command VCS\fR
-Show the log command used by gource (git,svn,hg,bzr,cvs2cl).
-.TP
-\fB\-\-log\-format VCS\fR
-Specify format of the log being read (git,svn,hg,bzr,cvs2cl,custom). Required when reading from STDIN.
-.TP
-\fB\-\-git\-branch\fR
-Get the git log of a branch other than the current one.
-.TP
-\fB\-\-follow\-user USER\fR
-Have the camera automatically follow a particular user.
-.TP
-\fB\-\-highlight\-dirs\fR
-Highlight the names of all directories.
-.TP
-\fB\-\-highlight\-user USER\fR
-Highlight the names of a particular user.
-.TP
-\fB\-\-highlight\-users\fR
-Highlight the names of all users.
-.TP
-\fB\-\-highlight\-colour FFFFFF\fR
-Font colour for highlighted users in hex.
-.TP
-\fB\-\-selection\-colour FFFFFF\fR
-Font colour for selected users and files.
-.TP
-\fB\-\-filename\-colour FFFFFF\fR
-Font colour for filenames.
-.TP
-\fB\-\-dir\-colour FFFFFF\fR
-Font colour for directories.
-.TP
-\fB\-\-dir\-name\-depth DEPTH\fR
-Draw names of directories down to a specific depth in the tree.
-.TP
-\fB\-\-dir\-name\-position FLOAT
-Position along edge of the directory name (between 0.1 and 1.0, default is 0.5).
-.TP
-\fB\-\-filename\-time SECONDS\fR
-Duration to keep filenames on screen (>= 2.0).
-.TP
-\fB\-\-file\-extensions\fR
-Show filename extensions only.
-.TP
-\fB\-\-file\-extension\-fallback\fR
-Use filename as extension if the extension is missing or empty.
-.TP
-\fB\-\-file\-filter REGEX\fR
-Filter out file paths matching the specified regular expression.
-.TP
-\fB\-\-file\-show\-filter REGEX\fR
-Show only file paths matching the specified regular expression.
-.TP
-\fB\-\-user\-filter REGEX\fR
-Filter usernames matching the specified regular expression.
-.TP
-\fB\-\-user\-show\-filter REGEX\fR
-Show only usernames matching the specified regular expression.
 .TP
 \fB\-\-user\-image\-dir DIRECTORY\fR
 Directory containing .jpg or .png images of users (eg "Full Name.png") to use as avatars.
@@ -222,23 +114,11 @@ Forces the size of the user image to remain fixed throughout.
 \fB\-\-colour\-images\fR
 Colourize user images.
 .TP
-\fB\-\-crop AXIS\fR
-Crop view on an axis (vertical,horizontal).
+\fB\-i, \-\-file\-idle\-time SECONDS\fR
+Time in seconds files remain idle before they are removed or 0 for no limit.
 .TP
-\fB\-\-padding FLOAT\fR
-Camera view padding.
-.TP
-\fB\-\-multi\-sampling\fR
-Enable multi-sampling.
-.TP
-\fB\-\-no\-vsync\fR
-Disable vsync.
-.TP
-\fB\-\-bloom\-multiplier FLOAT\fR
-Adjust the amount of bloom.
-.TP
-\fB\-\-bloom\-intensity FLOAT\fR
-Adjust the intensity of the bloom.
+\fB\-\-file\-idle\-time\-at\-end SECONDS\fR
+Time in seconds files remain idle at the end before they are removed.
 .TP
 \fB\-\-max\-files NUMBER\fR
 Set the maximum number of files or 0 for no limit. Excess files will be discarded.
@@ -246,78 +126,25 @@ Set the maximum number of files or 0 for no limit. Excess files will be discarde
 \fB\-\-max\-file\-lag SECONDS\fR
 Max time files of a commit can take to appear. Use \-1 for no limit.
 .TP
-\fB\-\-max\-user\-speed UNITS\fR
-Max speed users can travel per second.
+\fB\-\-log\-command VCS\fR
+Show the log command used by gource (git,svn,hg,bzr,cvs2cl).
 .TP
-\fB\-\-user\-friction SECONDS\fR
-Time users take to come to a halt.
+\fB\-\-log\-format VCS\fR
+Specify format of the log being read (git,svn,hg,bzr,cvs2cl,custom). Required when reading from STDIN.
 .TP
-\fB\-\-user\-scale SCALE\fR
-Change scale of user avatars.
+\fB\-\-load\-config CONF_FILE\fR
+Load a config file.
 .TP
-\fB\-\-camera\-mode MODE\fR
-Camera mode (overview,track).
-.TP
-\fB\-\-disable\-auto\-rotate\fR
-Disable automatic camera rotation.
-.TP
-\fB\-\-disable\-input\fR
-Disable keyboard and mouse input.
-.TP
-\fB\-\-hide DISPLAY_ELEMENT\fR
-Hide one or more display elements from the list below:
-
-    bloom       \- bloom effect
-    dashboards  \- evolution dashboard panels
-    date        \- current date
-    dirnames    \- names of directories
-    files       \- file icons
-    filenames   \- names of files
-    mouse       \- mouse cursor
-    progress    \- progress bar widget
-    root        \- root directory of the tree
-    tree        \- animated tree structure
-    users       \- user avatars
-    usernames   \- names of users
-
-Separate multiple elements with commas (eg "mouse,progress,dashboards")
-
-.TP
-\fB\-\-hash\-seed SEED\fR
-Change the seed of hash function.
-.TP
-\fB\-\-caption-file FILE
-Caption file (see Caption Log Format).
-.TP
-\fB\-\-caption-size SIZE
-Caption size.
-.TP
-\fB\-\-caption-colour FFFFFF
-Caption colour in hex.
-.TP
-\fB\-\-caption-duration SECONDS
-Caption duration.
-.TP
-\fB\-\-caption-offset X
-Caption horizontal offset (0 to centre captions).
+\fB\-\-save\-config CONF_FILE\fR
+Save a config file with the current options.
 .TP
 \fB\-o, \-\-output\-ppm\-stream FILE\fR
 Output a PPM image stream to a file ('\-' for STDOUT).
 
 This will automatically hide the progress bar initially and enable 'stop\-at\-end' unless other behaviour is specified.
-
 .TP
 \fB\-r, \-\-output\-framerate FPS\fR
 Framerate of output (25,30,60). Used with \-\-output\-ppm\-stream.
-.TP
-\fB\-\-output\-custom\-log FILE\fR
-Output a custom format log file ('\-' for STDOUT).
-.TP
-\fB\-\-load\-config CONFIG_FILE\fR
-Load a config file.
-.TP
-\fB\-\-save\-config CONFIG_FILE\fR
-Save a config file with the current options.
 .TP
 \fB\-\-live\fR
 Enable live stream/watch mode. Gource will periodically poll the repository or data source for new commits and stream them in real time.
@@ -340,14 +167,190 @@ Watch multiple repositories simultaneously. Paths can be comma-separated, colon-
 \fB\-\-watch\-worktrees\fR
 Watch git worktrees for uncommitted in-flight changes. Working directory modifications across all linked git worktrees appear as a semi-transparent "shadow world" attributed to their respective authors or worktrees. When changes are committed, the shadow files solidify into permanent repository commits.
 .TP
+\fB\-\-git\-backend BACKEND\fR
+Git backend implementation to use: 'auto' (automatic detection), 'cli' (spawn git subprocess), or 'in-process' (native in-process git library). Default is 'auto'.
+.TP
+\fB\-\-window\-position XxY\fR
+Initial window position on your desktop which may be made up of multiple monitors.
+
+This will override the screen setting so don't specify both.
+.TP
+\fB\-\-frameless\fR
+Frameless window.
+.TP
+\fB\-\-output\-custom\-log FILE\fR
+Output a custom format log file ('\-' for STDOUT).
+.TP
+\fB\-b, \-\-background\-colour FFFFFF\fR
+Background colour in hex.
+.TP
+\fB\-\-background\-image IMAGE\fR
+Set a background image.
+.TP
+\fB\-\-bloom\-multiplier\fR
+Adjust the amount of bloom.
+.TP
+\fB\-\-bloom\-intensity\fR
+Adjust the intensity of the bloom.
+.TP
+\fB\-\-camera\-mode MODE\fR
+Camera mode (overview,track).
+.TP
+\fB\-\-crop AXIS\fR
+Crop view on an axis (vertical,horizontal).
+.TP
+\fB\-\-padding FLOAT\fR
+Camera view padding.
+.TP
+\fB\-\-disable\-auto\-rotate\fR
+Disable automatic camera rotation.
+.TP
+\fB\-\-disable\-input\fR
+Disable keyboard and mouse input.
+.TP
+\fB\-\-date\-format FORMAT\fR
+Specify display date string (strftime format).
+.TP
+\fB\-\-font\-file FILE\fR
+Specify the font. Should work with most font file formats supported by FreeType, such as TTF and OTF, among others.
+.TP
+\fB\-\-font\-scale SCALE\fR
+Scale the size of all fonts.
+.TP
+\fB\-\-font\-size SIZE\fR
+Font size used by the date and title.
+.TP
+\fB\-\-file\-font\-size SIZE\fR
+Font size of filenames.
+.TP
+\fB\-\-dir\-font\-size SIZE\fR
+Font size of directory names.
+.TP
+\fB\-\-user\-font\-size SIZE\fR
+Font size of user names.
+.TP
+\fB\-\-font\-colour FFFFFF\fR
+Font colour used by the date and title in hex.
+.TP
+\fB\-\-file\-extensions\fR
+Show filename extensions only.
+.TP
+\fB\-\-file\-extension\-fallback\fR
+Use filename as extension if the extension is missing or empty.
+.TP
+\fB\-\-git\-branch\fR
+Get the git log of a branch other than the current one.
+.TP
+\fB\-\-hide DISPLAY_ELEMENT\fR
+Hide one or more display elements from the list below:
+
+    bloom       \- bloom effect
+    dashboards  \- evolution dashboard panels
+    date        \- current date
+    dirnames    \- names of directories
+    files       \- file icons
+    filenames   \- names of files
+    mouse       \- mouse cursor
+    progress    \- progress bar widget
+    root        \- root directory of the tree
+    tree        \- animated tree structure
+    users       \- user avatars
+    usernames   \- names of users
+
+Separate multiple elements with commas (eg "mouse,progress,dashboards")
+.TP
+\fB\-\-logo IMAGE\fR
+Logo to display in the foreground.
+.TP
+\fB\-\-logo\-offset XxY\fR
+Offset position of the logo.
+.TP
+\fB\-\-loop\-delay\-seconds SECONDS\fR
+Seconds to delay before looping.
+.TP
+\fB\-\-title TITLE\fR
+Set a title
+.TP
+\fB\-\-transparent\fR
+Make the background transparent. Only really useful for screenshots.
+.TP
+\fB\-\-user\-filter REGEX\fR
+Filter usernames matching the specified regular expression.
+.TP
+\fB\-\-user\-show\-filter REGEX\fR
+Show only usernames matching the specified regular expression.
+.TP
+\fB\-\-file\-filter REGEX\fR
+Filter out file paths matching the specified regular expression.
+.TP
+\fB\-\-file\-show\-filter REGEX\fR
+Show only file paths matching the specified regular expression.
+.TP
+\fB\-\-user\-friction SECONDS\fR
+Time users take to come to a halt.
+.TP
+\fB\-\-user\-scale SCALE\fR
+Change scale of user avatars.
+.TP
+\fB\-\-max\-user\-speed UNITS\fR
+Max speed users can travel per second.
+.TP
+\fB\-\-follow\-user USER\fR
+Have the camera automatically follow a particular user.
+.TP
+\fB\-\-highlight\-dirs\fR
+Highlight the names of all directories.
+.TP
+\fB\-\-highlight\-user USER\fR
+Highlight the names of a particular user.
+.TP
+\fB\-\-highlight\-users\fR
+Highlight the names of all users.
+.TP
+\fB\-\-highlight\-colour\fR
+Font colour for highlighted users in hex.
+.TP
+\fB\-\-selection\-colour\fR
+Font colour for selected users and files.
+.TP
+\fB\-\-filename\-colour\fR
+Font colour for filenames.
+.TP
+\fB\-\-dir\-colour\fR
+Font colour for directories.
+.TP
+\fB\-\-dir\-name\-depth DEPTH\fR
+Draw names of directories down to a specific depth in the tree.
+.TP
+\fB\-\-dir\-name\-position FLOAT\fR
+Position along edge of the directory name (between 0.1 and 1.0, default is 0.5).
+.TP
+\fB\-\-filename\-time SECONDS\fR
+Duration to keep filenames on screen (>= 2.0).
+.TP
+\fB\-\-caption\-file FILE\fR
+Caption file (see Caption Log Format).
+.TP
+\fB\-\-caption\-size SIZE\fR
+Caption size.
+.TP
+\fB\-\-caption\-colour FFFFFF\fR
+Caption colour in hex.
+.TP
+\fB\-\-caption\-duration SECONDS\fR
+Caption duration.
+.TP
+\fB\-\-caption\-offset X\fR
+Caption horizontal offset (0 to centre captions).
+.TP
+\fB\-\-hash\-seed SEED\fR
+Change the seed of hash function.
+.TP
 \fB\-\-worktree\-poll\-interval SECONDS\fR
 Debounce and polling interval in seconds for scanning worktree status (default: 0.25).
 .TP
 \fB\-\-shadow\-alpha FLOAT\fR
 Alpha opacity (0.0 to 1.0) of shadow in-flight files and commit beams in worktree watching mode (default: 0.45).
-.TP
-\fB\-\-git\-backend BACKEND\fR
-Git backend implementation to use: 'auto' (automatic detection), 'cli' (spawn git subprocess), or 'in-process' (native in-process git library). Default is 'auto'.
 .TP
 \fB\-\-file\-size\-metric METRIC\fR
 Metric used to scale file node sizes: 'none' (fixed default size), 'size' (file byte size), 'lines' (line count), 'diff' (lines modified in commit), or 'churn' (cumulative edits).
@@ -402,48 +405,48 @@ For large projects, generating a log of the project history may take a long time
 
 In these cases, you may like to save a copy of the log for later use.
 
-You can generate a log in the VCS specific log format using the \-\-log\-command VCS option:
+You can generate a log in the VCS specific log format using the \-\-\log\-command VCS option:
 
 .ti 10
 cd my\-svn\-project
 .ti 10
-\`\fIgource\fR \-\-log\-command svn\` > my\-svn\-project.log
+\`\fIgource\fR \-\-\log\-command svn\` > my\-svn\-project.log
 .ti 10
 \fIgource\fR my\-svn\-project.log
 
 You can also have Gource write a copy of the log file in its own format:
 
 .ti 10
-\fIgource\fR \-\-output\-custom\-log my\-project\-custom.log
+\fIgource\fR \-\-\output\-custom\-log my\-project\-custom.log
 
 .SS Live and Multi-Repository Watching Examples
 
 Watch a repository in real time with live polling:
 
 .ti 10
-\fIgource\fR \-\-live my\-project\-dir
+\fIgource\fR \-\-\live my\-project\-dir
 
 Watch multiple repositories simultaneously with combined commits:
 
 .ti 10
-\fIgource\fR \-\-live \-\-watch\-paths /path/to/repo1,/path/to/repo2
+\fIgource\fR \-\-\live \-\-\watch\-paths /path/to/repo1,/path/to/repo2
 
 Watch all linked git worktrees for uncommitted in-flight changes:
 
 .ti 10
-\fIgource\fR \-\-live \-\-watch\-worktrees
+\fIgource\fR \-\-\live \-\-\watch\-worktrees
 
 Watch a remote GitHub repository directly:
 
 .ti 10
-\fIgource\fR \-\-github torvalds/linux
+\fIgource\fR \-\-\github torvalds/linux
 
 .SS CVS Support
 
 Use 'cvs2cl' to generate the log and then pass it to Gource:
 
 .ti 10
-cvs2cl \-\-chrono \-\-stdout \-\-xml \-g\-q > my\-cvs\-project.log
+cvs2cl \-\-\chrono \-\-\stdout \-\-\xml \-g\-q > my\-cvs\-project.log
 .ti 10
 gource my\-cvs\-project.log
 
@@ -464,7 +467,7 @@ colour    - A colour for the file in hex (FFFFFF) format. Optional.
 
 .SS Caption Log Format
 
-Gource can display captions along the timeline by specifying a caption file (using \-\-caption\-file) in the pipe ('|') delimited format below:
+Gource can display captions along the timeline by specifying a caption file (using \-\-\caption\-file) in the pipe ('|') delimited format below:
 
 .ti 10
 timestamp - An ISO 8601 or unix timestamp of when to display the caption.
@@ -486,7 +489,7 @@ Visit the Gource homepage for guides and examples of using Gource with various v
 http://gource.io
 
 .SH INTERFACE
-The time shown in the top left of the screen is set initially from the first log entry read and is incremented according to the simulation speed (\-\-seconds\-per\-day).
+The time shown in the top left of the screen is set initially from the first log entry read and is incremented according to the simulation speed (\-\-\seconds\-per\-day).
 
 Pressing SPACE at any time will pause/resume the simulation. While paused you may use the mouse to inspect the detail of individual files and users.
 
