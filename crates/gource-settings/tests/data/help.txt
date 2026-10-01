@@ -60,6 +60,9 @@ Options:
   --live-fetch                    Fetch remote repository changes in live mode
   --github TARGET                 Watch a GitHub repository (owner/repo or URL)
   --github-token TOKEN            GitHub personal access token for API requests
+  --watch-paths PATH              Watch multiple repositories (comma/colon separated or repeated)
+  --watch-worktrees               Watch git worktrees for uncommitted in-flight changes
+  --git-backend BACKEND           Git backend (auto, cli, in-process; default: auto)
 
 PATH may be a supported version control directory, a log file, a gource config
 file, or '-' to read STDIN. If omitted, gource will attempt to generate a log

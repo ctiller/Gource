@@ -267,19 +267,20 @@ Disable keyboard and mouse input.
 \fB\-\-hide DISPLAY_ELEMENT\fR
 Hide one or more display elements from the list below:
 
-    bloom     \- bloom effect
-    date      \- current date
-    dirnames  \- names of directories
-    files     \- file icons
-    filenames \- names of files
-    mouse     \- mouse cursor
-    progress  \- progress bar widget
-    root      \- root directory of the tree
-    tree      \- animated tree structure
-    users     \- user avatars
-    usernames \- names of users
+    bloom       \- bloom effect
+    dashboards  \- evolution dashboard panels
+    date        \- current date
+    dirnames    \- names of directories
+    files       \- file icons
+    filenames   \- names of files
+    mouse       \- mouse cursor
+    progress    \- progress bar widget
+    root        \- root directory of the tree
+    tree        \- animated tree structure
+    users       \- user avatars
+    usernames   \- names of users
 
-Separate multiple elements with commas (eg "mouse,progress")
+Separate multiple elements with commas (eg "mouse,progress,dashboards")
 
 .TP
 \fB\-\-hash\-seed SEED\fR
@@ -318,6 +319,66 @@ Load a config file.
 \fB\-\-save\-config CONFIG_FILE\fR
 Save a config file with the current options.
 .TP
+\fB\-\-live\fR
+Enable live stream/watch mode. Gource will periodically poll the repository or data source for new commits and stream them in real time.
+.TP
+\fB\-\-live\-interval SECONDS\fR
+Polling interval in seconds for live updates (default: 5.0).
+.TP
+\fB\-\-live\-fetch\fR
+Fetch remote repository changes automatically when polling in live mode.
+.TP
+\fB\-\-github TARGET\fR
+Watch a GitHub repository directly by name ("owner/repo") or full URL using GitHub REST/Events API.
+.TP
+\fB\-\-github\-token TOKEN\fR
+GitHub personal access token for authenticated API requests and higher rate limits.
+.TP
+\fB\-\-watch\-paths PATH\fR
+Watch multiple repositories simultaneously. Paths can be comma-separated, colon-separated, or specified by passing multiple \-\-watch\-paths options. In live mode, logs from all repositories are merged chronologically into a single unified tree visualization.
+.TP
+\fB\-\-watch\-worktrees\fR
+Watch git worktrees for uncommitted in-flight changes. Working directory modifications across all linked git worktrees appear as a semi-transparent "shadow world" attributed to their respective authors or worktrees. When changes are committed, the shadow files solidify into permanent repository commits.
+.TP
+\fB\-\-worktree\-poll\-interval SECONDS\fR
+Debounce and polling interval in seconds for scanning worktree status (default: 0.25).
+.TP
+\fB\-\-shadow\-alpha FLOAT\fR
+Alpha opacity (0.0 to 1.0) of shadow in-flight files and commit beams in worktree watching mode (default: 0.45).
+.TP
+\fB\-\-git\-backend BACKEND\fR
+Git backend implementation to use: 'auto' (automatic detection), 'cli' (spawn git subprocess), or 'in-process' (native in-process git library). Default is 'auto'.
+.TP
+\fB\-\-file\-size\-metric METRIC\fR
+Metric used to scale file node sizes: 'none' (fixed default size), 'size' (file byte size), 'lines' (line count), 'diff' (lines modified in commit), or 'churn' (cumulative edits).
+.TP
+\fB\-\-file\-pulse SECONDS\fR
+Duration in seconds for modified files to pulse with an animated accent ring upon commit (0 to disable).
+.TP
+\fB\-\-file\-colour\-mode MODE\fR
+File colouring scheme: 'extension' (coloured by file extension), 'age' (heat map based on file age), 'churn' (heat map based on modification frequency), or 'cohort' (coloured by initial commit epoch).
+.TP
+\fB\-\-dashboard PANELS\fR
+Comma-separated list of evolution analytics dashboards to render on screen: 'lines', 'diff', 'editors', 'commits', 'theseus', 'churn', or 'all'.
+.TP
+\fB\-\-dashboard\-period PERIOD\fR
+Aggregation time period for dashboard charts: 'day', 'week', 'month', or 'year' (default: 'day').
+.TP
+\fB\-\-dashboard\-window DAYS\fR
+Rolling aggregation window for dashboard statistics in days, e.g. "30d" (default: 30).
+.TP
+\fB\-\-output\-stats FILE\fR
+Write evolution summary metrics and statistics as a JSON document to FILE upon simulation exit.
+.TP
+\fB\-\-cache\-dir DIR\fR
+Cache directory for persisting precomputed repository metadata and parsed history.
+.TP
+\fB\-\-no\-cache\fR
+Disable reading from and writing to the repository metadata cache.
+.TP
+\fB\-\-seed NUMBER\fR
+Random seed number for reproducible node layouts and simulations.
+.TP
 \fB\-\-path PATH\fR
 .TP
 \fBpath\fR
@@ -354,6 +415,28 @@ You can also have Gource write a copy of the log file in its own format:
 
 .ti 10
 \fIgource\fR \-\-output\-custom\-log my\-project\-custom.log
+
+.SS Live and Multi-Repository Watching Examples
+
+Watch a repository in real time with live polling:
+
+.ti 10
+\fIgource\fR \-\-live my\-project\-dir
+
+Watch multiple repositories simultaneously with combined commits:
+
+.ti 10
+\fIgource\fR \-\-live \-\-watch\-paths /path/to/repo1,/path/to/repo2
+
+Watch all linked git worktrees for uncommitted in-flight changes:
+
+.ti 10
+\fIgource\fR \-\-live \-\-watch\-worktrees
+
+Watch a remote GitHub repository directly:
+
+.ti 10
+\fIgource\fR \-\-github torvalds/linux
 
 .SS CVS Support
 

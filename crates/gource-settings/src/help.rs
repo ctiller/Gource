@@ -63,6 +63,9 @@ Options:
   --live-fetch                    Fetch remote repository changes in live mode
   --github TARGET                 Watch a GitHub repository (owner/repo or URL)
   --github-token TOKEN            GitHub personal access token for API requests
+  --watch-paths PATH              Watch multiple repositories (comma/colon separated or repeated)
+  --watch-worktrees               Watch git worktrees for uncommitted in-flight changes
+  --git-backend BACKEND           Git backend (auto, cli, in-process; default: auto)
 "#;
 
 const HELP_EXTENDED: &str = r#"
@@ -103,8 +106,8 @@ Extended Options:
 
   --git-branch             Get the git log of a particular branch
 
-  --hide DISPLAY_ELEMENT   bloom,date,dirnames,files,filenames,mouse,progress,
-                           root,tree,users,usernames
+  --hide DISPLAY_ELEMENT   bloom,dashboards,date,dirnames,files,filenames,
+                           mouse,progress,root,tree,users,usernames
 
   --logo IMAGE             Logo to display in the foreground
   --logo-offset XxY        Offset position of the logo
@@ -148,6 +151,21 @@ Extended Options:
   --caption-offset X          Caption horizontal offset
 
   --hash-seed SEED         Change the seed of hash function.
+
+  --worktree-poll-interval SECONDS  Worktree polling debounce interval (default: 0.25)
+  --shadow-alpha FLOAT              Alpha opacity of shadow in-flight files (default: 0.45)
+
+  --file-size-metric METRIC         File size metric (none, size, lines, diff, churn)
+  --file-pulse SECONDS              Pulse duration for modified files (0 to disable)
+  --file-colour-mode MODE           File colouring mode (extension, age, churn, cohort)
+  --dashboard PANELS                Evolution dashboard panels (lines, diff, editors,
+                                    commits, theseus, churn, all)
+  --dashboard-period PERIOD         Dashboard aggregation period (day, week, month, year)
+  --dashboard-window DAYS           Dashboard rolling window in days (e.g. 30d)
+  --output-stats FILE               Write evolution summary statistics JSON on exit
+  --cache-dir DIR                   Cache directory for repository metadata
+  --no-cache                        Disable cache reads and writes
+  --seed NUMBER                     Random seed for reproducible layouts
 
   --path PATH
 "#;

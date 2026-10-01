@@ -295,19 +295,20 @@ options:
     --hide DISPLAY_ELEMENT
             Hide one or more display elements from the list below:
 
-            bloom     - bloom effect
-            date      - current date
-            dirnames  - names of directories
-            files     - file icons
-            filenames - names of files
-            mouse     - mouse cursor
-            progress  - progress bar widget
-            root      - root directory of tree
-            tree      - animated tree structure
-            users     - user avatars
-            usernames - names of users
+            bloom       - bloom effect
+            dashboards  - evolution dashboard panels
+            date        - current date
+            dirnames    - names of directories
+            files       - file icons
+            filenames   - names of files
+            mouse       - mouse cursor
+            progress    - progress bar widget
+            root        - root directory of tree
+            tree        - animated tree structure
+            users       - user avatars
+            usernames   - names of users
 
-            Separate multiple elements with commas (eg "mouse,progress")
+            Separate multiple elements with commas (eg "mouse,progress,dashboards")
 
     --hash-seed SEED
             Change the seed of hash function.
@@ -344,6 +345,69 @@ options:
 
     --save-config CONFIG_FILE
             Save a gource conf file with the current options.
+
+    --live
+            Enable live stream/watch mode. Gource will periodically poll the
+            repository or data source for new commits and stream them in real time.
+
+    --live-interval SECONDS
+            Polling interval in seconds for live updates (default: 5.0).
+
+    --live-fetch
+            Fetch remote repository changes automatically in live mode.
+
+    --github TARGET
+            Watch a GitHub repository directly by name ("owner/repo") or full URL.
+
+    --github-token TOKEN
+            GitHub personal access token for API requests.
+
+    --watch-paths PATH
+            Watch multiple repositories simultaneously (comma/colon separated or repeated).
+
+    --watch-worktrees
+            Watch git worktrees for uncommitted in-flight changes. Working directory
+            modifications across all linked worktrees appear as a semi-transparent
+            "shadow world" attributed to their respective authors or worktrees.
+
+    --worktree-poll-interval SECONDS
+            Debounce and polling interval for scanning worktree status (default: 0.25).
+
+    --shadow-alpha FLOAT
+            Alpha opacity (0.0 to 1.0) of shadow in-flight files (default: 0.45).
+
+    --git-backend BACKEND
+            Git backend implementation to use: 'auto', 'cli', or 'in-process' (default: auto).
+
+    --file-size-metric METRIC
+            File size metric: 'none', 'size', 'lines', 'diff', or 'churn'.
+
+    --file-pulse SECONDS
+            Pulse duration for modified files upon commit (0 to disable).
+
+    --file-colour-mode MODE
+            File colouring scheme: 'extension', 'age', 'churn', or 'cohort'.
+
+    --dashboard PANELS
+            Evolution dashboard panels: 'lines', 'diff', 'editors', 'commits', 'theseus', 'churn', or 'all'.
+
+    --dashboard-period PERIOD
+            Dashboard aggregation period: 'day', 'week', 'month', or 'year'.
+
+    --dashboard-window DAYS
+            Dashboard rolling window in days (e.g. 30d).
+
+    --output-stats FILE
+            Write evolution summary statistics JSON on exit.
+
+    --cache-dir DIR
+            Cache directory for repository metadata.
+
+    --no-cache
+            Disable repository metadata cache.
+
+    --seed NUMBER
+            Random seed for reproducible layouts.
 
     --path PATH
 
@@ -388,6 +452,32 @@ You can also have Gource write a copy of the log file in its own format:
 
 ```
     gource --output-custom-log my-project-custom.log
+```
+
+Live and Multi-Repository Watching Examples:
+
+Watch a repository in real time with live polling:
+
+```
+    gource --live my-project-dir
+```
+
+Watch multiple repositories simultaneously:
+
+```
+    gource --live --watch-paths /path/to/repo1,/path/to/repo2
+```
+
+Watch linked git worktrees for uncommitted in-flight changes:
+
+```
+    gource --live --watch-worktrees
+```
+
+Watch a remote GitHub repository directly:
+
+```
+    gource --github torvalds/linux
 ```
 
 CVS Support:
