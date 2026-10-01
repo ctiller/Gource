@@ -1,0 +1,35 @@
+[package]
+name = "gource-webgl"
+description = "WebGL2 renderer for Gource DrawList"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+demo = []
+
+[dependencies]
+gource-draw = { workspace = true }
+glam = { workspace = true }
+log = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2.129"
+js-sys = "0.3.106"
+web-sys = { version = "0.3.106", features = [
+    "WebGl2RenderingContext",
+    "WebGlProgram",
+    "WebGlShader",
+    "WebGlBuffer",
+    "WebGlTexture",
+    "WebGlUniformLocation",
+    "WebGlVertexArrayObject",
+    "Document",
+    "Element",
+    "HtmlCanvasElement",
+    "Window",
+] }
+
+[dev-dependencies]
