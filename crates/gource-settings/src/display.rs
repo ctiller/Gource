@@ -1,7 +1,7 @@
 //! Display settings (port of `SDLAppSettings` fields in core/settings.cpp).
 
 use crate::SettingsError;
-use crate::conffile::{ConfFile, ConfSection};
+use crate::conffile::{ConfEntry, ConfFile, ConfSection};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DisplaySettings {
@@ -75,47 +75,13 @@ impl DisplaySettings {
 
         settings.viewport_specified = false;
 
-        if let Some(entry) = display_settings.entry("viewport") {
-            let viewport = &entry.value;
-            if let Some((width, height, no_resize)) = parse_viewport(viewport) {
-                settings.display_width = width;
-                settings.display_height = height;
-                if no_resize {
-                    settings.resizable = false;
-                }
-                settings.viewport_specified = true;
-            } else {
-                return Err(conf.invalid_value_error(entry));
+        for entry in &display_settings.entries {
+            let canonical = crate::descriptor::resolve_alias(&entry.name);
+            if let Some(desc) = crate::descriptor::find_setting(canonical)
+                && let crate::descriptor::Apply::Display(field) = desc.apply
+            {
+                crate::descriptor::apply_field(field, &mut settings, entry, conf)?;
             }
-        }
-
-        if let Some(entry) = display_settings.entry("window-position") {
-            let window_pos = &entry.value;
-            if let Some((x, y)) = parse_rectangle(window_pos) {
-                settings.window_x = x;
-                settings.window_y = y;
-            } else {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = display_settings.entry("screen") {
-            settings.screen = entry.get_int();
-            if settings.screen < 1 {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if display_settings.get_bool("multi-sampling") {
-            settings.multisample = true;
-        }
-
-        if display_settings.get_bool("fullscreen") {
-            settings.fullscreen = true;
-        }
-
-        if display_settings.get_bool("windowed") {
-            settings.fullscreen = false;
         }
 
         if display_settings.get_bool("frameless") && !settings.fullscreen {
@@ -126,72 +92,6 @@ impl DisplaySettings {
         if settings.fullscreen && !settings.viewport_specified {
             settings.display_width = 0;
             settings.display_height = 0;
-        }
-
-        if display_settings.get_bool("transparent") {
-            settings.transparent = true;
-        }
-
-        if display_settings.get_bool("no-vsync") {
-            settings.vsync = false;
-        }
-
-        if display_settings.get_bool("high-dpi") {
-            settings.high_dpi = true;
-        }
-
-        if let Some(entry) = display_settings.entry("output-ppm-stream") {
-            if !entry.has_value() {
-                return Err(
-                    conf.entry_error(Some(entry), "specify ppm output file or '-' for stdout")
-                );
-            }
-            settings.output_ppm_filename = entry.value.clone();
-        }
-
-        if let Some(entry) = display_settings.entry("output-framerate") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify framerate (25,30,60)"));
-            }
-            settings.output_framerate = entry.get_int();
-            if settings.output_framerate != 25
-                && settings.output_framerate != 30
-                && settings.output_framerate != 60
-            {
-                return Err(conf.entry_error(Some(entry), "supported framerates are 25,30,60"));
-            }
-        }
-
-        if let Some(entry) = display_settings.entry("output-video") {
-            if !entry.has_value() {
-                return Err(conf.missing_value_error(entry));
-            }
-            settings.output_video = entry.value.clone();
-        }
-
-        if let Some(entry) = display_settings.entry("video-codec") {
-            if !entry.has_value() {
-                return Err(conf.missing_value_error(entry));
-            }
-            settings.video_codec = entry.value.clone();
-        }
-
-        if let Some(entry) = display_settings.entry("video-bitrate") {
-            if !entry.has_value() {
-                return Err(conf.missing_value_error(entry));
-            }
-            settings.video_bitrate = entry.value.clone();
-        }
-
-        if let Some(entry) = display_settings.entry("video-fps") {
-            if !entry.has_value() {
-                return Err(conf.missing_value_error(entry));
-            }
-            let fps = entry.get_int();
-            if fps <= 0 {
-                return Err(conf.invalid_value_error(entry));
-            }
-            settings.video_fps = fps as u32;
         }
 
         Ok(settings)
@@ -310,6 +210,85 @@ fn is_numeric_component(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_digit() || c == '.')
 }
 
+pub(crate) fn custom_display_viewport(
+    settings: &mut DisplaySettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    let viewport = &entry.value;
+    if let Some((width, height, no_resize)) = parse_viewport(viewport) {
+        settings.display_width = width;
+        settings.display_height = height;
+        if no_resize {
+            settings.resizable = false;
+        }
+        settings.viewport_specified = true;
+        Ok(())
+    } else {
+        Err(conf.invalid_value_error(entry))
+    }
+}
+
+pub(crate) fn custom_display_window_position(
+    settings: &mut DisplaySettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    let window_pos = &entry.value;
+    if let Some((x, y)) = parse_rectangle(window_pos) {
+        settings.window_x = x;
+        settings.window_y = y;
+        Ok(())
+    } else {
+        Err(conf.invalid_value_error(entry))
+    }
+}
+
+pub(crate) fn custom_display_output_ppm_stream(
+    settings: &mut DisplaySettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify ppm output file or '-' for stdout"));
+    }
+    settings.output_ppm_filename = entry.value.clone();
+    Ok(())
+}
+
+pub(crate) fn custom_display_output_framerate(
+    settings: &mut DisplaySettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify framerate (25,30,60)"));
+    }
+    settings.output_framerate = entry.get_int();
+    if settings.output_framerate != 25
+        && settings.output_framerate != 30
+        && settings.output_framerate != 60
+    {
+        return Err(conf.entry_error(Some(entry), "supported framerates are 25,30,60"));
+    }
+    Ok(())
+}
+
+pub(crate) fn custom_display_video_fps(
+    settings: &mut DisplaySettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.missing_value_error(entry));
+    }
+    let fps = entry.get_int();
+    if fps <= 0 {
+        return Err(conf.invalid_value_error(entry));
+    }
+    settings.video_fps = fps as u32;
+    Ok(())
+}
 #[cfg(test)]
 mod tests {
     use super::*;

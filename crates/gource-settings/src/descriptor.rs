@@ -47,9 +47,66 @@ impl Kind {
     }
 }
 
+use crate::SettingsError;
+use crate::conffile::{ConfEntry, ConfFile};
+use crate::display::DisplaySettings;
+use crate::gource::GourceSettings;
+
+/// How a setting's value is applied to settings structs during config import.
+impl<T> Copy for Field<T> {}
+impl<T> Clone for Field<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum Apply {
+    /// Handled elsewhere (e.g. command-line flags, post-processed path/hide options).
+    None,
+    /// Target GourceSettings field.
+    Gource(Field<GourceSettings>),
+    /// Target DisplaySettings field.
+    Display(Field<DisplaySettings>),
+}
+
+/// Generic field applicator for a settings type `T`.
+pub enum Field<T> {
+    /// Boolean flag: present/true => set bool to true.
+    Flag(fn(&mut T) -> &mut bool),
+    /// Set a boolean or arbitrary state directly (e.g. windowed sets fullscreen = false).
+    FlagVal(fn(&mut T)),
+    /// Set custom state when flag is present (e.g. disable-auto-skip => auto_skip_seconds = -1.0).
+    FlagSet(fn(&mut T)),
+    /// Standard f32 property with validation.
+    F32 {
+        get: fn(&mut T) -> &mut f32,
+        min: Option<f32>,
+        max: Option<f32>,
+        strictly_positive: bool,
+    },
+    /// Standard i32 property with validation.
+    I32 {
+        get: fn(&mut T) -> &mut i32,
+        min: Option<i32>,
+        max: Option<i32>,
+        check_sign: bool,
+    },
+    /// Standard String property.
+    Str(fn(&mut T) -> &mut String),
+    /// Standard Glam Vec3 colour property.
+    Colour(fn(&mut T) -> &mut glam::Vec3),
+    /// Multi-value entry handler.
+    MultiValue(fn(&mut T, &ConfEntry, &ConfFile) -> Result<(), SettingsError>),
+    /// Custom validation / assignment function for bespoke options.
+    Custom(fn(&mut T, &ConfEntry, &ConfFile) -> Result<(), SettingsError>),
+}
+
 /// Complete descriptor for a setting.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct SettingDesc {
+    /// How to apply this setting's value to settings structs during import.
+    pub apply: Apply,
     /// Long option name, e.g. "seconds-per-day".
     pub name: &'static str,
     /// Short option flag, e.g. Some("s").
@@ -79,6 +136,7 @@ pub struct SettingDesc {
 /// The master table of all 112 options displayed in help / man page, ordered as in help output.
 pub static SETTINGS: &[SettingDesc] = &[
     SettingDesc {
+        apply: Apply::None,
         name: "help",
         short: Some("h"),
         section: Section::CommandLine,
@@ -93,6 +151,7 @@ pub static SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::Display(Field::Custom(crate::display::custom_display_viewport)),
         name: "viewport",
         short: Some("WIDTHxHEIGHT"),
         section: Section::Display,
@@ -107,6 +166,7 @@ pub static SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::Display(Field::Flag(|d| &mut d.fullscreen)),
         name: "fullscreen",
         short: Some("f"),
         section: Section::Display,
@@ -121,6 +181,12 @@ pub static SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::Display(Field::I32 {
+            get: |d| &mut d.screen,
+            min: Some(1),
+            max: None,
+            check_sign: false,
+        }),
         name: "screen",
         short: None,
         section: Section::Display,
@@ -135,6 +201,7 @@ pub static SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::Display(Field::Flag(|d| &mut d.multisample)),
         name: "multi-sampling",
         short: None,
         section: Section::Display,
@@ -149,6 +216,7 @@ pub static SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::Display(Field::Flag(|d| &mut d.high_dpi)),
         name: "high-dpi",
         short: None,
         section: Section::Display,
@@ -168,6 +236,7 @@ E.g. requesting a high DPI 800x600 window may produce a window that is 1600x1200
         live: None,
     },
     SettingDesc {
+        apply: Apply::Display(Field::FlagVal(|d| d.vsync = false)),
         name: "no-vsync",
         short: None,
         section: Section::Display,
@@ -182,6 +251,7 @@ E.g. requesting a high DPI 800x600 window may produce a window that is 1600x1200
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_start_date)),
         name: "start-date",
         short: None,
         section: Section::Gource,
@@ -204,6 +274,7 @@ Example accepted formats:
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_stop_date)),
         name: "stop-date",
         short: None,
         section: Section::Gource,
@@ -220,6 +291,7 @@ Uses the same format as \-\-start\-date."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_start_position)),
         name: "start-position",
         short: Some("p"),
         section: Section::Gource,
@@ -234,6 +306,7 @@ Uses the same format as \-\-start\-date."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_stop_position)),
         name: "stop-position",
         short: None,
         section: Section::Gource,
@@ -248,6 +321,12 @@ Uses the same format as \-\-start\-date."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::F32 {
+            get: |s| &mut s.stop_at_time,
+            min: None,
+            max: None,
+            strictly_positive: true,
+        }),
         name: "stop-at-time",
         short: Some("t"),
         section: Section::Gource,
@@ -262,6 +341,7 @@ Uses the same format as \-\-start\-date."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Flag(|s| &mut s.stop_at_end)),
         name: "stop-at-end",
         short: None,
         section: Section::Gource,
@@ -276,6 +356,7 @@ Uses the same format as \-\-start\-date."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Flag(|s| &mut s.dont_stop)),
         name: "dont-stop",
         short: None,
         section: Section::Gource,
@@ -290,6 +371,7 @@ Uses the same format as \-\-start\-date."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Flag(|s| &mut s.looping)),
         name: "loop",
         short: None,
         section: Section::Gource,
@@ -304,6 +386,12 @@ Uses the same format as \-\-start\-date."#,
         live: Some(SettingId::Loop),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::F32 {
+            get: |s| &mut s.auto_skip_seconds,
+            min: None,
+            max: None,
+            strictly_positive: true,
+        }),
         name: "auto-skip-seconds",
         short: Some("a"),
         section: Section::Gource,
@@ -319,6 +407,7 @@ Uses the same format as \-\-start\-date."#,
         live: Some(SettingId::AutoSkipSeconds),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::FlagSet(|s| s.auto_skip_seconds = -1.0)),
         name: "disable-auto-skip",
         short: None,
         section: Section::Gource,
@@ -333,6 +422,7 @@ Uses the same format as \-\-start\-date."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_seconds_per_day)),
         name: "seconds-per-day",
         short: Some("s"),
         section: Section::Gource,
@@ -347,6 +437,7 @@ Uses the same format as \-\-start\-date."#,
         live: Some(SettingId::SecondsPerDay),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::FlagSet(|s| s.days_per_second = 1.0 / 86400.0)),
         name: "realtime",
         short: None,
         section: Section::Gource,
@@ -361,6 +452,7 @@ Uses the same format as \-\-start\-date."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Flag(|s| &mut s.no_time_travel)),
         name: "no-time-travel",
         short: None,
         section: Section::Gource,
@@ -376,6 +468,7 @@ Uses the same format as \-\-start\-date."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Flag(|s| &mut s.author_time)),
         name: "author-time",
         short: None,
         section: Section::Gource,
@@ -391,6 +484,7 @@ Uses the same format as \-\-start\-date."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_time_scale)),
         name: "time-scale",
         short: Some("c"),
         section: Section::Gource,
@@ -407,6 +501,12 @@ E.g. 0.5 for half speed, 2 for double speed."#,
         live: Some(SettingId::TimeScale),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::F32 {
+            get: |s| &mut s.elasticity,
+            min: None,
+            max: None,
+            strictly_positive: true,
+        }),
         name: "elasticity",
         short: Some("e"),
         section: Section::Gource,
@@ -421,6 +521,7 @@ E.g. 0.5 for half speed, 2 for double speed."#,
         live: Some(SettingId::Elasticity),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Flag(|s| &mut s.show_key)),
         name: "key",
         short: None,
         section: Section::Gource,
@@ -435,6 +536,7 @@ E.g. 0.5 for half speed, 2 for double speed."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_user_image_dir)),
         name: "user-image-dir",
         short: None,
         section: Section::Gource,
@@ -449,6 +551,7 @@ E.g. 0.5 for half speed, 2 for double speed."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Str(|s| &mut s.default_user_image)),
         name: "default-user-image",
         short: None,
         section: Section::Gource,
@@ -463,6 +566,7 @@ E.g. 0.5 for half speed, 2 for double speed."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Flag(|s| &mut s.fixed_user_size)),
         name: "fixed-user-size",
         short: None,
         section: Section::Gource,
@@ -477,6 +581,7 @@ E.g. 0.5 for half speed, 2 for double speed."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Flag(|s| &mut s.colour_user_images)),
         name: "colour-images",
         short: None,
         section: Section::Gource,
@@ -491,6 +596,7 @@ E.g. 0.5 for half speed, 2 for double speed."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_file_idle_time)),
         name: "file-idle-time",
         short: Some("i"),
         section: Section::Gource,
@@ -505,6 +611,9 @@ E.g. 0.5 for half speed, 2 for double speed."#,
         live: Some(SettingId::FileIdleTime),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(
+            crate::gource::custom_gource_file_idle_time_at_end,
+        )),
         name: "file-idle-time-at-end",
         short: None,
         section: Section::Gource,
@@ -519,6 +628,12 @@ E.g. 0.5 for half speed, 2 for double speed."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::I32 {
+            get: |s| &mut s.max_files,
+            min: Some(0),
+            max: None,
+            check_sign: true,
+        }),
         name: "max-files",
         short: None,
         section: Section::Gource,
@@ -533,6 +648,7 @@ E.g. 0.5 for half speed, 2 for double speed."#,
         live: Some(SettingId::MaxFiles),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_max_file_lag)),
         name: "max-file-lag",
         short: None,
         section: Section::Gource,
@@ -547,6 +663,7 @@ E.g. 0.5 for half speed, 2 for double speed."#,
         live: Some(SettingId::MaxFileLag),
     },
     SettingDesc {
+        apply: Apply::None,
         name: "log-command",
         short: None,
         section: Section::CommandLine,
@@ -561,6 +678,7 @@ E.g. 0.5 for half speed, 2 for double speed."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_log_format)),
         name: "log-format",
         short: None,
         section: Section::Gource,
@@ -575,6 +693,7 @@ E.g. 0.5 for half speed, 2 for double speed."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "load-config",
         short: None,
         section: Section::CommandLine,
@@ -589,6 +708,7 @@ E.g. 0.5 for half speed, 2 for double speed."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "save-config",
         short: None,
         section: Section::CommandLine,
@@ -603,6 +723,9 @@ E.g. 0.5 for half speed, 2 for double speed."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Display(Field::Custom(
+            crate::display::custom_display_output_ppm_stream,
+        )),
         name: "output-ppm-stream",
         short: Some("o"),
         section: Section::Display,
@@ -619,6 +742,9 @@ This will automatically hide the progress bar initially and enable 'stop\-at\-en
         live: None,
     },
     SettingDesc {
+        apply: Apply::Display(Field::Custom(
+            crate::display::custom_display_output_framerate,
+        )),
         name: "output-framerate",
         short: Some("r"),
         section: Section::Display,
@@ -633,6 +759,7 @@ This will automatically hide the progress bar initially and enable 'stop\-at\-en
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Flag(|s| &mut s.live)),
         name: "live",
         short: None,
         section: Section::Gource,
@@ -647,6 +774,12 @@ This will automatically hide the progress bar initially and enable 'stop\-at\-en
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::F32 {
+            get: |s| &mut s.live_interval,
+            min: None,
+            max: None,
+            strictly_positive: true,
+        }),
         name: "live-interval",
         short: None,
         section: Section::Gource,
@@ -661,6 +794,7 @@ This will automatically hide the progress bar initially and enable 'stop\-at\-en
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Flag(|s| &mut s.live_fetch)),
         name: "live-fetch",
         short: None,
         section: Section::Gource,
@@ -675,6 +809,7 @@ This will automatically hide the progress bar initially and enable 'stop\-at\-en
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_github)),
         name: "github",
         short: None,
         section: Section::Gource,
@@ -689,6 +824,7 @@ This will automatically hide the progress bar initially and enable 'stop\-at\-en
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_github_token)),
         name: "github-token",
         short: None,
         section: Section::Gource,
@@ -703,6 +839,7 @@ This will automatically hide the progress bar initially and enable 'stop\-at\-en
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "watch-paths",
         short: None,
         section: Section::Gource,
@@ -717,6 +854,7 @@ This will automatically hide the progress bar initially and enable 'stop\-at\-en
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Flag(|s| &mut s.watch_worktrees)),
         name: "watch-worktrees",
         short: None,
         section: Section::Gource,
@@ -731,6 +869,7 @@ This will automatically hide the progress bar initially and enable 'stop\-at\-en
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_git_backend)),
         name: "git-backend",
         short: None,
         section: Section::Gource,
@@ -745,6 +884,9 @@ This will automatically hide the progress bar initially and enable 'stop\-at\-en
         live: None,
     },
     SettingDesc {
+        apply: Apply::Display(Field::Custom(
+            crate::display::custom_display_window_position,
+        )),
         name: "window-position",
         short: None,
         section: Section::Display,
@@ -761,6 +903,7 @@ This will override the screen setting so don't specify both."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Display(Field::Flag(|d| &mut d.frameless)),
         name: "frameless",
         short: None,
         section: Section::Display,
@@ -775,6 +918,7 @@ This will override the screen setting so don't specify both."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "output-custom-log",
         short: None,
         section: Section::CommandLine,
@@ -789,6 +933,7 @@ This will override the screen setting so don't specify both."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Colour(|s| &mut s.background_colour)),
         name: "background-colour",
         short: Some("b"),
         section: Section::Gource,
@@ -803,6 +948,7 @@ This will override the screen setting so don't specify both."#,
         live: Some(SettingId::BackgroundColour),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Str(|s| &mut s.background_image)),
         name: "background-image",
         short: None,
         section: Section::Gource,
@@ -817,6 +963,12 @@ This will override the screen setting so don't specify both."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::F32 {
+            get: |s| &mut s.bloom_multiplier,
+            min: None,
+            max: None,
+            strictly_positive: true,
+        }),
         name: "bloom-multiplier",
         short: None,
         section: Section::Gource,
@@ -831,6 +983,12 @@ This will override the screen setting so don't specify both."#,
         live: Some(SettingId::BloomMultiplier),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::F32 {
+            get: |s| &mut s.bloom_intensity,
+            min: None,
+            max: None,
+            strictly_positive: true,
+        }),
         name: "bloom-intensity",
         short: None,
         section: Section::Gource,
@@ -845,6 +1003,7 @@ This will override the screen setting so don't specify both."#,
         live: Some(SettingId::BloomIntensity),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_camera_mode)),
         name: "camera-mode",
         short: None,
         section: Section::Gource,
@@ -859,6 +1018,7 @@ This will override the screen setting so don't specify both."#,
         live: Some(SettingId::CameraMode),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_crop)),
         name: "crop",
         short: None,
         section: Section::Gource,
@@ -873,6 +1033,7 @@ This will override the screen setting so don't specify both."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_padding)),
         name: "padding",
         short: None,
         section: Section::Gource,
@@ -887,6 +1048,7 @@ This will override the screen setting so don't specify both."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Flag(|s| &mut s.disable_auto_rotate)),
         name: "disable-auto-rotate",
         short: None,
         section: Section::Gource,
@@ -901,6 +1063,7 @@ This will override the screen setting so don't specify both."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Flag(|s| &mut s.disable_input)),
         name: "disable-input",
         short: None,
         section: Section::Gource,
@@ -915,6 +1078,7 @@ This will override the screen setting so don't specify both."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Str(|s| &mut s.date_format)),
         name: "date-format",
         short: None,
         section: Section::Gource,
@@ -929,6 +1093,7 @@ This will override the screen setting so don't specify both."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_font_file)),
         name: "font-file",
         short: None,
         section: Section::Gource,
@@ -943,6 +1108,7 @@ This will override the screen setting so don't specify both."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_font_scale)),
         name: "font-scale",
         short: None,
         section: Section::Gource,
@@ -957,6 +1123,12 @@ This will override the screen setting so don't specify both."#,
         live: Some(SettingId::FontScale),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::I32 {
+            get: |s| &mut s.font_size,
+            min: Some(1),
+            max: Some(100),
+            check_sign: false,
+        }),
         name: "font-size",
         short: None,
         section: Section::Gource,
@@ -971,6 +1143,12 @@ This will override the screen setting so don't specify both."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::I32 {
+            get: |s| &mut s.filename_font_size,
+            min: Some(1),
+            max: Some(100),
+            check_sign: false,
+        }),
         name: "file-font-size",
         short: None,
         section: Section::Gource,
@@ -985,6 +1163,12 @@ This will override the screen setting so don't specify both."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::I32 {
+            get: |s| &mut s.dirname_font_size,
+            min: Some(1),
+            max: Some(100),
+            check_sign: false,
+        }),
         name: "dir-font-size",
         short: None,
         section: Section::Gource,
@@ -999,6 +1183,12 @@ This will override the screen setting so don't specify both."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::I32 {
+            get: |s| &mut s.user_font_size,
+            min: Some(1),
+            max: Some(100),
+            check_sign: false,
+        }),
         name: "user-font-size",
         short: None,
         section: Section::Gource,
@@ -1013,6 +1203,7 @@ This will override the screen setting so don't specify both."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Colour(|s| &mut s.font_colour)),
         name: "font-colour",
         short: None,
         section: Section::Gource,
@@ -1027,6 +1218,7 @@ This will override the screen setting so don't specify both."#,
         live: Some(SettingId::TextColour),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Flag(|s| &mut s.file_extensions)),
         name: "file-extensions",
         short: None,
         section: Section::Gource,
@@ -1041,6 +1233,7 @@ This will override the screen setting so don't specify both."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Flag(|s| &mut s.file_extension_fallback)),
         name: "file-extension-fallback",
         short: None,
         section: Section::Gource,
@@ -1056,6 +1249,7 @@ This will override the screen setting so don't specify both."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_git_branch)),
         name: "git-branch",
         short: None,
         section: Section::Gource,
@@ -1070,6 +1264,7 @@ This will override the screen setting so don't specify both."#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "hide",
         short: None,
         section: Section::Gource,
@@ -1100,6 +1295,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: Some(SettingId::HideFlags),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Str(|s| &mut s.logo)),
         name: "logo",
         short: None,
         section: Section::Gource,
@@ -1114,6 +1310,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_logo_offset)),
         name: "logo-offset",
         short: None,
         section: Section::Gource,
@@ -1128,6 +1325,12 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::F32 {
+            get: |s| &mut s.loop_delay_seconds,
+            min: None,
+            max: None,
+            strictly_positive: true,
+        }),
         name: "loop-delay-seconds",
         short: None,
         section: Section::Gource,
@@ -1142,6 +1345,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Str(|s| &mut s.title)),
         name: "title",
         short: None,
         section: Section::Gource,
@@ -1156,6 +1360,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: Some(SettingId::Title),
     },
     SettingDesc {
+        apply: Apply::Display(Field::Flag(|d| &mut d.transparent)),
         name: "transparent",
         short: None,
         section: Section::Display,
@@ -1170,6 +1375,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::MultiValue(crate::gource::multi_user_filter)),
         name: "user-filter",
         short: None,
         section: Section::Gource,
@@ -1184,6 +1390,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: Some(SettingId::UserFilterRegex),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::MultiValue(crate::gource::multi_user_show_filter)),
         name: "user-show-filter",
         short: None,
         section: Section::Gource,
@@ -1198,6 +1405,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: Some(SettingId::UserShowFilterRegex),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::MultiValue(crate::gource::multi_file_filter)),
         name: "file-filter",
         short: None,
         section: Section::Gource,
@@ -1212,6 +1420,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: Some(SettingId::FileFilterRegex),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::MultiValue(crate::gource::multi_file_show_filter)),
         name: "file-show-filter",
         short: None,
         section: Section::Gource,
@@ -1226,6 +1435,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: Some(SettingId::FileShowFilterRegex),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_user_friction)),
         name: "user-friction",
         short: None,
         section: Section::Gource,
@@ -1240,6 +1450,12 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: Some(SettingId::UserFriction),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::F32 {
+            get: |s| &mut s.user_scale,
+            min: None,
+            max: Some(100.0),
+            strictly_positive: true,
+        }),
         name: "user-scale",
         short: None,
         section: Section::Gource,
@@ -1254,6 +1470,12 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: Some(SettingId::UserScale),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::F32 {
+            get: |s| &mut s.max_user_speed,
+            min: None,
+            max: None,
+            strictly_positive: true,
+        }),
         name: "max-user-speed",
         short: None,
         section: Section::Gource,
@@ -1268,6 +1490,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: Some(SettingId::UserSpeed),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::MultiValue(crate::gource::multi_follow_user)),
         name: "follow-user",
         short: None,
         section: Section::Gource,
@@ -1282,6 +1505,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Flag(|s| &mut s.highlight_dirs)),
         name: "highlight-dirs",
         short: None,
         section: Section::Gource,
@@ -1296,6 +1520,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::MultiValue(crate::gource::multi_highlight_user)),
         name: "highlight-user",
         short: None,
         section: Section::Gource,
@@ -1310,6 +1535,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Flag(|s| &mut s.highlight_all_users)),
         name: "highlight-users",
         short: None,
         section: Section::Gource,
@@ -1324,6 +1550,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Colour(|s| &mut s.highlight_colour)),
         name: "highlight-colour",
         short: None,
         section: Section::Gource,
@@ -1338,6 +1565,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: Some(SettingId::HighlightColour),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Colour(|s| &mut s.selection_colour)),
         name: "selection-colour",
         short: None,
         section: Section::Gource,
@@ -1352,6 +1580,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: Some(SettingId::SelectionColour),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Colour(|s| &mut s.filename_colour)),
         name: "filename-colour",
         short: None,
         section: Section::Gource,
@@ -1366,6 +1595,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Colour(|s| &mut s.dir_colour)),
         name: "dir-colour",
         short: None,
         section: Section::Gource,
@@ -1380,6 +1610,12 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: Some(SettingId::DirColour),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::I32 {
+            get: |s| &mut s.dir_name_depth,
+            min: Some(1),
+            max: None,
+            check_sign: false,
+        }),
         name: "dir-name-depth",
         short: None,
         section: Section::Gource,
@@ -1394,6 +1630,9 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(
+            crate::gource::custom_gource_dir_name_position,
+        )),
         name: "dir-name-position",
         short: None,
         section: Section::Gource,
@@ -1409,6 +1648,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_filename_time)),
         name: "filename-time",
         short: None,
         section: Section::Gource,
@@ -1423,6 +1663,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_caption_file)),
         name: "caption-file",
         short: None,
         section: Section::Gource,
@@ -1437,6 +1678,12 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::I32 {
+            get: |s| &mut s.caption_size,
+            min: Some(1),
+            max: Some(100),
+            check_sign: false,
+        }),
         name: "caption-size",
         short: None,
         section: Section::Gource,
@@ -1451,6 +1698,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Colour(|s| &mut s.caption_colour)),
         name: "caption-colour",
         short: None,
         section: Section::Gource,
@@ -1465,6 +1713,12 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::F32 {
+            get: |s| &mut s.caption_duration,
+            min: None,
+            max: None,
+            strictly_positive: true,
+        }),
         name: "caption-duration",
         short: None,
         section: Section::Gource,
@@ -1479,6 +1733,12 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::I32 {
+            get: |s| &mut s.caption_offset,
+            min: None,
+            max: None,
+            check_sign: false,
+        }),
         name: "caption-offset",
         short: None,
         section: Section::Gource,
@@ -1493,6 +1753,12 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::I32 {
+            get: |s| &mut s.hash_seed,
+            min: None,
+            max: None,
+            check_sign: false,
+        }),
         name: "hash-seed",
         short: None,
         section: Section::Gource,
@@ -1507,6 +1773,12 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::F32 {
+            get: |s| &mut s.worktree_poll_interval,
+            min: None,
+            max: None,
+            strictly_positive: true,
+        }),
         name: "worktree-poll-interval",
         short: None,
         section: Section::Gource,
@@ -1521,6 +1793,12 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::F32 {
+            get: |s| &mut s.shadow_alpha,
+            min: Some(0.0),
+            max: Some(1.0),
+            strictly_positive: false,
+        }),
         name: "shadow-alpha",
         short: None,
         section: Section::Gource,
@@ -1535,6 +1813,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_file_size_metric)),
         name: "file-size-metric",
         short: None,
         section: Section::Gource,
@@ -1549,6 +1828,12 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: Some(SettingId::FileSizeMetric),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::F32 {
+            get: |s| &mut s.file_pulse,
+            min: Some(0.0),
+            max: Some(10.0),
+            strictly_positive: false,
+        }),
         name: "file-pulse",
         short: None,
         section: Section::Gource,
@@ -1563,6 +1848,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: Some(SettingId::FilePulse),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_file_colour_mode)),
         name: "file-colour-mode",
         short: None,
         section: Section::Gource,
@@ -1577,6 +1863,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: Some(SettingId::FileColourMode),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_dashboard)),
         name: "dashboard",
         short: None,
         section: Section::Gource,
@@ -1592,6 +1879,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_dashboard_period)),
         name: "dashboard-period",
         short: None,
         section: Section::Gource,
@@ -1606,6 +1894,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: Some(SettingId::DashboardPeriod),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_dashboard_window)),
         name: "dashboard-window",
         short: None,
         section: Section::Gource,
@@ -1620,6 +1909,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: Some(SettingId::DashboardWindowDays),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Str(|s| &mut s.output_stats_filename)),
         name: "output-stats",
         short: None,
         section: Section::Gource,
@@ -1634,6 +1924,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Str(|s| &mut s.cache_dir)),
         name: "cache-dir",
         short: None,
         section: Section::Gource,
@@ -1648,6 +1939,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Flag(|s| &mut s.no_cache)),
         name: "no-cache",
         short: None,
         section: Section::Gource,
@@ -1662,6 +1954,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_seed)),
         name: "seed",
         short: None,
         section: Section::Gource,
@@ -1676,6 +1969,7 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "path",
         short: None,
         section: Section::Gource,
@@ -1696,6 +1990,12 @@ If path is omitted, gource will attempt to read a log from the current directory
 /// Additional settings not listed in help/man (internal, legacy aliases, headless video export).
 pub static EXTRA_SETTINGS: &[SettingDesc] = &[
     SettingDesc {
+        apply: Apply::Gource(Field::F32 {
+            get: |s| &mut s.user_idle_time,
+            min: Some(0.0),
+            max: None,
+            strictly_positive: false,
+        }),
         name: "user-idle-time",
         short: None,
         section: Section::Gource,
@@ -1710,6 +2010,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Flag(|s| &mut s.highlight_all_users)),
         name: "highlight-all-users",
         short: None,
         section: Section::Gource,
@@ -1724,6 +2025,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: Some(SettingId::HighlightColour),
     },
     SettingDesc {
+        apply: Apply::Display(Field::FlagVal(|d| d.fullscreen = false)),
         name: "windowed",
         short: None,
         section: Section::Display,
@@ -1738,6 +2040,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::Display(Field::Str(|d| &mut d.output_video)),
         name: "output-video",
         short: None,
         section: Section::Display,
@@ -1752,6 +2055,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::Display(Field::Str(|d| &mut d.video_codec)),
         name: "video-codec",
         short: None,
         section: Section::Display,
@@ -1766,6 +2070,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::Display(Field::Str(|d| &mut d.video_bitrate)),
         name: "video-bitrate",
         short: None,
         section: Section::Display,
@@ -1780,6 +2085,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::Display(Field::Custom(crate::display::custom_display_video_fps)),
         name: "video-fps",
         short: None,
         section: Section::Display,
@@ -1794,6 +2100,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "extended-help",
         short: None,
         section: Section::CommandLine,
@@ -1808,6 +2115,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Flag(|s| &mut s.stop_on_idle)),
         name: "stop-on-idle",
         short: None,
         section: Section::Gource,
@@ -1822,6 +2130,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "hide-date",
         short: None,
         section: Section::Gource,
@@ -1836,6 +2145,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "hide-files",
         short: None,
         section: Section::Gource,
@@ -1850,6 +2160,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "hide-users",
         short: None,
         section: Section::Gource,
@@ -1864,6 +2175,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "hide-tree",
         short: None,
         section: Section::Gource,
@@ -1878,6 +2190,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "hide-usernames",
         short: None,
         section: Section::Gource,
@@ -1892,6 +2205,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "hide-filenames",
         short: None,
         section: Section::Gource,
@@ -1906,6 +2220,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "hide-dirnames",
         short: None,
         section: Section::Gource,
@@ -1920,6 +2235,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "hide-progress",
         short: None,
         section: Section::Gource,
@@ -1934,6 +2250,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "hide-bloom",
         short: None,
         section: Section::Gource,
@@ -1948,6 +2265,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "hide-mouse",
         short: None,
         section: Section::Gource,
@@ -1962,6 +2280,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "hide-root",
         short: None,
         section: Section::Gource,
@@ -1976,6 +2295,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "hide-dashboards",
         short: None,
         section: Section::Gource,
@@ -1990,6 +2310,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: Some(SettingId::HideDashboards),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Flag(|s| &mut s.ffp)),
         name: "ffp",
         short: None,
         section: Section::Gource,
@@ -2004,6 +2325,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "git-log-command",
         short: None,
         section: Section::CommandLine,
@@ -2018,6 +2340,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "cvs-exp-command",
         short: None,
         section: Section::CommandLine,
@@ -2032,6 +2355,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "cvs2cl-command",
         short: None,
         section: Section::CommandLine,
@@ -2046,6 +2370,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "svn-log-command",
         short: None,
         section: Section::CommandLine,
@@ -2060,6 +2385,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "hg-log-command",
         short: None,
         section: Section::CommandLine,
@@ -2074,6 +2400,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "bzr-log-command",
         short: None,
         section: Section::CommandLine,
@@ -2088,6 +2415,7 @@ pub static EXTRA_SETTINGS: &[SettingDesc] = &[
         live: None,
     },
     SettingDesc {
+        apply: Apply::None,
         name: "log-level",
         short: None,
         section: Section::CommandLine,
@@ -2253,6 +2581,161 @@ pub fn generate_help_text(extended: bool) -> String {
     }
     out.push('\n');
     out
+}
+
+/// Generic applicator that runs field logic, validations, and emits standard C++ error messages.
+pub fn apply_field<T>(
+    field: Field<T>,
+    target: &mut T,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    match field {
+        Field::Flag(getter) => {
+            if entry.get_bool() {
+                *getter(target) = true;
+            }
+            Ok(())
+        }
+        Field::FlagVal(setter) => {
+            if entry.get_bool() {
+                setter(target);
+            }
+            Ok(())
+        }
+        Field::FlagSet(setter) => {
+            if entry.get_bool() {
+                setter(target);
+            }
+            Ok(())
+        }
+        Field::F32 {
+            get,
+            min,
+            max,
+            strictly_positive,
+        } => {
+            if !entry.has_value() {
+                return Err(match entry.name.as_str() {
+                    "auto-skip-seconds" => {
+                        conf.entry_error(Some(entry), "specify auto-skip-seconds (seconds)")
+                    }
+                    "bloom-intensity" => {
+                        conf.entry_error(Some(entry), "specify bloom-intensity (float)")
+                    }
+                    "bloom-multiplier" => {
+                        conf.entry_error(Some(entry), "specify bloom-multiplier (float)")
+                    }
+                    "elasticity" => conf.entry_error(Some(entry), "specify elasticity (float)"),
+                    "caption-duration" => {
+                        conf.entry_error(Some(entry), "specify caption duration (seconds)")
+                    }
+                    "loop-delay-seconds" => {
+                        conf.entry_error(Some(entry), "specify loop-delay-seconds (float)")
+                    }
+                    "stop-at-time" => {
+                        conf.entry_error(Some(entry), "specify stop-at-time (seconds)")
+                    }
+                    "user-scale" => conf.entry_error(Some(entry), "specify user-scale (scale)"),
+                    "max-user-speed" => {
+                        conf.entry_error(Some(entry), "specify max-user-speed (units)")
+                    }
+                    "user-idle-time" => {
+                        conf.entry_error(Some(entry), "specify user-idle-time (seconds)")
+                    }
+                    _ => conf.missing_value_error(entry),
+                });
+            }
+            let val = entry.get_float();
+            if strictly_positive && val <= 0.0 {
+                return Err(conf.invalid_value_error(entry));
+            }
+            if let Some(m) = min
+                && val < m
+            {
+                return Err(conf.invalid_value_error(entry));
+            }
+            if let Some(m) = max
+                && val > m
+            {
+                return Err(conf.invalid_value_error(entry));
+            }
+            *get(target) = val;
+            Ok(())
+        }
+        Field::I32 {
+            get,
+            min,
+            max,
+            check_sign,
+        } => {
+            if !entry.has_value() {
+                return Err(match entry.name.as_str() {
+                    "font-size" | "file-font-size" | "dir-font-size" | "user-font-size" => {
+                        conf.entry_error(Some(entry), "specify font size")
+                    }
+                    "caption-size" => conf.entry_error(Some(entry), "specify caption size"),
+                    "caption-offset" => conf.entry_error(Some(entry), "specify caption offset"),
+                    "max-files" => conf.entry_error(Some(entry), "specify max-files (number)"),
+                    "dir-name-depth" => {
+                        conf.entry_error(Some(entry), "specify dir-name-depth (depth)")
+                    }
+                    "hash-seed" => conf.entry_error(Some(entry), "specify hash seed (integer)"),
+                    "screen" => conf.invalid_value_error(entry),
+                    _ => conf.missing_value_error(entry),
+                });
+            }
+            let val = entry.get_int();
+            if check_sign && (val < 0 || (val == 0 && entry.value != "0")) {
+                return Err(conf.invalid_value_error(entry));
+            }
+            if let Some(m) = min
+                && val < m
+            {
+                return Err(conf.invalid_value_error(entry));
+            }
+            if let Some(m) = max
+                && val > m
+            {
+                return Err(conf.invalid_value_error(entry));
+            }
+            *get(target) = val;
+            Ok(())
+        }
+        Field::Str(getter) => {
+            if !entry.has_value() {
+                return Err(match entry.name.as_str() {
+                    "default-user-image" => {
+                        conf.entry_error(Some(entry), "specify default-user-image (image path)")
+                    }
+                    "background-image" => {
+                        conf.entry_error(Some(entry), "specify background image (image path)")
+                    }
+                    "title" => conf.entry_error(Some(entry), "specify title"),
+                    "logo" => conf.entry_error(Some(entry), "specify logo (image path)"),
+                    _ => conf.missing_value_error(entry),
+                });
+            }
+            *getter(target) = entry.value.clone();
+            Ok(())
+        }
+        Field::Colour(getter) => {
+            if !entry.has_value() {
+                let name = entry.name.trim_end_matches("-colour");
+                return Err(
+                    conf.entry_error(Some(entry), format!("specify {name} colour (FFFFFF)"))
+                );
+            }
+            if let Some(col) = crate::gource::parse_colour_entry(entry) {
+                *getter(target) = col;
+                Ok(())
+            } else {
+                Err(conf.invalid_value_error(entry))
+            }
+        }
+        Field::MultiValue(handler) => handler(target, entry, conf),
+        Field::Custom(handler) => handler(target, entry, conf),
+    }
 }
 
 /// Generate troff man page for data/gource.1 from descriptor table.

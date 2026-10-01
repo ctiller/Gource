@@ -930,878 +930,12 @@ impl GourceSettings {
             }
         }
 
-        if let Some(entry) = gource_settings.entry("date-format") {
-            if !entry.has_value() {
-                return Err(conf.missing_value_error(entry));
-            }
-            settings.date_format = entry.value.clone();
-        }
-
-        if gource_settings.get_bool("disable-auto-rotate") {
-            settings.disable_auto_rotate = true;
-        }
-
-        if gource_settings.get_bool("disable-auto-skip") {
-            settings.auto_skip_seconds = -1.0;
-        }
-
-        if gource_settings.get_bool("disable-input") {
-            settings.disable_input = true;
-        }
-
-        if gource_settings.get_bool("loop") {
-            settings.looping = true;
-        }
-
-        if let Some(entry) = gource_settings.entry("loop-delay-seconds") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify loop-delay-seconds (float)"));
-            }
-            settings.loop_delay_seconds = entry.get_float();
-            if settings.loop_delay_seconds <= 0.0 {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("git-branch") {
-            if !entry.has_value() {
-                return Err(conf.missing_value_error(entry));
-            }
-            let branch = &entry.value;
-            if is_valid_branch_name(branch) {
-                settings.git_branch = branch.clone();
-            } else {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if gource_settings.get_bool("colour-images") {
-            settings.colour_user_images = true;
-        }
-
-        if let Some(entry) = gource_settings.entry("crop") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify crop (vertical,horizontal)"));
-            }
-            match entry.value.as_str() {
-                "vertical" => settings.crop_vertical = true,
-                "horizontal" => settings.crop_horizontal = true,
-                _ => return Err(conf.invalid_value_error(entry)),
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("log-format") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify log-format (format)"));
-            }
-            let fmt = &entry.value;
-            if fmt == "cvs" {
-                return Err(
-                    conf.entry_error(Some(entry), "please use either 'cvs2cl' or 'cvs-exp'")
-                );
-            }
-            match fmt.as_str() {
-                "git" | "cvs-exp" | "cvs2cl" | "svn" | "custom" | "hg" | "bzr" | "apache" => {
-                    settings.log_format = fmt.clone();
-                }
-                _ => return Err(conf.invalid_value_error(entry)),
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("default-user-image") {
-            if !entry.has_value() {
-                return Err(
-                    conf.entry_error(Some(entry), "specify default-user-image (image path)")
-                );
-            }
-            settings.default_user_image = entry.value.clone();
-        }
-
-        if let Some(entry) = gource_settings.entry("user-image-dir") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify user-image-dir (directory)"));
-            }
-            let mut dir_str = entry.value.clone();
-            if !dir_str.ends_with('/') {
-                dir_str.push('/');
-            }
-            settings.user_image_dir = dir_str.clone();
-            settings.user_image_map.clear();
-
-            let dir_path = Path::new(&dir_str);
-            if !dir_path.is_dir() {
-                return Err(
-                    conf.entry_error(Some(entry), "specified user-image-dir is not a directory")
-                );
-            }
-
-            let entries = std::fs::read_dir(dir_path).map_err(|_| {
-                conf.entry_error(Some(entry), "error reading specified user-image-dir")
-            })?;
-
-            for dir_entry in entries {
-                let dir_entry = match dir_entry {
-                    Ok(e) => e,
-                    Err(_) => {
-                        return Err(
-                            conf.entry_error(Some(entry), "error reading specified user-image-dir")
-                        );
-                    }
-                };
-                let file_path = dir_entry.path();
-                let file_name = match file_path.file_name().and_then(|n| n.to_str()) {
-                    Some(n) => n,
-                    None => continue,
-                };
-                let lower_name = file_name.to_ascii_lowercase();
-                let ext = if lower_name.ends_with(".png") {
-                    ".png"
-                } else if lower_name.ends_with(".jpg") {
-                    ".jpg"
-                } else if lower_name.ends_with(".jpeg") {
-                    ".jpeg"
-                } else {
-                    continue;
-                };
-
-                let name = &file_name[..file_name.len() - ext.len()];
-                let image_path = format!("{dir_str}{file_name}");
-                settings.user_image_map.insert(name.to_owned(), image_path);
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("caption-file") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify caption file (filename)"));
-            }
-            settings.caption_file = entry.value.clone();
-            if !Path::new(&settings.caption_file).exists() {
-                return Err(conf.entry_error(Some(entry), "caption file not found"));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("caption-duration") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify caption duration (seconds)"));
-            }
-            settings.caption_duration = entry.get_float();
-            if settings.caption_duration <= 0.0 {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("caption-size") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify caption size"));
-            }
-            settings.caption_size = entry.get_int();
-            if !(1..=100).contains(&settings.caption_size) {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("caption-offset") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify caption offset"));
-            }
-            settings.caption_offset = entry.get_int();
-        }
-
-        if let Some(entry) = gource_settings.entry("caption-colour") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify caption colour (FFFFFF)"));
-            }
-            if let Some(col) = parse_colour_entry(entry) {
-                settings.caption_colour = col;
-            } else {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("filename-colour") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify filename colour (FFFFFF)"));
-            }
-            if let Some(col) = parse_colour_entry(entry) {
-                settings.filename_colour = col;
-            } else {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("filename-time") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(
-                    Some(entry),
-                    "specify duration to keep files on screen (float)",
-                ));
-            }
-            settings.filename_time = entry.get_float();
-            if settings.filename_time < 2.0 {
-                return Err(conf.entry_error(Some(entry), "filename-time must be >= 2.0"));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("bloom-intensity") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify bloom-intensity (float)"));
-            }
-            settings.bloom_intensity = entry.get_float();
-            if settings.bloom_intensity <= 0.0 {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("bloom-multiplier") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify bloom-multiplier (float)"));
-            }
-            settings.bloom_multiplier = entry.get_float();
-            if settings.bloom_multiplier <= 0.0 {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("elasticity") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify elasticity (float)"));
-            }
-            settings.elasticity = entry.get_float();
-            if settings.elasticity <= 0.0 {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("font-file") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify font file"));
-            }
-            let path = Path::new(&entry.value);
-            if !path.exists() {
-                return Err(conf.invalid_value_error(entry));
-            }
-            if let Ok(canon) = path.canonicalize() {
-                let canon_str = canon.to_string_lossy().to_string();
-                if canon_str.is_empty() {
-                    return Err(conf.invalid_value_error(entry));
-                }
-                settings.font_file = canon_str;
-            } else {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("font-size") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify font size"));
-            }
-            settings.font_size = entry.get_int();
-            if !(1..=100).contains(&settings.font_size) {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("file-font-size") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify font size"));
-            }
-            settings.filename_font_size = entry.get_int();
-            if !(1..=100).contains(&settings.filename_font_size) {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("dir-font-size") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify font size"));
-            }
-            settings.dirname_font_size = entry.get_int();
-            if !(1..=100).contains(&settings.dirname_font_size) {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("user-font-size") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify font size"));
-            }
-            settings.user_font_size = entry.get_int();
-            if !(1..=100).contains(&settings.user_font_size) {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("font-scale") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify font scale"));
-            }
-            settings.font_scale = entry.get_float();
-            settings.default_font_scale = false;
-            if settings.font_scale < 0.0 || settings.font_scale > 10.0 {
-                return Err(conf.invalid_value_error(entry));
-            }
-            settings.set_scaled_font_sizes();
-        }
-
-        if let Some(entry) = gource_settings.entry("hash-seed") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify hash seed (integer)"));
-            }
-            settings.hash_seed = entry.get_int();
-        }
-
-        if let Some(entry) = gource_settings.entry("font-colour") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify font colour (FFFFFF)"));
-            }
-            if let Some(col) = parse_colour_entry(entry) {
-                settings.font_colour = col;
-            } else {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("background-colour") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify background colour (FFFFFF)"));
-            }
-            if let Some(col) = parse_colour_entry(entry) {
-                settings.background_colour = col;
-            } else {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("highlight-colour") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify highlight colour (FFFFFF)"));
-            }
-            if let Some(col) = parse_colour_entry(entry) {
-                settings.highlight_colour = col;
-            } else {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("selection-colour") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify selection colour (FFFFFF)"));
-            }
-            if let Some(col) = parse_colour_entry(entry) {
-                settings.selection_colour = col;
-            } else {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("dir-colour") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify dir colour (FFFFFF)"));
-            }
-            if let Some(col) = parse_colour_entry(entry) {
-                settings.dir_colour = col;
-            } else {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("background-image") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify background image (image path)"));
-            }
-            settings.background_image = entry.value.clone();
-        }
-
-        if let Some(entry) = gource_settings.entry("title") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify title"));
-            }
-            settings.title = entry.value.clone();
-        }
-
-        if let Some(entry) = gource_settings.entry("logo") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify logo (image path)"));
-            }
-            settings.logo = entry.value.clone();
-        }
-
-        if let Some(entry) = gource_settings.entry("logo-offset") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify logo-offset (XxY)"));
-            }
-            if let Some((x, y)) = crate::display::parse_rectangle(&entry.value) {
-                settings.logo_offset = Vec2::new(x as f32, y as f32);
-            } else {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("seconds-per-day") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify seconds-per-day (seconds)"));
-            }
-            let seconds_per_day = entry.get_float();
-            if seconds_per_day <= 0.0 {
-                return Err(conf.invalid_value_error(entry));
-            }
-            settings.days_per_second = 1.0 / seconds_per_day;
-        }
-
-        if let Some(entry) = gource_settings.entry("auto-skip-seconds") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify auto-skip-seconds (seconds)"));
-            }
-            settings.auto_skip_seconds = entry.get_float();
-            if settings.auto_skip_seconds <= 0.0 {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("file-idle-time") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify file-idle-time (seconds)"));
-            }
-            let s = &entry.value;
-            let val = entry.get_int() as f32;
-            if val < 0.0 || (val == 0.0 && !s.starts_with('0')) {
-                return Err(conf.invalid_value_error(entry));
-            }
-            settings.file_idle_time = val;
-        }
-
-        if let Some(entry) = gource_settings.entry("file-idle-time-at-end") {
-            if !entry.has_value() {
-                return Err(
-                    conf.entry_error(Some(entry), "specify file-idle-time-at-end (seconds)")
-                );
-            }
-            let s = &entry.value;
-            let val = entry.get_int() as f32;
-            if val < 0.0 || (val == 0.0 && !s.starts_with('0')) {
-                return Err(conf.invalid_value_error(entry));
-            }
-            settings.file_idle_time_at_end = val;
-        }
-
-        if let Some(entry) = gource_settings.entry("user-idle-time") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify user-idle-time (seconds)"));
-            }
-            settings.user_idle_time = entry.get_float();
-            if settings.user_idle_time < 0.0 {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("time-scale") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify time-scale (scale)"));
-            }
-            settings.time_scale = entry.get_float();
-            if settings.time_scale <= 0.0 || settings.time_scale > 4.0 {
-                return Err(conf.entry_error(Some(entry), "time-scale outside of range 0.0 - 4.0"));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("start-date") {
-            if !entry.has_value() {
-                return Err(
-                    conf.entry_error(Some(entry), "specify start-date (YYYY-MM-DD hh:mm:ss)")
-                );
-            }
-            if let Some(ts) = gource_core::datetime::parse_date_time(&entry.value) {
-                settings.start_timestamp = ts;
-                settings.start_date = gource_core::datetime::format_local(ts, "%Y-%m-%d");
-            } else {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("stop-date") {
-            if !entry.has_value() {
-                return Err(
-                    conf.entry_error(Some(entry), "specify stop-date (YYYY-MM-DD hh:mm:ss)")
-                );
-            }
-            if let Some(ts) = gource_core::datetime::parse_date_time(&entry.value) {
-                settings.stop_timestamp = ts;
-                let time_str = gource_core::datetime::format_local(ts, "%H:%M:%S");
-                let mut rounded = ts;
-                if time_str != "00:00:00" {
-                    rounded += 86400;
-                }
-                settings.stop_date = gource_core::datetime::format_local(rounded, "%Y-%m-%d");
-            } else {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("start-position") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify start-position (float,random)"));
-            }
-            if entry.value == "random" {
-                // In C++: srand(time(0)); start_position = (rand() % 1000) / 1000.0f;
-                let seed = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos() as u64)
-                    .unwrap_or(0);
-                settings.start_position = random_start_position(seed);
-            } else {
-                settings.start_position = entry.get_float();
-                if settings.start_position <= 0.0 || settings.start_position >= 1.0 {
-                    return Err(conf.entry_error(
-                        Some(entry),
-                        "start-position outside of range 0.0 - 1.0 (non-inclusive)",
-                    ));
-                }
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("stop-position") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify stop-position (float)"));
-            }
-            settings.stop_position = entry.get_float();
-            if settings.stop_position <= 0.0 || settings.stop_position > 1.0 {
-                return Err(conf.entry_error(
-                    Some(entry),
-                    "stop-position outside of range 0.0 - 1.0 (inclusive)",
-                ));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("stop-at-time") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify stop-at-time (seconds)"));
-            }
-            settings.stop_at_time = entry.get_float();
-            if settings.stop_at_time <= 0.0 {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if gource_settings.get_bool("key") {
-            settings.show_key = true;
-        }
-
-        if gource_settings.get_bool("ffp") {
-            settings.ffp = true;
-        }
-
-        if gource_settings.get_bool("realtime") {
-            settings.days_per_second = 1.0 / 86400.0;
-        }
-
-        if gource_settings.get_bool("no-time-travel") {
-            settings.no_time_travel = true;
-        }
-
-        if gource_settings.get_bool("dont-stop") {
-            settings.dont_stop = true;
-        }
-
-        if gource_settings.get_bool("stop-at-end") {
-            settings.stop_at_end = true;
-        }
-
-        if gource_settings.get_bool("stop-on-idle") {
-            settings.stop_on_idle = true;
-        }
-
-        if gource_settings.get_bool("fixed-user-size") {
-            settings.fixed_user_size = true;
-        }
-
-        if gource_settings.get_bool("author-time") {
-            settings.author_time = true;
-        }
-
-        if let Some(entry) = gource_settings.entry("max-files") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify max-files (number)"));
-            }
-            settings.max_files = entry.get_int();
-            if settings.max_files < 0 || (settings.max_files == 0 && entry.value != "0") {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("max-file-lag") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify max-file-lag (seconds)"));
-            }
-            settings.max_file_lag = entry.get_float();
-            if settings.max_file_lag == 0.0 {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("user-friction") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify user-friction (seconds)"));
-            }
-            let friction = entry.get_float();
-            if friction <= 0.0 {
-                return Err(conf.invalid_value_error(entry));
-            }
-            settings.user_friction = 1.0 / friction;
-        }
-
-        if let Some(entry) = gource_settings.entry("user-scale") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify user-scale (scale)"));
-            }
-            settings.user_scale = entry.get_float();
-            if settings.user_scale <= 0.0 || settings.user_scale > 100.0 {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("max-user-speed") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify max-user-speed (units)"));
-            }
-            settings.max_user_speed = entry.get_float();
-            if settings.max_user_speed <= 0.0 {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if gource_settings.get_bool("highlight-users")
-            || gource_settings.get_bool("highlight-all-users")
-        {
-            settings.highlight_all_users = true;
-        }
-
-        if gource_settings.get_bool("highlight-dirs") {
-            settings.highlight_dirs = true;
-        }
-
-        if let Some(entry) = gource_settings.entry("camera-mode") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify camera-mode (overview,track)"));
-            }
-            match entry.value.as_str() {
-                "overview" => settings.camera_mode = CameraMode::Overview,
-                "track" => settings.camera_mode = CameraMode::Track,
-                _ => return Err(conf.invalid_value_error(entry)),
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("padding") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify padding (float)"));
-            }
-            settings.padding = entry.get_float();
-            if settings.padding <= 0.0 || settings.padding >= 2.0 {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        // multi-value entries
-        for entry in gource_settings.entries_named("highlight-user") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify highlight-user (user)"));
-            }
-            settings.highlight_users.push(entry.value.clone());
-        }
-
-        for entry in gource_settings.entries_named("follow-user") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify follow-user (user)"));
-            }
-            settings.follow_users.push(entry.value.clone());
-        }
-
-        if gource_settings.get_bool("file-extensions") {
-            settings.file_extensions = true;
-        }
-
-        if gource_settings.get_bool("file-extension-fallback") {
-            settings.file_extension_fallback = true;
-        }
-
-        for entry in gource_settings.entries_named("file-filter") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify file-filter (regex)"));
-            }
-            let re = fancy_regex::Regex::new(&entry.value).map_err(|_| {
-                conf.entry_error(Some(entry), "invalid file-filter regular expression")
-            })?;
-            settings.file_filters.push(re);
-        }
-
-        for entry in gource_settings.entries_named("file-show-filter") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify file-show-filter (regex)"));
-            }
-            let re = fancy_regex::Regex::new(&entry.value).map_err(|_| {
-                conf.entry_error(Some(entry), "invalid file-show-filter regular expression")
-            })?;
-            settings.file_show_filters.push(re);
-        }
-
-        for entry in gource_settings.entries_named("user-filter") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify user-filter (regex)"));
-            }
-            let re = fancy_regex::Regex::new(&entry.value).map_err(|_| {
-                conf.entry_error(Some(entry), "invalid user-filter regular expression")
-            })?;
-            settings.user_filters.push(re);
-        }
-
-        for entry in gource_settings.entries_named("user-show-filter") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify user-show-filter (regex)"));
-            }
-            let re = fancy_regex::Regex::new(&entry.value).map_err(|_| {
-                conf.entry_error(Some(entry), "invalid user-show-filter regular expression")
-            })?;
-            settings.user_show_filters.push(re);
-        }
-
-        if let Some(entry) = gource_settings.entry("dir-name-depth") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify dir-name-depth (depth)"));
-            }
-            settings.dir_name_depth = entry.get_int();
-            if settings.dir_name_depth <= 0 {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("dir-name-position") {
-            if !entry.has_value() {
-                return Err(conf.entry_error(Some(entry), "specify dir-name-position (float)"));
-            }
-            settings.dir_name_position = entry.get_float();
-            if settings.dir_name_position < 0.1 || settings.dir_name_position > 1.0 {
-                return Err(conf.entry_error(
-                    Some(entry),
-                    "dir-name-position outside of range 0.1 - 1.0 (inclusive)",
-                ));
-            }
-        }
-
-        // Evolution settings
-        if let Some(entry) = gource_settings.entry("file-size-metric") {
-            if !entry.has_value() {
-                return Err(conf.missing_value_error(entry));
-            }
-            if let Some(metric) = FileSizeMetric::parse(&entry.value) {
-                settings.file_size_metric = metric;
-            } else {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("file-pulse") {
-            if !entry.has_value() {
-                return Err(conf.missing_value_error(entry));
-            }
-            let pulse = entry.get_float();
-            if !(0.0..=10.0).contains(&pulse) {
-                return Err(conf.invalid_value_error(entry));
-            }
-            settings.file_pulse = pulse;
-        }
-
-        if let Some(entry) = gource_settings.entry("file-colour-mode") {
-            if !entry.has_value() {
-                return Err(conf.missing_value_error(entry));
-            }
-            if let Some(mode) = FileColourMode::parse(&entry.value) {
-                settings.file_colour_mode = mode;
-            } else {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("dashboard") {
-            if !entry.has_value() {
-                return Err(conf.missing_value_error(entry));
-            }
-            if entry.value == "all" {
-                settings.dashboards = vec![
-                    DashboardPanel::Lines,
-                    DashboardPanel::Diff,
-                    DashboardPanel::Editors,
-                    DashboardPanel::Commits,
-                    DashboardPanel::Theseus,
-                    DashboardPanel::Churn,
-                ];
-            } else {
-                let mut panels = Vec::new();
-                for part in entry.value.split(',') {
-                    let item = part.trim();
-                    if item.is_empty() {
-                        continue;
-                    }
-                    if let Some(p) = DashboardPanel::parse(item) {
-                        panels.push(p);
-                    } else {
-                        return Err(conf.invalid_value_error(entry));
-                    }
-                }
-                settings.dashboards = panels;
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("dashboard-period") {
-            if !entry.has_value() {
-                return Err(conf.missing_value_error(entry));
-            }
-            if let Some(period) = DashboardPeriod::parse(&entry.value) {
-                settings.dashboard_period = period;
-            } else {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("dashboard-window") {
-            if !entry.has_value() {
-                return Err(conf.missing_value_error(entry));
-            }
-            let val_str = entry.value.trim().trim_end_matches(['d', 'D']);
-            if let Ok(days) = val_str.parse::<u32>() {
-                if days < 1 {
-                    return Err(conf.invalid_value_error(entry));
-                }
-                settings.dashboard_window_days = days;
-            } else {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("output-stats") {
-            if !entry.has_value() {
-                return Err(conf.missing_value_error(entry));
-            }
-            settings.output_stats_filename = entry.value.clone();
-        }
-
-        if let Some(entry) = gource_settings.entry("cache-dir") {
-            if !entry.has_value() {
-                return Err(conf.missing_value_error(entry));
-            }
-            settings.cache_dir = entry.value.clone();
-        }
-
-        if gource_settings.get_bool("no-cache") {
-            settings.no_cache = true;
-        }
-
-        if let Some(entry) = gource_settings.entry("seed") {
-            if !entry.has_value() {
-                return Err(conf.missing_value_error(entry));
-            }
-            if let Ok(val) = entry.value.parse::<u32>() {
-                settings.seed = Some(val);
-            } else {
-                return Err(conf.invalid_value_error(entry));
+        for entry in &gource_settings.entries {
+            let canonical = crate::descriptor::resolve_alias(&entry.name);
+            if let Some(desc) = crate::descriptor::find_setting(canonical)
+                && let crate::descriptor::Apply::Gource(field) = desc.apply
+            {
+                crate::descriptor::apply_field(field, &mut settings, entry, conf)?;
             }
         }
 
@@ -1894,43 +1028,9 @@ impl GourceSettings {
                 )));
             }
         }
-        if let Some(entry) = gource_settings.entry("live") {
-            settings.live = entry.get_bool();
-        }
 
-        if let Some(entry) = gource_settings.entry("live-interval") {
-            if !entry.has_value() {
-                return Err(conf.missing_value_error(entry));
-            }
-            let v = entry.get_float();
-            if v <= 0.0 {
-                return Err(conf.invalid_value_error(entry));
-            }
-            settings.live_interval = v;
-        }
-
-        if let Some(entry) = gource_settings.entry("live-fetch") {
-            settings.live_fetch = entry.get_bool();
-        }
-
-        if let Some(entry) = gource_settings.entry("github") {
-            if !entry.has_value() || entry.value.is_empty() {
-                return Err(conf.invalid_value_error(entry));
-            }
-            settings.github = entry.value.clone();
-            if settings.default_path {
-                settings.path = format!("github:{}", settings.github);
-            }
-            if gource_settings.entry("live").is_none() {
-                settings.live = true;
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("github-token") {
-            if !entry.has_value() || entry.value.is_empty() {
-                return Err(conf.invalid_value_error(entry));
-            }
-            settings.github_token = entry.value.clone();
+        if !settings.github.is_empty() && gource_settings.entry("live").is_none() {
+            settings.live = true;
         }
 
         if (settings.path.starts_with("https://github.com/")
@@ -1939,43 +1039,6 @@ impl GourceSettings {
             && gource_settings.entry("live").is_none()
         {
             settings.live = true;
-        }
-
-        if let Some(entry) = gource_settings.entry("git-backend") {
-            if !entry.has_value() {
-                return Err(conf.missing_value_error(entry));
-            }
-            if let Some(backend) = GitBackend::parse(&entry.value) {
-                settings.git_backend = backend;
-            } else {
-                return Err(conf.invalid_value_error(entry));
-            }
-        }
-
-        if let Some(entry) = gource_settings.entry("watch-worktrees") {
-            settings.watch_worktrees = entry.get_bool();
-        }
-
-        if let Some(entry) = gource_settings.entry("worktree-poll-interval") {
-            if !entry.has_value() {
-                return Err(conf.missing_value_error(entry));
-            }
-            let v = entry.get_float();
-            if v <= 0.0 {
-                return Err(conf.invalid_value_error(entry));
-            }
-            settings.worktree_poll_interval = v;
-        }
-
-        if let Some(entry) = gource_settings.entry("shadow-alpha") {
-            if !entry.has_value() {
-                return Err(conf.missing_value_error(entry));
-            }
-            let v = entry.get_float();
-            if !(0.0..=1.0).contains(&v) {
-                return Err(conf.invalid_value_error(entry));
-            }
-            settings.shadow_alpha = v;
         }
 
         Ok(settings)
@@ -2004,7 +1067,7 @@ pub fn random_start_position(seed: u64) -> f32 {
     ((seed % 1000) as f32) / 1000.0
 }
 
-fn parse_colour_entry(entry: &ConfEntry) -> Option<Vec3> {
+pub(crate) fn parse_colour_entry(entry: &ConfEntry) -> Option<Vec3> {
     if entry.is_vec3() {
         return Some(entry.get_vec3());
     }
@@ -2022,6 +1085,685 @@ fn parse_colour_entry(entry: &ConfEntry) -> Option<Vec3> {
     None
 }
 
+pub(crate) fn custom_gource_crop(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify crop (vertical,horizontal)"));
+    }
+    match entry.value.as_str() {
+        "vertical" => settings.crop_vertical = true,
+        "horizontal" => settings.crop_horizontal = true,
+        _ => return Err(conf.invalid_value_error(entry)),
+    }
+    Ok(())
+}
+
+pub(crate) fn custom_gource_log_format(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify log-format (format)"));
+    }
+    let fmt = &entry.value;
+    if fmt == "cvs" {
+        return Err(conf.entry_error(Some(entry), "please use either 'cvs2cl' or 'cvs-exp'"));
+    }
+    match fmt.as_str() {
+        "git" | "cvs-exp" | "cvs2cl" | "svn" | "custom" | "hg" | "bzr" | "apache" => {
+            settings.log_format = fmt.clone();
+            Ok(())
+        }
+        _ => Err(conf.invalid_value_error(entry)),
+    }
+}
+
+pub(crate) fn custom_gource_git_branch(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.missing_value_error(entry));
+    }
+    let branch = &entry.value;
+    if is_valid_branch_name(branch) {
+        settings.git_branch = branch.clone();
+        Ok(())
+    } else {
+        Err(conf.invalid_value_error(entry))
+    }
+}
+
+pub(crate) fn custom_gource_user_image_dir(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify user-image-dir (directory)"));
+    }
+    let mut dir_str = entry.value.clone();
+    if !dir_str.ends_with('/') {
+        dir_str.push('/');
+    }
+    settings.user_image_dir = dir_str.clone();
+    settings.user_image_map.clear();
+
+    let dir_path = Path::new(&dir_str);
+    if !dir_path.is_dir() {
+        return Err(conf.entry_error(Some(entry), "specified user-image-dir is not a directory"));
+    }
+
+    let entries = std::fs::read_dir(dir_path)
+        .map_err(|_| conf.entry_error(Some(entry), "error reading specified user-image-dir"))?;
+
+    for dir_entry in entries {
+        let dir_entry = match dir_entry {
+            Ok(e) => e,
+            Err(_) => {
+                return Err(conf.entry_error(Some(entry), "error reading specified user-image-dir"));
+            }
+        };
+        let file_path = dir_entry.path();
+        let file_name = match file_path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+        let lower_name = file_name.to_ascii_lowercase();
+        let ext = if lower_name.ends_with(".png") {
+            ".png"
+        } else if lower_name.ends_with(".jpg") {
+            ".jpg"
+        } else if lower_name.ends_with(".jpeg") {
+            ".jpeg"
+        } else {
+            continue;
+        };
+
+        let name = &file_name[..file_name.len() - ext.len()];
+        let image_path = format!("{dir_str}{file_name}");
+        settings.user_image_map.insert(name.to_owned(), image_path);
+    }
+    Ok(())
+}
+
+pub(crate) fn custom_gource_caption_file(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify caption file (filename)"));
+    }
+    settings.caption_file = entry.value.clone();
+    if !Path::new(&settings.caption_file).exists() {
+        return Err(conf.entry_error(Some(entry), "caption file not found"));
+    }
+    Ok(())
+}
+
+pub(crate) fn custom_gource_filename_time(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(
+            Some(entry),
+            "specify duration to keep files on screen (float)",
+        ));
+    }
+    settings.filename_time = entry.get_float();
+    if settings.filename_time < 2.0 {
+        return Err(conf.entry_error(Some(entry), "filename-time must be >= 2.0"));
+    }
+    Ok(())
+}
+
+pub(crate) fn custom_gource_font_file(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify font file"));
+    }
+    let path = Path::new(&entry.value);
+    if !path.exists() {
+        return Err(conf.invalid_value_error(entry));
+    }
+    if let Ok(canon) = path.canonicalize() {
+        let canon_str = canon.to_string_lossy().to_string();
+        if canon_str.is_empty() {
+            return Err(conf.invalid_value_error(entry));
+        }
+        settings.font_file = canon_str;
+        Ok(())
+    } else {
+        Err(conf.invalid_value_error(entry))
+    }
+}
+
+pub(crate) fn custom_gource_font_scale(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify font scale"));
+    }
+    settings.font_scale = entry.get_float();
+    settings.default_font_scale = false;
+    if settings.font_scale < 0.0 || settings.font_scale > 10.0 {
+        return Err(conf.invalid_value_error(entry));
+    }
+    settings.set_scaled_font_sizes();
+    Ok(())
+}
+
+pub(crate) fn custom_gource_logo_offset(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify logo-offset (XxY)"));
+    }
+    if let Some((x, y)) = crate::display::parse_rectangle(&entry.value) {
+        settings.logo_offset = Vec2::new(x as f32, y as f32);
+        Ok(())
+    } else {
+        Err(conf.invalid_value_error(entry))
+    }
+}
+
+pub(crate) fn custom_gource_seconds_per_day(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify seconds-per-day (seconds)"));
+    }
+    let seconds_per_day = entry.get_float();
+    if seconds_per_day <= 0.0 {
+        return Err(conf.invalid_value_error(entry));
+    }
+    settings.days_per_second = 1.0 / seconds_per_day;
+    Ok(())
+}
+
+pub(crate) fn custom_gource_time_scale(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify time-scale (scale)"));
+    }
+    settings.time_scale = entry.get_float();
+    if settings.time_scale <= 0.0 || settings.time_scale > 4.0 {
+        return Err(conf.entry_error(Some(entry), "time-scale outside of range 0.0 - 4.0"));
+    }
+    Ok(())
+}
+
+pub(crate) fn custom_gource_start_date(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify start-date (YYYY-MM-DD hh:mm:ss)"));
+    }
+    if let Some(ts) = gource_core::datetime::parse_date_time(&entry.value) {
+        settings.start_timestamp = ts;
+        settings.start_date = gource_core::datetime::format_local(ts, "%Y-%m-%d");
+        Ok(())
+    } else {
+        Err(conf.invalid_value_error(entry))
+    }
+}
+
+pub(crate) fn custom_gource_stop_date(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify stop-date (YYYY-MM-DD hh:mm:ss)"));
+    }
+    if let Some(ts) = gource_core::datetime::parse_date_time(&entry.value) {
+        settings.stop_timestamp = ts;
+        let time_str = gource_core::datetime::format_local(ts, "%H:%M:%S");
+        let mut rounded = ts;
+        if time_str != "00:00:00" {
+            rounded += 86400;
+        }
+        settings.stop_date = gource_core::datetime::format_local(rounded, "%Y-%m-%d");
+        Ok(())
+    } else {
+        Err(conf.invalid_value_error(entry))
+    }
+}
+
+pub(crate) fn custom_gource_start_position(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify start-position (float,random)"));
+    }
+    if entry.value == "random" {
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        settings.start_position = random_start_position(seed);
+        Ok(())
+    } else {
+        settings.start_position = entry.get_float();
+        if settings.start_position <= 0.0 || settings.start_position >= 1.0 {
+            Err(conf.entry_error(
+                Some(entry),
+                "start-position outside of range 0.0 - 1.0 (non-inclusive)",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+pub(crate) fn custom_gource_stop_position(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify stop-position (float)"));
+    }
+    settings.stop_position = entry.get_float();
+    if settings.stop_position <= 0.0 || settings.stop_position > 1.0 {
+        Err(conf.entry_error(
+            Some(entry),
+            "stop-position outside of range 0.0 - 1.0 (inclusive)",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+pub(crate) fn custom_gource_user_friction(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify user-friction (seconds)"));
+    }
+    let friction = entry.get_float();
+    if friction <= 0.0 {
+        return Err(conf.invalid_value_error(entry));
+    }
+    settings.user_friction = 1.0 / friction;
+    Ok(())
+}
+
+pub(crate) fn custom_gource_camera_mode(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify camera-mode (overview,track)"));
+    }
+    match entry.value.as_str() {
+        "overview" => {
+            settings.camera_mode = CameraMode::Overview;
+            Ok(())
+        }
+        "track" => {
+            settings.camera_mode = CameraMode::Track;
+            Ok(())
+        }
+        _ => Err(conf.invalid_value_error(entry)),
+    }
+}
+
+pub(crate) fn custom_gource_padding(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify padding (float)"));
+    }
+    settings.padding = entry.get_float();
+    if settings.padding <= 0.0 || settings.padding >= 2.0 {
+        Err(conf.invalid_value_error(entry))
+    } else {
+        Ok(())
+    }
+}
+
+pub(crate) fn custom_gource_dir_name_position(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify dir-name-position (float)"));
+    }
+    settings.dir_name_position = entry.get_float();
+    if settings.dir_name_position < 0.1 || settings.dir_name_position > 1.0 {
+        Err(conf.entry_error(
+            Some(entry),
+            "dir-name-position outside of range 0.1 - 1.0 (inclusive)",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+pub(crate) fn custom_gource_file_size_metric(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.missing_value_error(entry));
+    }
+    if let Some(metric) = FileSizeMetric::parse(&entry.value) {
+        settings.file_size_metric = metric;
+        Ok(())
+    } else {
+        Err(conf.invalid_value_error(entry))
+    }
+}
+
+pub(crate) fn custom_gource_file_colour_mode(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.missing_value_error(entry));
+    }
+    if let Some(mode) = FileColourMode::parse(&entry.value) {
+        settings.file_colour_mode = mode;
+        Ok(())
+    } else {
+        Err(conf.invalid_value_error(entry))
+    }
+}
+
+pub(crate) fn custom_gource_dashboard(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.missing_value_error(entry));
+    }
+    if entry.value == "all" {
+        settings.dashboards = vec![
+            DashboardPanel::Lines,
+            DashboardPanel::Diff,
+            DashboardPanel::Editors,
+            DashboardPanel::Commits,
+            DashboardPanel::Theseus,
+            DashboardPanel::Churn,
+        ];
+        Ok(())
+    } else {
+        let mut panels = Vec::new();
+        for part in entry.value.split(',') {
+            let item = part.trim();
+            if item.is_empty() {
+                continue;
+            }
+            if let Some(p) = DashboardPanel::parse(item) {
+                panels.push(p);
+            } else {
+                return Err(conf.invalid_value_error(entry));
+            }
+        }
+        settings.dashboards = panels;
+        Ok(())
+    }
+}
+
+pub(crate) fn custom_gource_dashboard_period(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.missing_value_error(entry));
+    }
+    if let Some(period) = DashboardPeriod::parse(&entry.value) {
+        settings.dashboard_period = period;
+        Ok(())
+    } else {
+        Err(conf.invalid_value_error(entry))
+    }
+}
+
+pub(crate) fn custom_gource_dashboard_window(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.missing_value_error(entry));
+    }
+    let val_str = entry.value.trim().trim_end_matches(['d', 'D']);
+    if let Ok(days) = val_str.parse::<u32>() {
+        if days < 1 {
+            return Err(conf.invalid_value_error(entry));
+        }
+        settings.dashboard_window_days = days;
+        Ok(())
+    } else {
+        Err(conf.invalid_value_error(entry))
+    }
+}
+
+pub(crate) fn custom_gource_seed(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.missing_value_error(entry));
+    }
+    if let Ok(val) = entry.value.parse::<u32>() {
+        settings.seed = Some(val);
+        Ok(())
+    } else {
+        Err(conf.invalid_value_error(entry))
+    }
+}
+
+pub(crate) fn custom_gource_github(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() || entry.value.is_empty() {
+        return Err(conf.invalid_value_error(entry));
+    }
+    settings.github = entry.value.clone();
+    if settings.default_path {
+        settings.path = format!("github:{}", settings.github);
+    }
+    Ok(())
+}
+
+pub(crate) fn custom_gource_github_token(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() || entry.value.is_empty() {
+        return Err(conf.invalid_value_error(entry));
+    }
+    settings.github_token = entry.value.clone();
+    Ok(())
+}
+
+pub(crate) fn custom_gource_git_backend(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.missing_value_error(entry));
+    }
+    if let Some(backend) = GitBackend::parse(&entry.value) {
+        settings.git_backend = backend;
+        Ok(())
+    } else {
+        Err(conf.invalid_value_error(entry))
+    }
+}
+
+pub(crate) fn custom_gource_file_idle_time(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify file-idle-time (seconds)"));
+    }
+    let s = &entry.value;
+    let val = entry.get_int() as f32;
+    if val < 0.0 || (val == 0.0 && !s.starts_with('0')) {
+        return Err(conf.invalid_value_error(entry));
+    }
+    settings.file_idle_time = val;
+    Ok(())
+}
+
+pub(crate) fn custom_gource_file_idle_time_at_end(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify file-idle-time-at-end (seconds)"));
+    }
+    let s = &entry.value;
+    let val = entry.get_int() as f32;
+    if val < 0.0 || (val == 0.0 && !s.starts_with('0')) {
+        return Err(conf.invalid_value_error(entry));
+    }
+    settings.file_idle_time_at_end = val;
+    Ok(())
+}
+
+pub(crate) fn custom_gource_max_file_lag(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify max-file-lag (seconds)"));
+    }
+    settings.max_file_lag = entry.get_float();
+    if settings.max_file_lag == 0.0 {
+        return Err(conf.invalid_value_error(entry));
+    }
+    Ok(())
+}
+
+pub(crate) fn multi_highlight_user(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify highlight-user (user)"));
+    }
+    settings.highlight_users.push(entry.value.clone());
+    Ok(())
+}
+
+pub(crate) fn multi_follow_user(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify follow-user (user)"));
+    }
+    settings.follow_users.push(entry.value.clone());
+    Ok(())
+}
+
+pub(crate) fn multi_file_filter(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify file-filter (regex)"));
+    }
+    let re = fancy_regex::Regex::new(&entry.value)
+        .map_err(|_| conf.entry_error(Some(entry), "invalid file-filter regular expression"))?;
+    settings.file_filters.push(re);
+    Ok(())
+}
+
+pub(crate) fn multi_file_show_filter(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify file-show-filter (regex)"));
+    }
+    let re = fancy_regex::Regex::new(&entry.value).map_err(|_| {
+        conf.entry_error(Some(entry), "invalid file-show-filter regular expression")
+    })?;
+    settings.file_show_filters.push(re);
+    Ok(())
+}
+
+pub(crate) fn multi_user_filter(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify user-filter (regex)"));
+    }
+    let re = fancy_regex::Regex::new(&entry.value)
+        .map_err(|_| conf.entry_error(Some(entry), "invalid user-filter regular expression"))?;
+    settings.user_filters.push(re);
+    Ok(())
+}
+
+pub(crate) fn multi_user_show_filter(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.entry_error(Some(entry), "specify user-show-filter (regex)"));
+    }
+    let re = fancy_regex::Regex::new(&entry.value).map_err(|_| {
+        conf.entry_error(Some(entry), "invalid user-show-filter regular expression")
+    })?;
+    settings.user_show_filters.push(re);
+    Ok(())
+}
 #[cfg(test)]
 mod tests {
     use super::*;

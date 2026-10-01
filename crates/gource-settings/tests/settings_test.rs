@@ -1375,3 +1375,317 @@ fn test_live_and_github_settings() {
     sec_empty_tok.add_entry("github-token", "");
     assert!(GourceSettings::import(&empty_token_conf, empty_token_conf.section("gource")).is_err());
 }
+
+#[test]
+fn test_additional_error_and_edge_coverage() {
+    let check_err = |cfg_text: &str, expected_sub: &str| {
+        let conf = ConfFile::parse(cfg_text, "err.conf").unwrap();
+        let err = GourceSettings::import(&conf, None).unwrap_err();
+        assert_eq!(err.0, expected_sub);
+    };
+
+    // worktree-poll-interval
+    check_err(
+        "[gource]
+worktree-poll-interval=
+",
+        "err.conf, line 2: no value specified for 'worktree-poll-interval'",
+    );
+    check_err(
+        "[gource]
+worktree-poll-interval=0
+",
+        "err.conf, line 2: invalid 'worktree-poll-interval' value",
+    );
+
+    // shadow-alpha
+    check_err(
+        "[gource]
+shadow-alpha=
+",
+        "err.conf, line 2: no value specified for 'shadow-alpha'",
+    );
+    check_err(
+        "[gource]
+shadow-alpha=1.5
+",
+        "err.conf, line 2: invalid 'shadow-alpha' value",
+    );
+
+    // live-interval
+    check_err(
+        "[gource]
+live-interval=
+",
+        "err.conf, line 2: no value specified for 'live-interval'",
+    );
+
+    // Valid shadow-alpha, worktree-poll-interval, watch-worktrees
+    let mut conf_valid = ConfFile::new();
+    conf_valid.set_entry("gource", "path", ".");
+    conf_valid.set_entry("gource", "shadow-alpha", "0.7");
+    conf_valid.set_entry("gource", "worktree-poll-interval", "1.5");
+    conf_valid.set_entry("gource", "watch-worktrees", "true");
+    let s_valid = GourceSettings::import(&conf_valid, None).unwrap();
+    assert_eq!(s_valid.shadow_alpha, 0.7);
+    assert_eq!(s_valid.worktree_poll_interval, 1.5);
+    assert!(s_valid.watch_worktrees);
+
+    let cli_valid = s_valid.to_cli_args();
+    assert!(cli_valid.contains(&"--shadow-alpha".to_string()));
+    assert!(cli_valid.contains(&"--worktree-poll-interval".to_string()));
+    assert!(cli_valid.contains(&"--watch-worktrees".to_string()));
+
+    // patch.rs read / apply coverage
+    let mut s = GourceSettings {
+        user_friction: 0.0,
+        days_per_second: 0.0,
+        ..Default::default()
+    };
+    let mut t = gource_settings::TuningSettings::default();
+    use gource_settings::{SettingId, SettingValue};
+    let val_uf = SettingId::UserFriction.read(&s, &t);
+    assert_eq!(val_uf, SettingValue::F32(1.0));
+    let val_spd = SettingId::SecondsPerDay.read(&s, &t);
+    assert_eq!(val_spd, SettingValue::F32(10.0));
+
+    // SettingValue apply
+    assert!(!SettingId::BackgroundColour.apply(&SettingValue::Bool(false), &mut s, &mut t));
+    let _ = SettingValue::Usize(1);
+    let _ = SettingValue::Vec4(glam::Vec4::ZERO);
+    let _ = SettingValue::OptionalString(None);
+}
+
+#[test]
+fn test_to_cli_args_comprehensive() {
+    let s = GourceSettings {
+        dir_colour: glam::Vec3::new(0.1, 0.2, 0.3),
+        font_colour: glam::Vec3::new(0.4, 0.5, 0.6),
+        highlight_colour: glam::Vec3::new(0.7, 0.8, 0.9),
+        selection_colour: glam::Vec3::new(0.2, 0.4, 0.6),
+        hide_date: true,
+        hide_users: true,
+        hide_tree: true,
+        hide_files: true,
+        hide_usernames: true,
+        hide_filenames: true,
+        hide_dirnames: true,
+        hide_bloom: true,
+        hide_mouse: true,
+        hide_progress: true,
+        hide_root: true,
+        hide_dashboards: true,
+        file_filters: vec![fancy_regex::Regex::new("foo").unwrap()],
+        file_show_filters: vec![fancy_regex::Regex::new("bar").unwrap()],
+        user_filters: vec![fancy_regex::Regex::new("baz").unwrap()],
+        user_show_filters: vec![fancy_regex::Regex::new("qux").unwrap()],
+        ..Default::default()
+    };
+
+    let args = s.to_cli_args();
+    assert!(args.contains(&"--dir-colour".to_string()));
+    assert!(args.contains(&"--font-colour".to_string()));
+    assert!(args.contains(&"--highlight-colour".to_string()));
+    assert!(args.contains(&"--selection-colour".to_string()));
+    assert!(args.contains(&"--file-filter".to_string()));
+    assert!(args.contains(&"--file-show-filter".to_string()));
+    assert!(args.contains(&"--user-filter".to_string()));
+    assert!(args.contains(&"--user-show-filter".to_string()));
+    assert!(args.contains(&"--hide".to_string()));
+
+    let s2 = GourceSettings {
+        hide_progress: true,
+        ..Default::default()
+    };
+    let args2 = s2.to_cli_args();
+    assert!(args2.contains(&"progress".to_string()));
+
+    let s3 = GourceSettings {
+        user_friction: 0.5,
+        days_per_second: 0.5,
+        ..Default::default()
+    };
+    let args3 = s3.to_cli_args();
+    assert!(args3.contains(&"--user-friction".to_string()));
+    assert!(args3.contains(&"--seconds-per-day".to_string()));
+}
+
+#[test]
+fn test_gource_edge_coverage_boost() {
+    // Trailing slashes in watch_paths
+    let dir = tempfile::tempdir().unwrap();
+    let p1 = dir.path().join("dir1");
+    let p2 = dir.path().join("dir2");
+    std::fs::create_dir(&p1).unwrap();
+    std::fs::create_dir(&p2).unwrap();
+
+    let mut conf = ConfFile::new();
+    let s = format!("{}/, {}///", p1.to_str().unwrap(), p2.to_str().unwrap());
+    conf.set_entry("gource", "watch-paths", &s);
+    let settings = GourceSettings::import(&conf, None).unwrap();
+    assert_eq!(settings.watch_paths.len(), 2);
+
+    // Empty splits in dashboard
+    let mut conf_db = ConfFile::new();
+    conf_db.set_entry("gource", "path", ".");
+    conf_db.set_entry("gource", "dashboard", "lines, , diff");
+    let s_db = GourceSettings::import(&conf_db, None).unwrap();
+    assert_eq!(s_db.dashboards.len(), 2);
+
+    // User-image-dir with invalid subfile name or non-image
+    let img_dir = dir.path().join("images");
+    std::fs::create_dir(&img_dir).unwrap();
+    std::fs::File::create(img_dir.join("readme.txt")).unwrap();
+    let mut conf_img = ConfFile::new();
+    conf_img.set_entry("gource", "path", ".");
+    conf_img.set_entry("gource", "user-image-dir", img_dir.to_str().unwrap());
+    let s_img = GourceSettings::import(&conf_img, None).unwrap();
+    assert!(s_img.user_image_map.is_empty());
+}
+
+#[test]
+fn test_gource_95_boost() {
+    let check_err = |cfg_text: &str, expected_sub: &str| {
+        let conf = ConfFile::parse(cfg_text, "err.conf").unwrap();
+        let err = GourceSettings::import(&conf, None).unwrap_err();
+        assert_eq!(err.0, expected_sub);
+    };
+
+    // hide with leading comma: ",date"
+    let mut conf_hide = ConfFile::new();
+    conf_hide.set_entry("gource", "path", ".");
+    conf_hide.set_entry("gource", "hide", ",date");
+    let s_hide = GourceSettings::import(&conf_hide, None).unwrap();
+    assert!(s_hide.hide_date);
+
+    // hide=""
+    check_err(
+        "[gource]
+hide=
+",
+        "err.conf, line 2: no value specified for 'hide'",
+    );
+
+    // live_interval invalid check
+    check_err(
+        "[gource]
+live-interval=0
+",
+        "err.conf, line 2: invalid 'live-interval' value",
+    );
+
+    // github empty check
+    check_err(
+        "[gource]
+github=
+",
+        "err.conf, line 2: invalid 'github' value",
+    );
+
+    // github-token empty check
+    check_err(
+        "[gource]
+github-token=
+",
+        "err.conf, line 2: invalid 'github-token' value",
+    );
+
+    // git-backend missing
+    check_err(
+        "[gource]
+git-backend=
+",
+        "err.conf, line 2: no value specified for 'git-backend'",
+    );
+    // git-backend invalid
+    check_err(
+        "[gource]
+git-backend=xyz
+",
+        "err.conf, line 2: invalid 'git-backend' value",
+    );
+}
+
+#[test]
+fn test_to_cli_args_inverses() {
+    let s = GourceSettings {
+        user_friction: -1.0,
+        days_per_second: -1.0,
+        ..Default::default()
+    };
+    let args = s.to_cli_args();
+    assert!(args.contains(&"--user-friction".to_string()));
+    assert!(args.contains(&"--seconds-per-day".to_string()));
+}
+
+#[test]
+fn test_gource_additional_branches() {
+    assert_eq!(
+        DashboardPanel::parse("theseus"),
+        Some(DashboardPanel::Theseus)
+    );
+
+    let conf = ConfFile::parse(
+        "[gource]
+path=.
+hide=tree,files,usernames,filenames,dirnames
+crop=horizontal
+",
+        "c.conf",
+    )
+    .unwrap();
+    let s = GourceSettings::import(&conf, None).unwrap();
+    assert!(s.hide_tree);
+    assert!(s.hide_files);
+    assert!(s.hide_usernames);
+    assert!(s.hide_filenames);
+    assert!(s.hide_dirnames);
+    assert!(s.crop_horizontal);
+}
+
+#[test]
+fn test_hex_colour_parse() {
+    let conf = ConfFile::parse(
+        "[gource]
+path=.
+font-colour=AABBCC
+selection-colour=112233
+dir-colour=001122
+",
+        "c.conf",
+    )
+    .unwrap();
+    let s = GourceSettings::import(&conf, None).unwrap();
+    assert!((s.font_colour.x - 0xAA as f32 / 255.0).abs() < 1e-4);
+    assert!((s.selection_colour.x - 0x11 as f32 / 255.0).abs() < 1e-4);
+    assert!((s.dir_colour.x - 0x00 as f32 / 255.0).abs() < 1e-4);
+}
+
+#[test]
+fn test_path_colon_watch_paths() {
+    let conf = ConfFile::parse(
+        "[gource]
+path=.:src
+",
+        "c.conf",
+    )
+    .unwrap();
+    let s = GourceSettings::import(&conf, None).unwrap();
+    assert_eq!(s.watch_paths.len(), 2);
+    assert_eq!(s.path, ".");
+    assert!(s.live);
+}
+
+#[test]
+fn test_lib_error_branches_coverage() {
+    // log-command errors
+    assert!(parse_command_line(&["--log-command".into(), "cvs".into()]).is_err());
+    assert!(parse_command_line(&["--log-command".into(), "invalid".into()]).is_err());
+    assert!(parse_command_line(&["--log-level".into(), "invalid".into()]).is_err());
+    assert!(parse_command_line(&["--output-custom-log".into()]).is_err());
+    assert!(parse_command_line(&["--save-config".into()]).is_err());
+    assert!(parse_command_line(&["--load-config".into()]).is_err());
+
+    // Empty argument & unknown flag via parse_command_line
+    assert!(parse_command_line(&["".into(), "--unknown-flag-xyz".into()]).is_err());
+}
