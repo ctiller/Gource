@@ -5,7 +5,6 @@
 //! [`WorktreeWatcher`] to poll for in-flight changes and stream shadow commits.
 
 use crate::commit::{Commit, CommitFile, FileAction, file_colour};
-use crate::in_process_git::is_binary_buffer;
 use crate::options::VcsOptions;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -13,6 +12,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::Sender;
 use std::time::UNIX_EPOCH;
+
+/// Git's binary heuristic: a NUL byte in the first 8000 bytes.
+pub(crate) fn is_binary_buffer(data: &[u8]) -> bool {
+    let check_len = data.len().min(8000);
+    data[..check_len].contains(&0)
+}
 
 /// Information about a Git worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]

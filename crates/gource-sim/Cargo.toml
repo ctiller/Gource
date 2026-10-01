@@ -6,6 +6,11 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+default = ["gix"]
+# In-process git reading via gource-vcs. Disable for wasm builds.
+gix = ["gource-vcs/gix"]
+
 [dependencies]
 gource-core = { workspace = true }
 gource-draw = { workspace = true }
@@ -21,4 +26,8 @@ gource-scene = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+
+# proptest forks processes (wait-timeout), which wasm32 lacks; examples such
+# as scene_hash still build for wasm32-wasip1.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 proptest = { workspace = true }

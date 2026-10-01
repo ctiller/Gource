@@ -362,6 +362,8 @@ impl VideoExporter {
         }
 
         // Close stdin so ffmpeg reaches EOF and finalizes container
+        // (`ChildStdin` has no `Drop` impl on wasm targets).
+        #[cfg_attr(target_arch = "wasm32", allow(clippy::drop_non_drop))]
         drop(stdin);
 
         let status = match child.wait() {

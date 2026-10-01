@@ -5,6 +5,7 @@
 //! standard git log text format.
 
 use crate::options::VcsOptions;
+use crate::worktree::is_binary_buffer;
 use gix::bstr::ByteSlice;
 use std::io::Write;
 use std::path::Path;
@@ -276,11 +277,6 @@ fn collect_tree_entries(
             out.insert(full_path, (entry.oid().to_owned(), mode));
         }
     }
-}
-
-pub(crate) fn is_binary_buffer(data: &[u8]) -> bool {
-    let check_len = data.len().min(8000);
-    data[..check_len].contains(&0)
 }
 
 fn count_blob_lines(repo: &gix::Repository, id: gix::ObjectId) -> (u32, bool) {

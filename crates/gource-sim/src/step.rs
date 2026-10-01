@@ -103,6 +103,7 @@ fn dir_force_threads(_n: usize) -> usize {
     1
 }
 
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn dir_force_threads_for(n: usize, requested: Option<usize>, hw: usize) -> usize {
     match requested {
         Some(t) => t.max(1),

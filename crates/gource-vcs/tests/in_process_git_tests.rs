@@ -1,3 +1,4 @@
+#![cfg(feature = "gix")]
 use gource_vcs::options::VcsOptions;
 use gource_vcs::{LogMill, in_process_git::generate_in_process_git_log};
 use std::fs;

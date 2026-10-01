@@ -42,6 +42,9 @@ Design rules:
   (reverse playback). Each frame `World::sync_view(alpha)` interpolates the
   integer state into the float fields the draw code reads; rotation is a
   view transform only. `--elasticity` is accepted but has no effect.
+  `examples/scene_hash.rs` prints `World::state_hash()` per simulated
+  second; native and `wasm32-wasip1` (wasmtime, `--no-default-features` to
+  drop gix) output must be identical.
 * **Rendering in gamma space.** Colours and texels are used as-is, and
   blending happens on gamma-encoded values like the original OpenGL renderer
   (Bevy's `CompositingSpace::Srgb`, non-sRGB textures).

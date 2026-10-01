@@ -50,32 +50,55 @@ impl LogMill {
         let thread_child = Arc::clone(&child_process);
         let path_str = path.to_string();
 
-        let handle = thread::Builder::new()
-            .name("logmill".to_string())
-            .spawn(move || {
-                let res = fetch_internal(
-                    &path_str,
-                    &options,
-                    Some(&thread_abort),
-                    Some(&thread_child),
-                );
-                let new_status = if res.is_ok() {
-                    LogMillStatus::Success
-                } else {
-                    LogMillStatus::Failure
-                };
-                *thread_status.lock().unwrap() = new_status;
-                let _ = tx.send(res);
-            })
-            .expect("failed to spawn logmill thread");
+        // wasm32 has no threads: fetch inline and hand back a finished mill.
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (thread_status, thread_abort, thread_child, tx);
+            let res = fetch_internal(&path_str, &options, None, None);
+            *status.lock().unwrap() = if res.is_ok() {
+                LogMillStatus::Success
+            } else {
+                LogMillStatus::Failure
+            };
+            LogMill {
+                status,
+                result_rx: rx,
+                cached_result: Some(res),
+                abort_flag,
+                child_process,
+                thread_handle: None,
+            }
+        }
 
-        LogMill {
-            status,
-            result_rx: rx,
-            cached_result: None,
-            abort_flag,
-            child_process,
-            thread_handle: Some(handle),
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let handle = thread::Builder::new()
+                .name("logmill".to_string())
+                .spawn(move || {
+                    let res = fetch_internal(
+                        &path_str,
+                        &options,
+                        Some(&thread_abort),
+                        Some(&thread_child),
+                    );
+                    let new_status = if res.is_ok() {
+                        LogMillStatus::Success
+                    } else {
+                        LogMillStatus::Failure
+                    };
+                    *thread_status.lock().unwrap() = new_status;
+                    let _ = tx.send(res);
+                })
+                .expect("failed to spawn logmill thread");
+
+            LogMill {
+                status,
+                result_rx: rx,
+                cached_result: None,
+                abort_flag,
+                child_process,
+                thread_handle: Some(handle),
+            }
         }
     }
 
@@ -425,6 +448,7 @@ fn try_fetch_format(
             _ => return None,
         }
 
+        #[cfg(feature = "gix")]
         let (temp_file, command_str) = if format == "git" && options.git_backend == "in-process" {
             match crate::in_process_git::generate_in_process_git_log(path, options) {
                 Ok(temp) => (temp, "in-process git (gitoxide)".to_string()),
@@ -433,6 +457,10 @@ fn try_fetch_format(
         } else {
             generate_log(format, path, options, abort_flag, child_process).ok()?
         };
+        // Without gix the in-process backend falls back to the git command.
+        #[cfg(not(feature = "gix"))]
+        let (temp_file, command_str) =
+            generate_log(format, path, options, abort_flag, child_process).ok()?;
         let file = File::open(temp_file.path()).ok()?;
         let seekable = SeekableLog::new(file, Some(temp_file)).ok()?;
         let mut clog =
