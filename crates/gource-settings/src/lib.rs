@@ -16,6 +16,7 @@
 //!    reported so the frontend can run it.
 
 pub mod conffile;
+pub mod descriptor;
 pub mod display;
 pub mod gource;
 pub mod help;
