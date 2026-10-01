@@ -161,6 +161,9 @@ pub struct World {
     /// their images (`RUser::assignUserImage`), which needs the texture store.
     pub new_users: Vec<UserId>,
     pub weighted_mode: bool,
+    /// Frames where the fast directory force pass fell back to the serial
+    /// reference pass (coincident directories consume the RNG).
+    pub dir_force_fallbacks: u64,
 }
 
 /// C++ `normalise(vec2((rand() % 100) - 50, (rand() % 100) - 50))`, the
@@ -207,6 +210,7 @@ impl World {
             tuning,
             new_users: Vec::new(),
             weighted_mode: false,
+            dir_force_fallbacks: 0,
         }
     }
 
@@ -944,15 +948,39 @@ impl World {
     /// Port of `Gource::updateDirs(float dt)`. `file_idle_time` is
     /// `gGourceSettings.file_idle_time` (files idle longer fade out; 0 = never).
     pub fn update_dirs(&mut self, dt: f32, elasticity: f32, file_idle_time: f32) {
+        let mut profile = crate::profile::LogicProfile::default();
+        self.update_dirs_profiled(dt, elasticity, file_idle_time, &mut profile);
+    }
+
+    /// [`World::update_dirs`], charging directory forces, per-directory
+    /// logic (springs and file layout) and the weighted layout to `profile`.
+    pub fn update_dirs_profiled(
+        &mut self,
+        dt: f32,
+        elasticity: f32,
+        file_idle_time: f32,
+        profile: &mut crate::profile::LogicProfile,
+    ) {
+        use crate::profile::LogicSpan;
         if let Some(tree) = self.dir_tree.take() {
-            self.apply_dir_forces_recursive(self.root, &tree);
+            #[cfg(not(target_arch = "wasm32"))]
+            let threads = dir_force_threads(self.dirs.len());
+            #[cfg(target_arch = "wasm32")]
+            let threads = 1;
+            if !self.apply_dir_forces_fast(&tree, threads) {
+                self.dir_force_fallbacks += 1;
+                self.apply_dir_forces_recursive(self.root, &tree);
+            }
             self.dir_tree = Some(tree);
         }
+        profile.mark(LogicSpan::DirForces);
         self.logic_dirs_recursive(self.root, dt, elasticity, file_idle_time);
+        profile.mark(LogicSpan::DirLogic);
 
         if self.weighted_mode {
             self.update_weighted_layout_step(dt);
         }
+        profile.mark(LogicSpan::Weighted);
     }
 
     fn post_order_dirs(&self, dir_id: DirId, out: &mut Vec<DirId>) {
@@ -1139,6 +1167,164 @@ impl World {
                 self.dirs[dir_id].accel += sib_accel;
             }
         }
+    }
+
+    /// The directory force pass of [`World::apply_dir_forces_recursive`],
+    /// computed as a pure function of the current positions, with per-frame
+    /// caches for visibility and ancestry (Euler-tour intervals) instead of
+    /// recursive walks. Each directory's acceleration accumulates its
+    /// contributions in the same order as the recursive pass, so the result
+    /// is bit-identical. On native targets large trees are split across
+    /// threads (each directory writes only its own acceleration).
+    ///
+    /// Returns false, changing nothing, when some pair of directories
+    /// coincide: that consumes the shared RNG in traversal order, so the
+    /// caller must run the serial pass instead.
+    fn apply_dir_forces_fast(&mut self, tree: &QuadTree<DirId>, threads: usize) -> bool {
+        let mut order = Vec::with_capacity(self.dirs.len());
+        self.post_order_dirs(self.root, &mut order);
+        if order.len() != self.dirs.len() {
+            return false; // detached directories: keep the reference path
+        }
+        let cache = DirFrameCache::build(self, &order);
+        let work: Vec<DirId> = order
+            .iter()
+            .copied()
+            .filter(|&d| self.dirs[d].parent.is_some())
+            .collect();
+
+        let results: Option<Vec<Vec2>> = {
+            let this = &*self;
+            let compute = |chunk: &[DirId]| -> Option<Vec<Vec2>> {
+                chunk
+                    .iter()
+                    .map(|&d| this.dir_force_accel(d, tree, &cache))
+                    .collect()
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                if threads > 1 && work.len() > 1 {
+                    let chunk = work.len().div_ceil(threads);
+                    std::thread::scope(|s| {
+                        let handles: Vec<_> = work
+                            .chunks(chunk)
+                            .map(|c| s.spawn(move || compute(c)))
+                            .collect();
+                        let mut all = Vec::with_capacity(work.len());
+                        for h in handles {
+                            all.extend(h.join().expect("dir force worker panicked")?);
+                        }
+                        Some(all)
+                    })
+                } else {
+                    compute(&work)
+                }
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                let _ = threads;
+                compute(&work)
+            }
+        };
+        let Some(accels) = results else {
+            return false;
+        };
+        for (&d, a) in work.iter().zip(accels) {
+            self.dirs[d].accel = a;
+        }
+        true
+    }
+
+    /// New acceleration of `dir_id` after the directory force pass, or None
+    /// if a coincident pair needs the RNG.
+    fn dir_force_accel(
+        &self,
+        dir_id: DirId,
+        tree: &QuadTree<DirId>,
+        cache: &DirFrameCache,
+    ) -> Option<Vec2> {
+        let me = &self.dirs[dir_id];
+        let parent_id = me.parent?;
+        let parent = &self.dirs[parent_id];
+        let mut accel = me.accel;
+
+        // Mirrors `DirNode::apply_force_dir`, without the RNG branch.
+        let force = |accel: &mut Vec2, other_pos: Vec2, other_radius: f32| -> Option<()> {
+            let dir = other_pos - me.pos;
+            let posd2 = dir.length_squared();
+            let sumradius = me.dir_radius + other_radius;
+            let distance2 = posd2 - sumradius * sumradius;
+            if distance2 > 0.0 {
+                return Some(());
+            }
+            let posd = posd2.sqrt();
+            let distance = posd - me.dir_radius - other_radius;
+            if posd < 0.00001 {
+                return None;
+            }
+            *accel += distance * (dir / posd);
+            Some(())
+        };
+
+        for other_id in tree.items_in_bounds(&me.quad_item_bounds) {
+            if other_id == dir_id
+                || other_id == parent_id
+                || cache.is_ancestor(dir_id, other_id)
+                || cache.is_ancestor(other_id, dir_id)
+            {
+                continue;
+            }
+            let o = &self.dirs[other_id];
+            force(&mut accel, o.pos, o.dir_radius)?;
+        }
+
+        let parent_pos = parent.pos;
+        force(&mut accel, parent_pos, parent.dir_radius)?;
+
+        let parent_dist = me.distance_to_parent(parent);
+        let dir_to_parent = parent_pos - me.pos;
+        let dir_len = dir_to_parent.length();
+        let norm_to_parent = if dir_len > 0.0 {
+            dir_to_parent / dir_len
+        } else {
+            Vec2::ZERO
+        };
+        accel += self.tuning.force_gravity * parent_dist * norm_to_parent;
+
+        if let Some(pparent_id) = parent.parent {
+            let parent_edge = parent_pos - self.dirs[pparent_id].pos;
+            let pe_len = parent_edge.length();
+            let pe_norm = if pe_len > 0.0 {
+                parent_edge / pe_len
+            } else {
+                Vec2::ZERO
+            };
+            let dest = (parent_pos + (parent.dir_radius + me.dir_radius) * pe_norm) - me.pos;
+            accel += dest;
+        }
+
+        if !parent.children.is_empty() {
+            let mut sib_accel = Vec2::ZERO;
+            let mut visible_sibs = 1;
+            for &sib_id in &parent.children {
+                if sib_id == dir_id || !cache.visible[sib_id] {
+                    continue;
+                }
+                visible_sibs += 1;
+                let s_dir = self.dirs[sib_id].pos - me.pos;
+                let s_len = s_dir.length();
+                if s_len > 0.0 {
+                    sib_accel -= s_dir / s_len;
+                }
+            }
+            if visible_sibs > 1 {
+                let slice_size = ((parent.dir_radius as f64 * CPP_PI)
+                    / ((visible_sibs as f32 + 1.0) as f64)) as f32;
+                sib_accel *= slice_size;
+                accel += sib_accel;
+            }
+        }
+        Some(accel)
     }
 
     fn is_ancestor(&self, ancestor: DirId, desc: DirId) -> bool {
@@ -2063,9 +2249,270 @@ impl World {
     }
 }
 
+/// Per-frame directory facts for the force pass: recursive visibility and
+/// Euler-tour intervals (ancestry in O(1)).
+struct DirFrameCache {
+    visible: slotmap::SecondaryMap<DirId, bool>,
+    tin: slotmap::SecondaryMap<DirId, u32>,
+    tout: slotmap::SecondaryMap<DirId, u32>,
+}
+
+impl DirFrameCache {
+    /// `post_order` lists every directory, children before parents.
+    fn build(world: &World, post_order: &[DirId]) -> DirFrameCache {
+        let mut visible = slotmap::SecondaryMap::with_capacity(post_order.len());
+        for &d in post_order {
+            let dir = &world.dirs[d];
+            let v = dir.visible || dir.children.iter().any(|c| visible.get(*c) == Some(&true));
+            visible.insert(d, v);
+        }
+        let mut tin = slotmap::SecondaryMap::with_capacity(post_order.len());
+        let mut tout = slotmap::SecondaryMap::with_capacity(post_order.len());
+        let mut clock = 0u32;
+        let mut stack = vec![(world.root, false)];
+        while let Some((d, done)) = stack.pop() {
+            if done {
+                tout.insert(d, clock);
+                continue;
+            }
+            tin.insert(d, clock);
+            clock += 1;
+            stack.push((d, true));
+            for &c in world.dirs[d].children.iter().rev() {
+                if world.dirs.contains_key(c) {
+                    stack.push((c, false));
+                }
+            }
+        }
+        DirFrameCache { visible, tin, tout }
+    }
+
+    /// True if `ancestor` is a proper ancestor of `desc`.
+    fn is_ancestor(&self, ancestor: DirId, desc: DirId) -> bool {
+        ancestor != desc
+            && self.tin[ancestor] < self.tin[desc]
+            && self.tout[desc] <= self.tout[ancestor]
+    }
+}
+
+/// Worker threads for a force pass over `n` directories: none below a size
+/// where spawning costs more than it saves. `GOURCE_SIM_THREADS` (read once)
+/// overrides the hardware-based default.
+#[cfg(not(target_arch = "wasm32"))]
+fn dir_force_threads(n: usize) -> usize {
+    static OVERRIDE: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
+    let requested = *OVERRIDE.get_or_init(|| {
+        std::env::var("GOURCE_SIM_THREADS")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+    });
+    let hw = std::thread::available_parallelism().map_or(1, |n| n.get());
+    dir_force_threads_for(n, requested, hw)
+}
+
+/// [`dir_force_threads`] with its inputs explicit.
+#[cfg(not(target_arch = "wasm32"))]
+fn dir_force_threads_for(n: usize, requested: Option<usize>, hw: usize) -> usize {
+    const PER_THREAD: usize = 256;
+    match requested {
+        Some(t) => t.max(1).min(n.div_ceil(PER_THREAD).max(1)),
+        None => hw.min(8).min(n / PER_THREAD).max(1),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A world with a few hundred files over a nested tree, simulated until
+    /// directories have spread out.
+    fn spread_world(frames: usize) -> World {
+        let mut world = World::new(7, 31);
+        let settings = GourceSettings::default();
+        world.add_user("alice", &settings);
+        let mut cfs = Vec::new();
+        for a in 0..6 {
+            for b in 0..5 {
+                for f in 0..4 {
+                    cfs.push(CommitFile {
+                        filename: format!("/a{a}/b{b}/c{}/f{f}.rs", (a + b) % 3),
+                        action: FileAction::Add,
+                        colour: Vec3::ONE,
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+        let commit = Commit {
+            timestamp: 1000,
+            username: "alice".to_string(),
+            files: cfs.clone(),
+            ..Default::default()
+        };
+        for cf in &cfs {
+            let fid = world.add_file(cf, &settings).expect("file added");
+            world.add_file_action(&commit, cf, fid, 0.0, &settings);
+        }
+        let dt = 1.0 / 60.0;
+        for i in 0..frames {
+            world.update_bounds();
+            world.interact_users();
+            world.update_users(i as f32 * dt, dt, &settings);
+            world.interact_dirs();
+            world.update_dirs(dt, 0.0, 0.0);
+        }
+        world
+    }
+
+    fn accels(w: &World) -> Vec<(DirId, u32, u32)> {
+        let mut v: Vec<_> = w
+            .dirs
+            .iter()
+            .map(|(k, d)| (k, d.accel.x.to_bits(), d.accel.y.to_bits()))
+            .collect();
+        v.sort_by_key(|e| e.0);
+        v
+    }
+
+    #[test]
+    fn fast_dir_forces_match_recursive_bit_for_bit() {
+        let mut world = spread_world(0);
+        let dt = 1.0 / 60.0;
+        let settings = GourceSettings::default();
+        let mut compared = 0;
+        for i in 0..240 {
+            world.update_bounds();
+            world.interact_users();
+            world.update_users(i as f32 * dt, dt, &settings);
+            world.interact_dirs();
+            let tree = world.dir_tree.clone().expect("dir tree");
+            let mut reference = world.clone();
+            reference.apply_dir_forces_recursive(reference.root, &tree);
+            for threads in [1, 3] {
+                let mut fast = world.clone();
+                if fast.apply_dir_forces_fast(&tree, threads) {
+                    assert_eq!(
+                        accels(&fast),
+                        accels(&reference),
+                        "frame {i}, {threads} threads"
+                    );
+                    assert_eq!(fast.rng.clone().rand(), reference.rng.clone().rand());
+                    compared += 1;
+                } else {
+                    assert_eq!(accels(&fast), accels(&world), "fallback must not mutate");
+                }
+            }
+            world.update_dirs(dt, 0.0, 0.0);
+        }
+        assert!(
+            world.dirs.len() > 30,
+            "tree should be nested: {}",
+            world.dirs.len()
+        );
+        assert!(compared > 300, "fast path should usually apply: {compared}");
+    }
+
+    #[test]
+    fn fast_dir_forces_fall_back_on_coincident_dirs() {
+        let mut world = World::new(1, 31);
+        let settings = GourceSettings::default();
+        for name in ["/x/a.rs", "/y/b.rs"] {
+            let cf = CommitFile {
+                filename: name.to_string(),
+                action: FileAction::Add,
+                colour: Vec3::ONE,
+                ..Default::default()
+            };
+            world.add_file(&cf, &settings).expect("file added");
+        }
+        let dir = |name: &str| {
+            *world
+                .dir_map
+                .iter()
+                .find(|(k, _)| k.trim_end_matches('/') == name)
+                .expect("dir exists")
+                .1
+        };
+        let (x, y) = (dir("/x"), dir("/y"));
+        let mut tree = QuadTree::new(
+            Bounds2D::from_points(Vec2::splat(-100.0), Vec2::splat(100.0)),
+            1,
+            1,
+        );
+        for id in [x, y] {
+            let d = &mut world.dirs[id];
+            d.pos = Vec2::new(10.0, 10.0);
+            d.visible = true;
+            d.update_quad_item_bounds();
+            tree.insert(id, d.quad_item_bounds);
+        }
+        let before = accels(&world);
+        assert!(!world.apply_dir_forces_fast(&tree, 1));
+        assert_eq!(accels(&world), before);
+
+        // The serial pass handles it, consuming the RNG.
+        let mut fresh_rng = world.rng.clone();
+        world.apply_dir_forces_recursive(world.root, &tree);
+        assert_ne!(accels(&world), before);
+        assert_ne!(world.rng.rand(), fresh_rng.rand());
+    }
+
+    #[test]
+    fn fast_dir_forces_fall_back_on_detached_dirs() {
+        let mut world = spread_world(5);
+        let tree = world.dir_tree.clone().expect("dir tree");
+        let (fd, pad) = (world.tuning.file_diameter, world.tuning.dir_padding);
+        world.dirs.insert(DirNode::new("orphan", fd, pad));
+        let before = accels(&world);
+        assert!(!world.apply_dir_forces_fast(&tree, 2));
+        assert_eq!(accels(&world), before);
+    }
+
+    #[test]
+    fn update_dirs_counts_fallbacks() {
+        let mut world = spread_world(2);
+        let start = world.dir_force_fallbacks;
+        let (fd, pad) = (world.tuning.file_diameter, world.tuning.dir_padding);
+        world.dirs.insert(DirNode::new("orphan", fd, pad));
+        world.interact_dirs();
+        world.update_dirs(1.0 / 60.0, 0.0, 0.0);
+        assert_eq!(world.dir_force_fallbacks, start + 1);
+    }
+
+    #[test]
+    fn dir_frame_cache_matches_tree_walks() {
+        let world = spread_world(3);
+        let mut order = Vec::new();
+        world.post_order_dirs(world.root, &mut order);
+        let cache = DirFrameCache::build(&world, &order);
+        for &a in &order {
+            assert_eq!(cache.visible[a], world.dirs[a].is_visible(&world.dirs));
+            for &b in &order {
+                assert_eq!(
+                    cache.is_ancestor(a, b),
+                    world.is_ancestor(a, b),
+                    "{:?} {:?}",
+                    world.dirs[a].path(),
+                    world.dirs[b].path()
+                );
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn dir_force_thread_heuristic() {
+        // Hardware default: capped at 8, at least 256 dirs per thread.
+        assert_eq!(dir_force_threads_for(100, None, 64), 1);
+        assert_eq!(dir_force_threads_for(1024, None, 64), 4);
+        assert_eq!(dir_force_threads_for(100_000, None, 64), 8);
+        assert_eq!(dir_force_threads_for(100_000, None, 2), 2);
+        // Explicit request: honoured up to one thread per 256 dirs.
+        assert_eq!(dir_force_threads_for(100_000, Some(16), 2), 16);
+        assert_eq!(dir_force_threads_for(300, Some(16), 2), 2);
+        assert_eq!(dir_force_threads_for(10, Some(0), 2), 1);
+        assert!(dir_force_threads(10) >= 1);
+    }
 
     #[test]
     fn world_file_and_user_lifecycle() {

@@ -28,6 +28,7 @@ pub mod input;
 pub mod pawn;
 pub mod physics2d;
 pub mod platform;
+pub mod profile;
 pub mod scrubber;
 pub mod shell;
 pub mod spline;

@@ -43,6 +43,7 @@ use crate::camera::{STARTING_Z, ZoomCamera};
 use crate::file::FileId;
 use crate::input::{InputEvent, Key, MouseButton};
 use crate::platform::{PlatformRequest, Viewport};
+use crate::profile::LogicSpan;
 use crate::scrubber::{SeekOutcome, SimScrubber};
 use crate::user::UserId;
 use crate::world::{SceneFonts, SceneTextures, World};
@@ -296,6 +297,9 @@ pub struct Gource {
 
     pub pending_requests: Vec<PlatformRequest>,
 
+    /// Phase timings of the last [`Gource::logic`] call.
+    pub logic_profile: crate::profile::LogicProfile,
+
     pub history_builder: HistoryBuilder,
     pub history_dirty: bool,
     pub history_preindexed: bool,
@@ -494,6 +498,7 @@ impl Gource {
             fps: 60.0,
             commit_cursor: 0,
             pending_requests: Vec::new(),
+            logic_profile: Default::default(),
             history_builder,
             history_dirty: false,
             history_preindexed: false,
@@ -2239,6 +2244,7 @@ impl Gource {
     }
 
     pub fn logic(&mut self, dt: f32, viewport: Viewport, gfx: &mut Gfx) -> Result<(), AppError> {
+        self.logic_profile.begin();
         let pending_uids = std::mem::take(&mut self.world.new_users);
         for uid in pending_uids {
             let _ = self.assign_user_image(uid, gfx);
@@ -2342,8 +2348,11 @@ impl Gource {
             return Ok(());
         }
 
+        self.logic_profile.mark(LogicSpan::Prelude);
         self.scrubber.push_reverse_frame(self.snapshot());
+        self.logic_profile.mark(LogicSpan::ReverseSnapshot);
         self.maybe_record_checkpoint();
+        self.logic_profile.mark(LogicSpan::Checkpoint);
         self.scrubber.sync_playhead_from_time(self.currtime);
 
         // Fetch commits
@@ -2365,6 +2374,7 @@ impl Gource {
             self.seek_to(0.0);
             self.read_log()?;
         }
+        self.logic_profile.mark(LogicSpan::ReadLog);
 
         if self.currtime == 0 && !self.commitqueue.is_empty() {
             self.currtime = self.commitqueue[0].timestamp;
@@ -2445,6 +2455,7 @@ impl Gource {
             self.currtime = self.lasttime;
             self.subseconds = 0.0;
         }
+        self.logic_profile.mark(LogicSpan::Commits);
 
         // C++ resizes the slider to the display every tick.
         self.slider
@@ -2502,17 +2513,26 @@ impl Gource {
             cap.logic(dt);
             !cap.is_finished()
         });
+        self.logic_profile.mark(LogicSpan::Captions);
 
         // World update
         self.world.update_bounds();
         self.world.interact_users();
+        self.logic_profile.mark(LogicSpan::InteractUsers);
         self.update_users(t, dt);
+        self.logic_profile.mark(LogicSpan::UpdateUsers);
 
         self.world.interact_dirs();
-        self.world
-            .update_dirs(dt, self.settings.elasticity, self.settings.file_idle_time);
+        self.logic_profile.mark(LogicSpan::InteractDirs);
+        self.world.update_dirs_profiled(
+            dt,
+            self.settings.elasticity,
+            self.settings.file_idle_time,
+            &mut self.logic_profile,
+        );
 
         self.update_camera(dt, viewport);
+        self.logic_profile.mark(LogicSpan::Camera);
 
         let display_time = if !self.commitqueue.is_empty() {
             self.currtime
@@ -2535,6 +2555,7 @@ impl Gource {
             self.last_percent = self.scrubber.state.playhead_fraction;
             self.slider.set_percent(self.last_percent);
         }
+        self.logic_profile.mark(LogicSpan::Tail);
 
         Ok(())
     }
