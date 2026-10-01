@@ -15,7 +15,6 @@ pub struct Pawn {
     pub shadow_offset: Vec2,
 
     pub namewidth: f32,
-    pub accel: Vec2,
     pub speed: f32,
 
     pub elapsed: f32,
@@ -61,7 +60,6 @@ impl Pawn {
             size: 0.0,
             screenpos: Vec3::ZERO,
             dims: Vec2::ZERO,
-            accel: Vec2::ZERO,
         }
     }
 

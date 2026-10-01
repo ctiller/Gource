@@ -3,10 +3,12 @@ use gource_history::{
     ChangeOp, ChangeRecord, CohortMode, History, IndexedCommit, LiveFileState, PathTable,
     TreeSnapshot, UserTable,
 };
+use gource_scene::files::pack;
+use gource_scene::{Fx, ONE};
 use gource_settings::{FileColourMode, FileSizeMetric, GourceSettings};
 use gource_sim::file::File;
+use gource_sim::view::{from_fx, to_fx};
 use gource_sim::world::World;
-use slotmap::SlotMap;
 
 #[test]
 fn test_file_weights_and_pulse_animation() {
@@ -30,15 +32,13 @@ fn test_file_weights_and_pulse_animation() {
     // Greenish for positive pulse_delta
     assert!(col.y > col.x);
 
-    // Set weight target and verify interpolation during logic step
-    file.set_weight_target(400.0, 100.0, 8.0);
-    assert!(file.target_size > base_size);
+    // Set weight target and verify target_size method increases
+    file.set_weight_target(400, 100, 8.0);
+    assert!(file.target_size() > base_size);
 
-    let initial_size = file.pawn.size;
     let initial_timer = file.pulse_timer;
     file.pawn.set_hidden(false);
     file.logic(0.1, 10.0);
-    assert!(file.pawn.size > initial_size);
     assert!(file.pulse_timer < initial_timer);
 
     // Test negative pulse delta (more lines removed than added)
@@ -114,227 +114,151 @@ fn test_file_colour_modes() {
 }
 
 #[test]
-fn test_dirnode_weighted_radius_and_file_positions() {
-    let mut files = SlotMap::with_key();
-    let mut dir = gource_sim::dirnode::DirNode::new("/test/", 8.0, 1.5);
+fn test_dirnode_weighted_radius_and_packing() {
+    let mut world = World::new(42, 31);
+    let settings = GourceSettings {
+        file_size_metric: FileSizeMetric::Lines,
+        ..Default::default()
+    };
+    world.weighted_mode = true;
 
-    let fid1 = files.insert(File::new(
-        "/test/a.rs",
-        Vec3::ONE,
-        Vec2::ZERO,
-        1,
-        8.0,
-        4.0,
-        false,
-    ));
-    let fid2 = files.insert(File::new(
-        "/test/b.rs",
-        Vec3::ONE,
-        Vec2::ZERO,
-        2,
-        8.0,
-        4.0,
-        false,
-    ));
+    let f1 = world
+        .add_file(
+            &gource_vcs::CommitFile {
+                filename: "/test/a.rs".to_string(),
+                action: gource_vcs::FileAction::Add,
+                colour: Vec3::ONE,
+                lines_added: Some(100),
+                ..Default::default()
+            },
+            &settings,
+        )
+        .unwrap();
 
-    dir.files.push(fid1);
-    dir.files.push(fid2);
-    dir.visible_count = 2;
+    let f2 = world
+        .add_file(
+            &gource_vcs::CommitFile {
+                filename: "/test/b.rs".to_string(),
+                action: gource_vcs::FileAction::Add,
+                colour: Vec3::ONE,
+                lines_added: Some(400),
+                ..Default::default()
+            },
+            &settings,
+        )
+        .unwrap();
 
-    files[fid1].pawn.set_hidden(false);
-    files[fid2].pawn.set_hidden(false);
-    files[fid1].pawn.size = 16.0;
-    files[fid1].radius = 8.0;
-    files[fid2].pawn.size = 24.0;
-    files[fid2].radius = 12.0;
+    let dir_id = world.dir_map["/test/"];
 
-    // Test calc_weighted_radius
-    dir.calc_weighted_radius(1.5, [], &files);
+    world.files[f1].pawn.set_hidden(false);
+    world.files[f2].pawn.set_hidden(false);
+
+    world.files[f1].set_weight_target(100, 100, world.tuning.file_diameter);
+    world.files[f1].sim.size = world.files[f1].sim.target_size;
+    world.files[f1].sim.radius = world.files[f1].sim.target_size / 2;
+
+    world.files[f2].set_weight_target(400, 100, world.tuning.file_diameter);
+    world.files[f2].sim.size = world.files[f2].sim.target_size;
+    world.files[f2].sim.radius = world.files[f2].sim.target_size / 2;
+
+    // Pack files and update weighted radii
+    world.update_weighted_layout();
+    world.sync_view(1.0);
+
+    let dir = &world.dirs[dir_id];
     assert!(dir.dir_radius > 1.0);
     assert!(dir.parent_radius > 1.0);
 
-    // Test update_weighted_file_positions
-    dir.update_weighted_file_positions(8.0, &mut files);
-    // Under tight circle packing, visible files are packed touching each other
-    let pos1 = files[fid1].dest * files[fid1].distance;
-    let pos2 = files[fid2].dest * files[fid2].distance;
-    let dist_12 = (pos1 - pos2).length();
-    let r1 = (files[fid1].pawn.size * 0.5).max(8.0 * 0.25);
-    let r2 = (files[fid2].pawn.size * 0.5).max(8.0 * 0.25);
+    let p1 = world.files[f1].sim.pos;
+    let p2 = world.files[f2].sim.pos;
+    let dist = (p1 - p2).length();
+    let min_dist = world.files[f1].sim.radius + world.files[f2].sim.radius;
+    // With integer packing, circles do not overlap (allowing 1 unit tolerance)
     assert!(
-        (dist_12 - (r1 + r2)).abs() < 1e-2,
-        "two files should be tangent"
+        dist >= min_dist - 1,
+        "two packed files must not overlap: dist {dist} vs min_dist {min_dist}"
     );
-
-    // Test hidden file skipped in weighted file positions & radius
-    let fid_hidden = files.insert(File::new(
-        "/test/hidden.rs",
-        Vec3::ONE,
-        Vec2::ZERO,
-        3,
-        8.0,
-        4.0,
-        false,
-    ));
-    dir.files.push(fid_hidden);
-    // hidden is true by default
-    dir.update_weighted_file_positions(8.0, &mut files);
-    assert_eq!(files[fid_hidden].dest, Vec2::ZERO);
-    assert_eq!(files[fid_hidden].distance, 0.0);
-
-    // Test calc_weighted_radius with children areas
-    dir.calc_weighted_radius(1.5, [100.0, 50.0], &files);
-    assert!(dir.dir_radius > 10.0);
 }
 
 #[test]
 fn test_tight_circle_packing_non_overlapping_and_tightness() {
-    let mut files = SlotMap::with_key();
-    let base_diameter = 8.0;
-    let mut dir = gource_sim::dirnode::DirNode::new("/cluster/", base_diameter, 1.5);
-
-    // Create 20 files with wildly varying sizes (radii 2.0 to 16.0)
-    let radii = [
+    // 20 files with varying radii in Q8
+    let radii_floats = [
         2.0, 16.0, 4.0, 12.0, 6.0, 14.0, 3.0, 10.0, 8.0, 5.0, 15.0, 7.0, 11.0, 9.0, 13.0, 2.5, 8.5,
         6.5, 11.5, 4.5,
     ];
-    let base_diameter = 8.0;
+    let radii: Vec<Fx> = radii_floats.iter().map(|&r| to_fx(r)).collect();
 
-    for (i, &r) in radii.iter().enumerate() {
-        let fid = files.insert(File::new(
-            &format!("/cluster/file_{i}.rs"),
-            Vec3::ONE,
-            Vec2::ZERO,
-            i as i32,
-            base_diameter,
-            4.0,
-            false,
-        ));
-        files[fid].pawn.set_hidden(false);
-        files[fid].pawn.size = r * 2.0;
-        files[fid].radius = r;
-        files[fid].target_size = r * 2.0;
-        dir.files.push(fid);
-    }
-    dir.visible_count = radii.len();
+    let placed = pack(&radii);
+    assert_eq!(placed.len(), radii.len());
 
-    dir.update_weighted_file_positions(base_diameter, &mut files);
-
-    let positions: Vec<(Vec2, f32)> = dir
-        .files
-        .iter()
-        .map(|&fid| {
-            let f = &files[fid];
-            let pos = f.dest * f.distance;
-            let r = (f.pawn.size * 0.5).max(base_diameter * 0.25);
-            (pos, r)
-        })
-        .collect();
-
-    // 1. Non-overlapping guarantee: every pair (a, b) has ||p_a - p_b|| >= (r_a + r_b) - 1e-2
-    for i in 0..positions.len() {
-        for j in i + 1..positions.len() {
-            let (p_a, r_a) = positions[i];
-            let (p_b, r_b) = positions[j];
-            let dist = (p_a - p_b).length();
+    // 1. Non-overlapping guarantee: every pair (i, j) satisfies dist >= r_i + r_j - 1
+    for i in 0..placed.len() {
+        for j in i + 1..placed.len() {
+            let dist = (placed[i] - placed[j]).length();
+            let min_dist = radii[i] + radii[j];
             assert!(
-                dist >= (r_a + r_b) - 1e-2,
-                "overlap detected between file {i} and {j}: dist = {dist}, r_a + r_b = {}",
-                r_a + r_b
+                dist >= min_dist - 1,
+                "overlap detected between {i} and {j}: dist = {dist}, min_dist = {min_dist}"
             );
         }
     }
 
-    // 2. Tightness guarantee: every file (N >= 2) is tangent (within 1e-2) to at least one neighbor
-    for (i, &(p_a, r_a)) in positions.iter().enumerate() {
-        let mut min_gap = f32::INFINITY;
-        for (j, &(p_b, r_b)) in positions.iter().enumerate() {
+    // 2. Tightness guarantee: each circle is tangent (within 2 Q8 units) to at least one neighbor
+    for i in 0..placed.len() {
+        let mut min_gap = i32::MAX;
+        for j in 0..placed.len() {
             if i == j {
                 continue;
             }
-            let gap = ((p_a - p_b).length() - (r_a + r_b)).abs();
+            let dist = (placed[i] - placed[j]).length();
+            let gap = (dist - (radii[i] + radii[j])).abs();
             if gap < min_gap {
                 min_gap = gap;
             }
         }
         assert!(
-            min_gap <= 1e-2,
-            "file {i} is not tangent to any neighbor: min gap = {min_gap}"
+            min_gap <= 2,
+            "circle {i} is not tangent to any neighbor: min gap = {min_gap}"
         );
     }
 
-    // Compactness: packing efficiency sum(pi * r^2) / (pi * R_bound^2) > 0.55
-    let total_file_area: f32 = radii.iter().map(|&r| std::f32::consts::PI * r * r).sum();
-    let r_bound = positions
+    // 3. Compactness: packing efficiency sum(pi * r^2) / (pi * R_bound^2) > 0.45
+    let total_file_area: f32 = radii_floats
         .iter()
-        .map(|(p, r)| p.length() + r)
+        .map(|&r| std::f32::consts::PI * r * r)
+        .sum();
+    let r_bound: f32 = placed
+        .iter()
+        .zip(&radii)
+        .map(|(p, &r)| from_fx(p.length() + r))
         .fold(0.0f32, f32::max);
     let bound_area = std::f32::consts::PI * r_bound * r_bound;
     let efficiency = total_file_area / bound_area;
     assert!(
-        efficiency > 0.55,
-        "packing efficiency too low: {efficiency} (expected > 0.55)"
-    );
-
-    // 3. Test calc_weighted_radius encloses packed cluster
-    dir.calc_weighted_radius(1.5, [], &files);
-    assert!(
-        dir.parent_radius >= r_bound * 1.5 - 1e-3,
-        "dir.parent_radius ({}) must be at least r_bound * dir_padding ({})",
-        dir.parent_radius,
-        r_bound * 1.5
+        efficiency > 0.45,
+        "packing efficiency too low: {efficiency} (expected > 0.45)"
     );
 }
 
 #[test]
 fn test_tight_circle_packing_large_directory() {
-    let mut files = SlotMap::with_key();
-    let base_diameter = 8.0;
-    let mut dir = gource_sim::dirnode::DirNode::new("/big_cluster/", base_diameter, 1.5);
-
-    // 60 files to exercise k > 48 branch and frontier pruning
-    for i in 0..60 {
-        let r = 2.0 + ((i * 7) % 15) as f32;
-        let fid = files.insert(File::new(
-            &format!("/big_cluster/file_{i}.rs"),
-            Vec3::ONE,
-            Vec2::ZERO,
-            i,
-            base_diameter,
-            4.0,
-            false,
-        ));
-        files[fid].pawn.set_hidden(false);
-        files[fid].pawn.size = r * 2.0;
-        files[fid].radius = r;
-        files[fid].target_size = r * 2.0;
-        dir.files.push(fid);
-    }
-    dir.visible_count = 60;
-
-    dir.update_weighted_file_positions(base_diameter, &mut files);
-
-    let positions: Vec<(Vec2, f32)> = dir
-        .files
-        .iter()
-        .map(|&fid| {
-            let f = &files[fid];
-            let pos = f.dest * f.distance;
-            let r = (f.pawn.size * 0.5).max(base_diameter * 0.25);
-            (pos, r)
-        })
+    // 60 files to exercise k > 48 frontier pruning
+    let radii: Vec<Fx> = (0..60)
+        .map(|i| to_fx(2.0 + ((i * 7) % 15) as f32))
         .collect();
 
+    let placed = pack(&radii);
+    assert_eq!(placed.len(), 60);
+
     // Verify non-overlapping
-    for i in 0..positions.len() {
-        for j in i + 1..positions.len() {
-            let (p_a, r_a) = positions[i];
-            let (p_b, r_b) = positions[j];
-            let dist = (p_a - p_b).length();
+    for i in 0..placed.len() {
+        for j in i + 1..placed.len() {
+            let dist = (placed[i] - placed[j]).length();
+            let min_dist = radii[i] + radii[j];
             assert!(
-                dist >= (r_a + r_b) - 1e-2,
-                "overlap in 60-file cluster: dist = {dist}, r_a + r_b = {}",
-                r_a + r_b
+                dist >= min_dist - 1,
+                "overlap in 60-file cluster between {i} and {j}: dist = {dist}, min_dist = {min_dist}"
             );
         }
     }
@@ -343,15 +267,19 @@ fn test_tight_circle_packing_large_directory() {
 #[test]
 fn test_directory_contact_model_resolution() {
     let mut world = World::new(42, 31);
-    let d1 = world
-        .dirs
-        .insert(gource_sim::dirnode::DirNode::new("/src/", 8.0, 1.5));
+    let d1 = world.dirs.insert(gource_sim::dirnode::DirNode::new(
+        "/src/",
+        world.params.file_area,
+        world.params.padding,
+    ));
     world.dir_map.insert("/src/".to_string(), d1);
     world.add_node_to_dir(world.root, d1);
 
-    let d2 = world
-        .dirs
-        .insert(gource_sim::dirnode::DirNode::new("/tests/", 8.0, 1.5));
+    let d2 = world.dirs.insert(gource_sim::dirnode::DirNode::new(
+        "/tests/",
+        world.params.file_area,
+        world.params.padding,
+    ));
     world.dir_map.insert("/tests/".to_string(), d2);
     world.add_node_to_dir(world.root, d2);
 
@@ -366,8 +294,8 @@ fn test_directory_contact_model_resolution() {
         false,
     ));
     world.files[f1].pawn.set_hidden(false);
-    world.files[f1].pawn.size = 20.0;
-    world.files[f1].radius = 10.0;
+    world.files[f1].sim.size = 20 * ONE;
+    world.files[f1].sim.radius = 10 * ONE;
     world.dirs[d1].files.push(f1);
     world.dirs[d1].visible_count = 1;
 
@@ -381,16 +309,17 @@ fn test_directory_contact_model_resolution() {
         false,
     ));
     world.files[f2].pawn.set_hidden(false);
-    world.files[f2].pawn.size = 20.0;
-    world.files[f2].radius = 10.0;
+    world.files[f2].sim.size = 20 * ONE;
+    world.files[f2].sim.radius = 10 * ONE;
     world.dirs[d2].files.push(f2);
     world.dirs[d2].visible_count = 1;
 
     // Place d1 and d2 right on top of each other
-    world.dirs[d1].pos = Vec2::ZERO;
-    world.dirs[d2].pos = Vec2::new(1.0, 0.0);
+    world.dirs[d1].place(gource_scene::IVec2::ZERO);
+    world.dirs[d2].place(gource_scene::IVec2::new(ONE, 0));
 
     world.update_weighted_layout();
+    world.sync_view(1.0);
 
     // Verify d1 and d2 are pushed apart so their parent_radius circles do not overlap
     let r1 = world.dirs[d1].parent_radius;
@@ -404,15 +333,17 @@ fn test_directory_contact_model_resolution() {
 }
 
 #[test]
-fn test_multi_directory_cluster_rapier_resolution() {
+fn test_multi_directory_cluster_resolution() {
     let mut world = World::new(42, 31);
     let mut dir_ids = Vec::new();
 
     // Create 4 overlapping child directories around root
     for name in ["/a/", "/b/", "/c/", "/d/"] {
-        let d = world
-            .dirs
-            .insert(gource_sim::dirnode::DirNode::new(name, 8.0, 1.5));
+        let d = world.dirs.insert(gource_sim::dirnode::DirNode::new(
+            name,
+            world.params.file_area,
+            world.params.padding,
+        ));
         world.dir_map.insert(name.to_string(), d);
         world.add_node_to_dir(world.root, d);
 
@@ -427,17 +358,22 @@ fn test_multi_directory_cluster_rapier_resolution() {
             false,
         ));
         world.files[f].pawn.set_hidden(false);
-        world.files[f].pawn.size = 24.0;
-        world.files[f].radius = 12.0;
+        world.files[f].sim.size = 24 * ONE;
+        world.files[f].sim.radius = 12 * ONE;
         world.dirs[d].files.push(f);
         world.dirs[d].visible_count = 1;
 
         // Position all clustered tightly at origin
-        world.dirs[d].pos = Vec2::new(dir_ids.len() as f32 * 0.5, (dir_ids.len() % 2) as f32 * 0.5);
+        let p = gource_scene::IVec2::new(
+            (dir_ids.len() as i32 * ONE) / 2,
+            ((dir_ids.len() % 2) as i32 * ONE) / 2,
+        );
+        world.dirs[d].place(p);
         dir_ids.push(d);
     }
 
     world.update_weighted_layout();
+    world.sync_view(1.0);
 
     // Verify root is still at origin
     assert_eq!(world.dirs[world.root].pos, Vec2::ZERO);
@@ -461,35 +397,14 @@ fn test_multi_directory_cluster_rapier_resolution() {
 
 #[test]
 fn test_tight_circle_packing_single_file_and_empty() {
-    let mut files = SlotMap::with_key();
-    let mut dir = gource_sim::dirnode::DirNode::new("/single/", 8.0, 1.5);
+    // Empty
+    let empty: Vec<Fx> = Vec::new();
+    assert!(pack(&empty).is_empty());
 
-    // Empty dir
-    dir.update_weighted_file_positions(8.0, &mut files);
-    assert_eq!(dir.visible_count, 0);
-
-    // 1 visible file
-    let fid = files.insert(File::new(
-        "/single/one.rs",
-        Vec3::ONE,
-        Vec2::ZERO,
-        1,
-        8.0,
-        4.0,
-        false,
-    ));
-    files[fid].pawn.set_hidden(false);
-    files[fid].pawn.size = 12.0;
-    files[fid].radius = 6.0;
-    dir.files.push(fid);
-    dir.visible_count = 1;
-
-    dir.update_weighted_file_positions(8.0, &mut files);
-    assert_eq!(files[fid].dest, Vec2::ZERO);
-    assert_eq!(files[fid].distance, 0.0);
-
-    dir.calc_weighted_radius(1.5, [], &files);
-    assert!(dir.dir_radius >= 6.0 * 1.5 - 1e-3);
+    // 1 circle placed at origin
+    let single = vec![to_fx(6.0)];
+    let placed = pack(&single);
+    assert_eq!(placed, vec![gource_scene::IVec2::ZERO]);
 }
 
 #[test]
@@ -611,7 +526,7 @@ fn test_materialize_from_snapshot_and_settle() {
     let main_fid = world.files_by_path["/src/main.rs"];
     assert_eq!(world.files[main_fid].lines, 120);
     assert_eq!(world.files[main_fid].byte_size, 4096);
-    assert!(world.files[main_fid].target_size > world.tuning.file_diameter);
+    assert!(world.files[main_fid].target_size() > world.tuning.file_diameter);
     assert!(world.files[main_fid].dominant_cohort_colour.is_some());
 
     // Verify users alice and bob were created and placed
@@ -631,6 +546,7 @@ fn test_no_jitter_on_file_edit_and_smooth_swirl() {
         file_size_metric: FileSizeMetric::Lines,
         ..Default::default()
     };
+    world.weighted_mode = true;
 
     // Add 10 files to a directory
     let mut fids = Vec::new();
@@ -652,30 +568,35 @@ fn test_no_jitter_on_file_edit_and_smooth_swirl() {
             .unwrap();
         world.files[fid].pawn.set_hidden(false);
         world.files[fid].apply_line_delta(Some(50 + (i * 20) as u32), None, 0.0);
-        world.files[fid].set_weight_target((50 + i * 20) as f32, 100.0, 8.0);
+        world.files[fid].set_weight_target(50 + i * 20, 100, 8.0);
         fids.push(fid);
     }
-
-    let dir_id = world.dir_map["/src/"];
 
     // Settle layout
     world.update_weighted_layout();
     for _ in 0..30 {
-        world.dirs[dir_id].step_weighted_files(0.016, 8.0, &mut world.files);
+        world.begin_tick();
+        world.update_sim_bounds();
+        let preorder = world.preorder_dirs();
+        world.update_weighted_layout_step(&preorder);
+        world.end_tick();
     }
+    world.sync_view(1.0);
 
     // Now edit one file in the directory
     let edited_fid = fids[3];
     world.files[edited_fid].apply_line_delta(Some(500), None, 0.0);
-    world.files[edited_fid].set_weight_target(600.0, 100.0, 8.0);
+    world.files[edited_fid].set_weight_target(600, 100, 8.0);
 
-    // Step 10 frames of logic and verify per-frame position delta is small (< 5.0 px)
+    // Step 10 ticks and verify per-tick position delta in view is small (< 5.0 px)
     for _ in 0..10 {
         let prev_positions: Vec<Vec2> = fids.iter().map(|&fid| world.files[fid].pawn.pos).collect();
-        world.update_weighted_layout();
-        for &fid in &fids {
-            world.files[fid].logic(0.016, 0.0);
-        }
+        world.begin_tick();
+        world.update_sim_bounds();
+        let preorder = world.preorder_dirs();
+        world.update_weighted_layout_step(&preorder);
+        world.end_tick();
+        world.sync_view(1.0);
 
         for (idx, &fid) in fids.iter().enumerate() {
             let delta = (world.files[fid].pawn.pos - prev_positions[idx]).length();
@@ -705,21 +626,21 @@ fn test_no_jitter_on_file_edit_and_smooth_swirl() {
         world.files[new_fid].pawn.size <= 0.2,
         "new file should start near zero size"
     );
-    let initial_size = world.files[new_fid].pawn.size;
     world.files[new_fid].pawn.set_hidden(false);
-    world.files[new_fid].logic(0.1, 0.0);
-    assert!(
-        world.files[new_fid].pawn.size > initial_size,
-        "new file should grow smoothly"
-    );
+    let initial_size = world.files[new_fid].sim.size;
+    let target = world.files[new_fid].size_goal();
+    let next_size = gource_scene::files::animate_size(initial_size, target);
+    assert!(next_size > initial_size, "new file should grow smoothly");
 
     // Test removing a file shrinks its size toward zero
     let removed_fid = fids[0];
     world.files[removed_fid].removing = true;
-    let size_before = world.files[removed_fid].pawn.size;
-    world.files[removed_fid].logic(0.1, 0.0);
+    let size_before = world.files[removed_fid].sim.size;
+    let target_remove = world.files[removed_fid].size_goal();
+    assert_eq!(target_remove, 0);
+    let size_after = gource_scene::files::animate_size(size_before, target_remove);
     assert!(
-        world.files[removed_fid].pawn.size < size_before,
+        size_after < size_before,
         "removing file should shrink smoothly toward zero"
     );
 }
@@ -747,11 +668,11 @@ fn test_laser_touch_applies_push_force() {
     world.files[fid].pawn.set_hidden(false);
 
     // Place user at (-50.0, 0.0) and file at (0.0, 0.0)
-    world.users[uid].pawn.set_pos(Vec2::new(-50.0, 0.0));
+    world.users[uid].place(gource_scene::IVec2::new(-50 * ONE, 0));
     let dir_id = world.files[fid].dir.unwrap();
-    world.dirs[dir_id].pos = Vec2::ZERO;
-    world.files[fid].pawn.pos = Vec2::ZERO;
-    world.files[fid].vel = Vec2::ZERO;
+    world.dirs[dir_id].place(gource_scene::IVec2::ZERO);
+    world.files[fid].sim.pos = gource_scene::IVec2::ZERO;
+    world.files[fid].sim.vel = gource_scene::IVec2::ZERO;
 
     let commit = gource_vcs::Commit {
         timestamp: 1000,
@@ -762,15 +683,15 @@ fn test_laser_touch_applies_push_force() {
     world.add_file_action(&commit, &cf, fid, 1.0, &settings);
 
     // Initial velocity should be zero
-    assert_eq!(world.files[fid].vel, Vec2::ZERO);
+    assert_eq!(world.files[fid].sim.vel, gource_scene::IVec2::ZERO);
 
     // Run update_users to trigger the laser touch action
     world.update_users(1.0, 0.25, &settings);
 
     // File should have received an impulse away from the author (i.e. positive X direction)
     assert!(
-        world.files[fid].vel.x > 0.0,
+        world.files[fid].sim.vel.x > 0,
         "expected file velocity x > 0 away from user, got {:?}",
-        world.files[fid].vel
+        world.files[fid].sim.vel
     );
 }

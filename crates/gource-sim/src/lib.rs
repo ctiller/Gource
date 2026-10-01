@@ -1,7 +1,8 @@
 //! Engine-agnostic Gource simulation.
 //!
 //! Owns all state (no globals): the directory tree, files, users, actions and
-//! camera, advanced with `dt` and tessellated into a
+//! camera. The scene advances on a fixed integer tick (`gource-scene`); each
+//! frame interpolates a float view of it, tessellated into a
 //! [`gource_draw::DrawList`] each frame. Frontends feed [`input::InputEvent`]s
 //! in and execute [`platform::PlatformRequest`]s coming out.
 //!
@@ -12,8 +13,10 @@
 //! * [`user`] — `RUser` (user.cpp)
 //! * [`action`] — `RAction` and subclasses (action.cpp)
 //! * [`spline`] — `SplineEdge` (spline.cpp)
-//! * [`dirnode`] — `RDirNode` layout, physics and drawing (dirnode.cpp)
-//! * [`world`] — arenas tying dirs/files/users/actions together
+//! * [`dirnode`] — `RDirNode` tree bookkeeping (dirnode.cpp)
+//! * [`world`] — arenas tying dirs/files/users/actions together, the
+//!   fixed-tick integer simulation step (`gource-scene` kernels) and drawing
+//! * [`view`] — the float view of the integer scene (interpolation, rotation)
 //! * [`app`] — [`GourceApp`], the frontend-facing API over the `Gource`
 //!   state machine and `GourceShell` (gource.cpp, gource_shell.cpp).
 
@@ -26,13 +29,14 @@ pub mod file;
 pub mod gource;
 pub mod input;
 pub mod pawn;
-pub mod physics2d;
 pub mod platform;
 pub mod profile;
 pub mod scrubber;
 pub mod shell;
 pub mod spline;
+pub mod step;
 pub mod user;
+pub mod view;
 pub mod world;
 
 pub use action::{Action, ActionKind};
@@ -44,7 +48,7 @@ pub use gource::SimSnapshot;
 pub use input::{InputEvent, Key, Modifiers, MouseButton};
 pub use pawn::Pawn;
 pub use platform::{PlatformRequest, Viewport};
-pub use scrubber::{SeekOutcome, SimScrubber};
+pub use scrubber::{SeekOutcome, SimScrubber, TickRecord};
 pub use spline::SplineEdge;
 pub use user::{User, UserId};
 pub use world::{DeletedFileInfo, DeletedUserInfo, SceneFonts, SceneTextures, Tuning, World};

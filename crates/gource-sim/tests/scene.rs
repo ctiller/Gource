@@ -6,6 +6,7 @@ use gource_sim::action::{Action, ActionKind};
 use gource_sim::dirnode::DirNode;
 use gource_sim::file::{File, FileId};
 use gource_sim::pawn::Pawn;
+use gource_sim::profile::LogicProfile;
 use gource_sim::spline::SplineEdge;
 use gource_sim::user::User;
 use gource_sim::world::{SceneFonts, SceneTextures, World};
@@ -185,25 +186,8 @@ fn test_user_full_coverage() {
     u.last_action = 5.0;
     assert_eq!(u.alpha(4.0), 0.0); // 10 - 5 - 4 = 1.0 -> alpha = 1.0 - 1.0 = 0.0
 
-    // Overlap forces
-    let mut rng = gource_core::crand::CRand::new(999);
-    u.apply_force_user(u.pawn.pos, 100.0, &mut rng); // dist < 0.001
-    assert!(u.pawn.accel.length() > 0.0);
-    u.pawn.accel = Vec2::ZERO;
-
-    u.apply_force_action(u.pawn.pos, 50.0, 100.0, &mut rng); // dist < 0.001
-    assert!(u.pawn.accel.length() > 0.0);
-    u.pawn.accel = Vec2::ZERO;
-
-    // Beam distance pull force
-    u.apply_force_action(u.pawn.pos + Vec2::new(200.0, 0.0), 50.0, 100.0, &mut rng);
-    assert!(u.pawn.accel.x > 0.0);
-
-    // Accel clamping to max speed
-    u.pawn.speed = 10.0;
-    u.pawn.accel = Vec2::new(100.0, 0.0);
-    u.logic(0.0, 0.1, 5.0, 100.0, 0.5, |_| None);
-    assert!(u.pawn.pos.x > 50.0);
+    // Personal space adaptation
+    assert_eq!(u.personal_space(1000), 1000);
 
     // Active actions logic
     let mut sm: SlotMap<FileId, ()> = SlotMap::with_key();
@@ -211,13 +195,15 @@ fn test_user_full_coverage() {
     let mut act = Action::new(f1, 100, 0.0, ActionKind::Remove);
     act.rate = 10.0;
     u.active_actions.push(act);
-    let events = u.logic(1.0, 0.5, 5.0, 100.0, 0.5, |_| None);
+    let events = u.logic(1.0, 0.5, 5.0, 100 * gource_scene::ONE, |_| None);
     assert!(!events.is_empty());
 }
 
 #[test]
 fn test_dirnode_full_coverage() {
-    let mut d = DirNode::new("/root/sub", 8.0, 1.2);
+    let file_area = gource_scene::dirs::file_area(8 * gource_scene::ONE);
+    let padding = 384; // 1.5 in Q8
+    let mut d = DirNode::new("/root/sub", file_area, padding);
     // C++ RDirNode's constructor runs adjustPath() with no parent:
     // path_token_offset = abspath.size() ("/root/sub/").
     assert_eq!(d.token_offset(), 10);
@@ -239,28 +225,12 @@ fn test_dirnode_full_coverage() {
     d.adjust_path(100); // offset > length
     assert_eq!(d.path_token, "");
 
-    // Overlap forces: dist < 0.00001
-    let mut rng = gource_core::crand::CRand::new(1234);
-    d.apply_force_dir(d.pos, 10.0, &mut rng);
-    assert!(d.accel.length() > 0.0);
-
-    // Spline update
-    let p_pos = Vec2::new(0.0, 100.0);
-    d.update_spline_point(0.5, p_pos);
-    assert!(d.spos.length() > 0.0);
-
-    // Initial position
-    let hasher = gource_core::StringHasher::default();
-    d.set_initial_position(p_pos, Some(Vec2::new(0.0, 200.0)), &hasher);
-    assert!(d.position_initialized);
-
-    // Rotate around center
-    d.pos = Vec2::new(10.0, 0.0);
-    d.rotate_around(1.0, 0.0, Vec2::new(5.0, 0.0));
-    assert!((d.pos.x - 5.0).abs() < 1e-4);
-    assert!((d.pos.y - 5.0).abs() < 1e-4);
+    // Positional placement
+    d.set_pos(Vec2::new(10.0, 20.0));
+    assert_eq!(d.pos(), Vec2::new(10.0, 20.0));
 
     // Bounds
+    d.update_quad_item_bounds();
     let b = d.bounds();
     assert!(b.width() > 0.0);
 
@@ -298,11 +268,14 @@ fn test_world_drawing_and_frustum() {
     world.add_file_action(&commit, &cf, fid, 0.0, &settings);
 
     // Update users and tree so file is touched and active
-    world.update_users(0.5, 0.3, &settings);
-    world.update_bounds();
+    world.begin_tick();
+    world.update_sim_bounds();
     world.interact_users();
-    world.interact_dirs();
-    world.update_dirs(0.1, 0.2, 0.0);
+    world.update_users(0.5, 0.3, &settings);
+    let mut profile = LogicProfile::default();
+    world.update_dirs(0.1, 0.2, &mut profile);
+    world.end_tick();
+    world.sync_view(1.0);
 
     let proj = Projection::new(Vec3::new(0.0, 0.0, -500.0), Vec2::new(1280.0, 720.0));
     world.prepare_frame(&proj, &settings);
@@ -423,32 +396,19 @@ fn test_platform_viewport_and_requests() {
 
 #[test]
 fn test_dirnode_additional_coverage() {
-    let mut d = DirNode::new("/alpha/beta", 10.0, 2.0);
+    let file_area = gource_scene::dirs::file_area(8 * gource_scene::ONE);
+    let padding = 384;
+    let mut d = DirNode::new("/alpha/beta", file_area, padding);
     assert_eq!(d.pos(), Vec2::ZERO);
     d.set_pos(Vec2::new(15.0, 25.0));
     assert_eq!(d.pos(), Vec2::new(15.0, 25.0));
     assert!(d.radius() >= 0.0);
     assert_eq!(d.parent_radius(), 1.0);
 
-    let mut parent = DirNode::new("/alpha", 10.0, 2.0);
-    parent.set_pos(Vec2::new(50.0, 50.0));
-    let dist = d.distance_to_parent(&parent);
-    assert!(dist > 0.0);
-
-    // rotate
-    d.rotate(0.5, 0.2);
-
     let mut dirs: SlotMap<gource_sim::file::DirId, DirNode> = SlotMap::with_key();
-    let child = DirNode::new("/alpha/beta/gamma", 10.0, 2.0);
+    let child = DirNode::new("/alpha/beta/gamma", file_area, padding);
     let cid = dirs.insert(child);
     d.children.push(cid);
-
-    // move_step with elasticity > 0.0
-    d.parent = Some(cid);
-    d.pos = Vec2::new(10.0, 10.0);
-    d.accel = Vec2::new(10.0, 5.0);
-    d.move_step(0.1, 0.5);
-    assert!(d.pos.x > 10.0);
 
     // is_visible with visible child
     assert!(!d.is_visible(&dirs));
@@ -511,10 +471,6 @@ fn test_user_additional_coverage() {
     let ncol_sel = u.name_colour(Vec3::new(1.0, 1.0, 0.0), Vec3::new(0.0, 1.0, 1.0));
     assert_eq!(ncol_sel, Vec3::new(1.0, 1.0, 0.0));
 
-    // Desired dist force pull in apply_force_action
-    let mut rng = gource_core::crand::CRand::new(123);
-    u.apply_force_action(Vec2::new(15.0, 10.0), 20.0, 50.0, &mut rng);
-
     // Action queue with overdue max_file_lag
     let mut sm: SlotMap<FileId, ()> = SlotMap::with_key();
     let f1 = sm.insert(());
@@ -532,7 +488,13 @@ fn test_user_additional_coverage() {
     assert_eq!(u.pending_action_count(), 2);
 
     // Logic with max_file_lag causing action to accelerate
-    u.logic(50.0, 0.1, 5.0, 100.0, 0.5, |_| Some(Vec2::new(10.0, 10.0)));
+    let beam_dist = 100 * gource_scene::ONE;
+    u.logic(50.0, 0.1, 5.0, beam_dist, |_| {
+        Some(gource_scene::IVec2::new(
+            10 * gource_scene::ONE,
+            10 * gource_scene::ONE,
+        ))
+    });
     assert!(!u.active_actions.is_empty());
 }
 
@@ -612,15 +574,21 @@ fn test_world_comprehensive_coverage() {
     for did in world.dir_map.values().copied().collect::<Vec<_>>() {
         world.dirs[did].visible = true;
     }
-    world.update_bounds();
+    world.begin_tick();
+    world.update_sim_bounds();
     world.interact_users();
-    world.interact_dirs();
-    world.update_dirs(0.1, 0.5, 0.0);
+    let mut profile = LogicProfile::default();
+    world.update_dirs(0.1, 0.5, &mut profile);
+    world.end_tick();
+    world.sync_view(1.0);
 
     // Finish actions in update_users
     for _ in 0..15 {
+        world.begin_tick();
         world.update_users(1.0, 0.2, &settings);
+        world.end_tick();
     }
+    world.sync_view(1.0);
 
     // Prepare frame and draw
     let proj = Projection::new(Vec3::new(0.0, 0.0, -1000.0), Vec2::new(1920.0, 1080.0));
@@ -669,7 +637,6 @@ fn test_world_deep_tree_forces_and_reparenting() {
     let mut world = World::new(9999, 1111);
     let mut settings = GourceSettings::default();
 
-    // Force area > 10000 by setting positions spread out
     let cf_a = CommitFile {
         filename: "/a/b/c/d/file1.txt".to_string(),
         action: FileAction::Add,
@@ -694,26 +661,32 @@ fn test_world_deep_tree_forces_and_reparenting() {
 
     // Spread directory positions to trigger max quadtree depth (>10000 area)
     for (i, dir) in world.dirs.values_mut().enumerate() {
-        dir.pos = Vec2::new((i as f32) * 500.0, (i as f32) * 500.0);
+        let p = gource_scene::IVec2::new(
+            (i as i32) * 500 * gource_scene::ONE,
+            (i as i32) * 500 * gource_scene::ONE,
+        );
+        dir.place(p);
         dir.visible = true;
     }
 
-    world.update_bounds();
-    assert!(world.dir_bounds.area() > 10000.0);
+    world.begin_tick();
+    world.update_sim_bounds();
+    assert!(world.sim_dir_bounds.is_some());
 
-    // interact_dirs with deep quadtree
-    world.interact_dirs();
-
-    // User interactions with area > 10000
+    // User interactions
     let u1 = world.add_user("user1", &settings);
-    let u2 = world.add_user("user2", &settings);
-    world.users[u1].pawn.set_pos(Vec2::new(100.0, 100.0));
-    world.users[u2].pawn.set_pos(Vec2::new(120.0, 100.0));
-    world.update_bounds();
+    let _u2 = world.add_user("user2", &settings);
+    let u1_pos = gource_scene::IVec2::new(100 * gource_scene::ONE, 100 * gource_scene::ONE);
+    let u2_pos = gource_scene::IVec2::new(120 * gource_scene::ONE, 100 * gource_scene::ONE);
+    world.users[u1].place(u1_pos);
+    world.users[_u2].place(u2_pos);
     world.interact_users();
 
-    // Update dirs to exercise parent's parent push force, sibling repulsion, and nearby repulsion
-    world.update_dirs(0.1, 0.5, 0.0);
+    let mut profile = LogicProfile::default();
+    world.update_dirs(0.1, 0.5, &mut profile);
+    world.end_tick();
+    world.sync_view(1.0);
+    assert!(world.dir_bounds.area() > 10000.0);
 
     // Test file deletion on middle directory triggering deletion of empty dir
     let d1 = world.delete_file(f1);
@@ -727,7 +700,9 @@ fn test_world_deep_tree_forces_and_reparenting() {
     world.users[u1].pawn.elapsed = 1000.0;
     world.users[u1].last_action = 0.0;
     settings.user_idle_time = 10.0;
+    world.begin_tick();
     let inactive = world.update_users(100.0, 0.1, &settings);
+    world.end_tick();
     assert!(inactive.contains(&u1));
 }
 

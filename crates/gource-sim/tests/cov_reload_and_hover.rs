@@ -509,7 +509,8 @@ fn test_gource_follow_user_and_delete_user_selection() {
         user.last_action = 0.0;
     }
 
-    gource.logic(0.016, viewport, &mut gfx).unwrap();
+    // One full fixed tick (1/60 s) so the simulation advances.
+    gource.logic(0.02, viewport, &mut gfx).unwrap();
     assert_eq!(gource.hover_user, None);
     assert_eq!(gource.selected_user, None);
     assert!(!gource.world.users.contains_key(uid));

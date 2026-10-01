@@ -11,8 +11,8 @@ use std::time::Instant;
 pub enum LogicSpan {
     /// Widgets, rotation, recolouring: everything before playback.
     Prelude,
-    /// Whole-simulation snapshot for the reverse-playback buffer.
-    ReverseSnapshot,
+    /// Recording the tick's exact deltas for reverse playback.
+    ReverseRecord,
     /// Scrubber checkpoint capture.
     Checkpoint,
     /// Reading commits from the log into the queue.
@@ -21,13 +21,13 @@ pub enum LogicSpan {
     Commits,
     /// Caption layout.
     Captions,
-    /// Bounds update and user quadtree/forces.
+    /// Simulation bounds and user forces.
     InteractUsers,
     /// User movement and selection.
     UpdateUsers,
-    /// Directory quadtree build.
-    InteractDirs,
-    /// Directory-directory repulsion (quadtree queries).
+    /// Float view sync: interpolation, bounds and picking quadtrees.
+    View,
+    /// Directory force pass (integer kernel).
     DirForces,
     /// Directory springs, file layout within directories, file logic.
     DirLogic,
@@ -43,14 +43,14 @@ impl LogicSpan {
     /// Every span, in execution order.
     pub const ALL: [LogicSpan; 14] = [
         LogicSpan::Prelude,
-        LogicSpan::ReverseSnapshot,
+        LogicSpan::ReverseRecord,
         LogicSpan::Checkpoint,
         LogicSpan::ReadLog,
         LogicSpan::Commits,
         LogicSpan::Captions,
         LogicSpan::InteractUsers,
         LogicSpan::UpdateUsers,
-        LogicSpan::InteractDirs,
+        LogicSpan::View,
         LogicSpan::DirForces,
         LogicSpan::DirLogic,
         LogicSpan::Weighted,
@@ -62,14 +62,14 @@ impl LogicSpan {
     pub fn name(self) -> &'static str {
         match self {
             LogicSpan::Prelude => "prelude",
-            LogicSpan::ReverseSnapshot => "rev_snap",
+            LogicSpan::ReverseRecord => "rev_rec",
             LogicSpan::Checkpoint => "checkpt",
             LogicSpan::ReadLog => "read_log",
             LogicSpan::Commits => "commits",
             LogicSpan::Captions => "captions",
             LogicSpan::InteractUsers => "int_users",
             LogicSpan::UpdateUsers => "upd_users",
-            LogicSpan::InteractDirs => "int_dirs",
+            LogicSpan::View => "view",
             LogicSpan::DirForces => "dir_force",
             LogicSpan::DirLogic => "dir_logic",
             LogicSpan::Weighted => "weighted",

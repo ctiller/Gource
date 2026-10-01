@@ -89,14 +89,15 @@ fn main() {
                 for (name, &id) in &g.world.users_by_name {
                     let u = &g.world.users[id];
                     let p = u.pawn.pos();
+                    let acc = gource_sim::view::from_ivec(u.sim.accel);
                     println!(
                         "TRACEU {frame} {name} {:.2} {:.2} acts={}/{} acc={:.4},{:.4} la={:.4} el={:.4}",
                         p.x,
                         p.y,
                         u.pending_action_count(),
                         u.action_count(),
-                        u.pawn.accel.x,
-                        u.pawn.accel.y,
+                        acc.x,
+                        acc.y,
                         u.last_action,
                         u.pawn.elapsed
                     );
@@ -109,13 +110,9 @@ fn main() {
                 for (path, &id) in &g.world.dir_map {
                     let d = &g.world.dirs[id];
                     println!(
-                        "TRACEXD {frame} {} {} {} {} {} {} {} {} {} {} {path}",
+                        "TRACEXD {frame} {} {} {} {} {} {} {path}",
                         b(d.pos.x),
                         b(d.pos.y),
-                        b(d.vel.x),
-                        b(d.vel.y),
-                        b(d.accel.x),
-                        b(d.accel.y),
                         b(d.spos.x),
                         b(d.spos.y),
                         b(d.dir_radius),
@@ -124,23 +121,25 @@ fn main() {
                 }
                 for (path, &id) in &g.world.files_by_path {
                     let f = &g.world.files[id];
+                    let dest = gource_sim::view::from_unit(f.sim.dest);
                     println!(
                         "TRACEXF {frame} {} {} {} {} {} {path}",
                         b(f.pawn.pos.x),
                         b(f.pawn.pos.y),
-                        b(f.dest.x),
-                        b(f.dest.y),
-                        b(f.distance),
+                        b(dest.x),
+                        b(dest.y),
+                        b(gource_sim::view::from_fx(f.sim.distance)),
                     );
                 }
                 for (name, &id) in &g.world.users_by_name {
                     let u = &g.world.users[id];
+                    let acc = gource_sim::view::from_ivec(u.sim.accel);
                     println!(
                         "TRACEXU {frame} {} {} {} {} {name}",
                         b(u.pawn.pos.x),
                         b(u.pawn.pos.y),
-                        b(u.pawn.accel.x),
-                        b(u.pawn.accel.y),
+                        b(acc.x),
+                        b(acc.y),
                     );
                 }
             }

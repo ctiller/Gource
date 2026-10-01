@@ -44,7 +44,15 @@ use crate::file::FileId;
 use crate::input::{InputEvent, Key, MouseButton};
 use crate::platform::{PlatformRequest, Viewport};
 use crate::profile::LogicSpan;
-use crate::scrubber::{SeekOutcome, SimScrubber};
+use crate::scrubber::{SeekOutcome, SimScrubber, TickRecord};
+use crate::step::TICK_DT;
+
+/// Slack when comparing the tick accumulator against [`TICK_DT`].
+const TICK_EPSILON: f32 = 1e-6;
+/// Upper bound on simulation ticks run per rendered frame.
+const MAX_TICKS_PER_FRAME: usize = 8;
+/// Hash salt for the recolour draw.
+const RECOLOUR_SALT: u64 = 99;
 use crate::user::UserId;
 use crate::world::{SceneFonts, SceneTextures, World};
 
@@ -248,6 +256,8 @@ pub struct Gource {
     pub manual_rotate: bool,
     pub rotation_remaining_angle: f32,
     pub rotate_angle: f32,
+    /// Unconsumed frame time carried to the next fixed simulation tick.
+    pub tick_accum: f32,
     pub cursor_move: Vec2,
 
     pub selected_user: Option<UserId>,
@@ -459,6 +469,7 @@ impl Gource {
             manual_rotate: false,
             rotation_remaining_angle: 0.0,
             rotate_angle: 0.0,
+            tick_accum: 0.0,
             cursor_move: Vec2::ZERO,
             selected_user: None,
             hover_user: None,
@@ -624,12 +635,13 @@ impl Gource {
 
         // The C++ rand() stream and string hash seed are globals that a
         // reset leaves alone.
-        let rng = std::mem::take(&mut self.world.rng);
+        let seed = self.world.seed;
         let hash_seed = self.world.hasher.seed;
-        let mut world = World::new(1, hash_seed);
+        let mut world = World::new(seed, hash_seed);
         world.weighted_mode = self.settings.file_size_metric != FileSizeMetric::None;
-        world.rng = rng;
+        world.apply_tuning(&self.tuning_settings);
         self.world = world;
+        self.tick_accum = 0.0;
         self.file_key.clear();
 
         self.captions.clear();
@@ -1624,7 +1636,8 @@ impl Gource {
 
     /// Change string hasher seed and recolour world & file key.
     pub fn change_colours(&mut self) {
-        let new_seed = (self.world.rng.rand() % 10000) + 1;
+        let draw = gource_scene::rng::hash4(self.world.seed, self.world.tick, 0, RECOLOUR_SALT);
+        let new_seed = (draw % 10000) as i32 + 1;
         self.world.change_colours(new_seed);
         let hasher = StringHasher::new(new_seed);
         self.file_key.colourize(&hasher);
@@ -2313,7 +2326,7 @@ impl Gource {
         self.tuning_panel.logic(dt);
         self.search_widget.logic(dt);
 
-        // Apply tree rotation
+        // Apply tree rotation (a view transform; the simulation never rotates)
         if self.rotate_angle != 0.0 {
             let s = self.rotate_angle.sin();
             let c = self.rotate_angle.cos();
@@ -2335,22 +2348,139 @@ impl Gource {
         self.world.weighted_mode = self.settings.file_size_metric != FileSizeMetric::None;
 
         if self.paused {
-            self.world.update_bounds();
-            self.world.interact_users();
-            self.world.interact_dirs();
+            self.world.sync_view(self.tick_alpha());
             self.update_camera(dt, viewport);
             return Ok(());
         }
+        self.logic_profile.mark(LogicSpan::Prelude);
 
-        // Reverse playback branch
-        if self.scrubber.state.playback_direction == gource_history::PlaybackDirection::Reverse {
-            let _ = self.step_reverse(viewport, gfx);
-            return Ok(());
+        // Run the fixed simulation ticks that are due.
+        self.tick_accum += dt;
+        let reverse =
+            self.scrubber.state.playback_direction == gource_history::PlaybackDirection::Reverse;
+        let mut ticks = 0;
+        while self.tick_accum + TICK_EPSILON >= TICK_DT {
+            if ticks >= MAX_TICKS_PER_FRAME {
+                // Falling behind: drop the backlog rather than spiral.
+                self.tick_accum = 0.0;
+                break;
+            }
+            self.tick_accum = (self.tick_accum - TICK_DT).max(0.0);
+            if reverse {
+                let _ = self.step_reverse(viewport, gfx);
+            } else {
+                self.sim_tick(gfx)?;
+            }
+            ticks += 1;
+            if self.is_finished {
+                break;
+            }
         }
 
-        self.logic_profile.mark(LogicSpan::Prelude);
-        self.scrubber.push_reverse_frame(self.snapshot());
-        self.logic_profile.mark(LogicSpan::ReverseSnapshot);
+        // C++ resizes the slider to the display every tick.
+        self.slider
+            .resize(viewport.width as f32, viewport.height as f32, 35.0);
+        self.timeline_bar.resize(
+            viewport.width,
+            viewport.height,
+            self.fonts.slider,
+            self.settings.font_scale,
+        );
+
+        // Captions logic
+        let caption_height = gfx.fonts.max_height(self.fonts.caption);
+        let medium_height = gfx.fonts.max_height(self.fonts.medium);
+        let display_height = viewport.height as f32;
+        let mut caption_start_y = if self.can_seek() {
+            self.slider.bounds().min.y - 35.0
+        } else {
+            display_height - medium_height - 20.0
+        };
+        if !self.settings.title.is_empty() {
+            caption_start_y = caption_start_y.min(display_height - 20.0 - medium_height);
+        }
+        let caption_start_y = caption_start_y.floor();
+
+        if self.reloaded {
+            // Reposition the active captions (the display or fonts changed).
+            let mut y = caption_start_y;
+            for cap in &mut self.active_captions {
+                let width = gfx.text_width(self.fonts.caption, &cap.caption);
+                let x = caption_offset_x(self.settings.caption_offset, viewport.width, width);
+                cap.set_pos(Vec2::new(x as f32, y));
+                y -= caption_height;
+            }
+            self.reloaded = false;
+        }
+
+        while let Some(cap) = self.captions.front() {
+            if cap.timestamp > self.currtime {
+                break;
+            }
+            let mut cap = self.captions.pop_front().unwrap();
+            // Stack below the lowest free row (C++ compares rows exactly).
+            let mut y = caption_start_y;
+            while self.active_captions.iter().any(|c| c.pos.y == y) {
+                y -= caption_height;
+            }
+            let width = gfx.text_width(self.fonts.caption, &cap.caption);
+            let x = caption_offset_x(self.settings.caption_offset, viewport.width, width);
+            cap.set_pos(Vec2::new(x as f32, y));
+            self.active_captions.push(cap);
+        }
+
+        self.active_captions.retain_mut(|cap| {
+            cap.logic(dt);
+            !cap.is_finished()
+        });
+        self.logic_profile.mark(LogicSpan::Captions);
+
+        self.world.sync_view(self.tick_alpha());
+        self.logic_profile.mark(LogicSpan::View);
+
+        self.update_camera(dt, viewport);
+        self.logic_profile.mark(LogicSpan::Camera);
+
+        let display_time = if !self.commitqueue.is_empty() {
+            self.currtime
+        } else {
+            self.lasttime
+        };
+        if display_time > 0 {
+            self.display_date = datetime::format_local(display_time, &self.settings.date_format);
+            let w = gfx.text_width(self.fonts.medium, &self.display_date);
+            let date_offset = (((w as i32) as f64) * 0.5) as i32;
+            if (self.date_x_offset as i32 - date_offset).abs() > 5 {
+                self.date_x_offset = date_offset as f32;
+            }
+        } else {
+            self.display_date.clear();
+        }
+
+        self.scrubber.sync_playhead_from_time(self.currtime);
+        if self.history_preindexed {
+            self.last_percent = self.scrubber.state.playhead_fraction;
+            self.slider.set_percent(self.last_percent);
+        }
+        self.logic_profile.mark(LogicSpan::Tail);
+
+        Ok(())
+    }
+
+    /// How far the view is between the last two ticks.
+    pub fn tick_alpha(&self) -> f32 {
+        (self.tick_accum / TICK_DT).clamp(0.0, 1.0)
+    }
+
+    /// One fixed simulation tick: commits due by the advanced clock, then
+    /// the integer scene step. Deterministic for a given state.
+    pub fn sim_tick(&mut self, gfx: &mut Gfx) -> Result<(), AppError> {
+        let clock = (self.currtime, self.lasttime, self.subseconds, self.runtime);
+        self.runtime += TICK_DT;
+        if self.settings.stop_at_time > 0.0 && self.runtime >= self.settings.stop_at_time {
+            self.stop_position_reached = true;
+        }
+
         self.maybe_record_checkpoint();
         self.logic_profile.mark(LogicSpan::Checkpoint);
         self.scrubber.sync_playhead_from_time(self.currtime);
@@ -2382,6 +2512,7 @@ impl Gource {
             self.subseconds = 0.0;
         }
 
+        let dt = TICK_DT;
         if self.is_live_mode()
             && self.commitqueue.is_empty()
             && self.commit_cursor >= self.ingested_commits.len()
@@ -2457,106 +2588,24 @@ impl Gource {
         }
         self.logic_profile.mark(LogicSpan::Commits);
 
-        // C++ resizes the slider to the display every tick.
-        self.slider
-            .resize(viewport.width as f32, viewport.height as f32, 35.0);
-        self.timeline_bar.resize(
-            viewport.width,
-            viewport.height,
-            self.fonts.slider,
-            self.settings.font_scale,
-        );
-
-        // Captions logic
-        let caption_height = gfx.fonts.max_height(self.fonts.caption);
-        let medium_height = gfx.fonts.max_height(self.fonts.medium);
-        let display_height = viewport.height as f32;
-        let mut caption_start_y = if self.can_seek() {
-            self.slider.bounds().min.y - 35.0
-        } else {
-            display_height - medium_height - 20.0
-        };
-        if !self.settings.title.is_empty() {
-            caption_start_y = caption_start_y.min(display_height - 20.0 - medium_height);
-        }
-        let caption_start_y = caption_start_y.floor();
-
-        if self.reloaded {
-            // Reposition the active captions (the display or fonts changed).
-            let mut y = caption_start_y;
-            for cap in &mut self.active_captions {
-                let width = gfx.text_width(self.fonts.caption, &cap.caption);
-                let x = caption_offset_x(self.settings.caption_offset, viewport.width, width);
-                cap.set_pos(Vec2::new(x as f32, y));
-                y -= caption_height;
-            }
-            self.reloaded = false;
-        }
-
-        while let Some(cap) = self.captions.front() {
-            if cap.timestamp > self.currtime {
-                break;
-            }
-            let mut cap = self.captions.pop_front().unwrap();
-            // Stack below the lowest free row (C++ compares rows exactly).
-            let mut y = caption_start_y;
-            while self.active_captions.iter().any(|c| c.pos.y == y) {
-                y -= caption_height;
-            }
-            let width = gfx.text_width(self.fonts.caption, &cap.caption);
-            let x = caption_offset_x(self.settings.caption_offset, viewport.width, width);
-            cap.set_pos(Vec2::new(x as f32, y));
-            self.active_captions.push(cap);
-        }
-
-        self.active_captions.retain_mut(|cap| {
-            cap.logic(dt);
-            !cap.is_finished()
-        });
-        self.logic_profile.mark(LogicSpan::Captions);
-
-        // World update
-        self.world.update_bounds();
+        // Scene step
+        self.world.begin_tick();
+        self.world.update_sim_bounds();
         self.world.interact_users();
         self.logic_profile.mark(LogicSpan::InteractUsers);
         self.update_users(t, dt);
         self.logic_profile.mark(LogicSpan::UpdateUsers);
-
-        self.world.interact_dirs();
-        self.logic_profile.mark(LogicSpan::InteractDirs);
-        self.world.update_dirs_profiled(
-            dt,
-            self.settings.elasticity,
-            self.settings.file_idle_time,
-            &mut self.logic_profile,
-        );
-
-        self.update_camera(dt, viewport);
-        self.logic_profile.mark(LogicSpan::Camera);
-
-        let display_time = if !self.commitqueue.is_empty() {
-            self.currtime
-        } else {
-            self.lasttime
-        };
-        if display_time > 0 {
-            self.display_date = datetime::format_local(display_time, &self.settings.date_format);
-            let w = gfx.text_width(self.fonts.medium, &self.display_date);
-            let date_offset = (((w as i32) as f64) * 0.5) as i32;
-            if (self.date_x_offset as i32 - date_offset).abs() > 5 {
-                self.date_x_offset = date_offset as f32;
-            }
-        } else {
-            self.display_date.clear();
-        }
-
-        self.scrubber.sync_playhead_from_time(self.currtime);
-        if self.history_preindexed {
-            self.last_percent = self.scrubber.state.playhead_fraction;
-            self.slider.set_percent(self.last_percent);
-        }
-        self.logic_profile.mark(LogicSpan::Tail);
-
+        self.world
+            .update_dirs(dt, self.settings.file_idle_time, &mut self.logic_profile);
+        let delta = self.world.end_tick();
+        self.scrubber.push_reverse_tick(TickRecord {
+            delta,
+            currtime: clock.0,
+            lasttime: clock.1,
+            subseconds: clock.2,
+            runtime: clock.3,
+        });
+        self.logic_profile.mark(LogicSpan::ReverseRecord);
         Ok(())
     }
 
@@ -3068,14 +3117,6 @@ impl Gource {
         }
         scaled_dt *= self.settings.time_scale;
 
-        if !self.paused {
-            self.runtime += scaled_dt;
-        }
-
-        if self.settings.stop_at_time > 0.0 && self.runtime >= self.settings.stop_at_time {
-            self.stop_position_reached = true;
-        }
-
         self.logic(scaled_dt, viewport, gfx)?;
         self.draw(scaled_dt, viewport, gfx, list);
 
@@ -3259,8 +3300,7 @@ impl Gource {
             let days_per_second = self.settings.days_per_second.max(0.0001);
             let time_diff = (target_ts - cp_ts).max(0);
             let sim_secs = time_diff as f32 / (days_per_second * 86400.0);
-            let tick_rate = self.max_tick_rate.max(1.0 / 60.0);
-            let estimated_ticks = (sim_secs / tick_rate).ceil() as usize;
+            let estimated_ticks = (sim_secs / TICK_DT).ceil() as usize;
 
             if cp_ts <= target_ts && estimated_ticks <= max_replay_ticks {
                 let cp_snapshot = cp.clone();
@@ -3271,11 +3311,11 @@ impl Gource {
                     && !self.is_finished
                     && ticks_replayed < max_replay_ticks
                 {
-                    self.scrubber.push_reverse_frame(self.snapshot());
-                    self.logic(self.max_tick_rate, viewport, gfx)?;
-                    self.runtime += self.max_tick_rate;
+                    self.sim_tick(gfx)?;
                     ticks_replayed += 1;
                 }
+                self.world.sync_view(1.0);
+                let _ = viewport;
 
                 self.scrubber.sync_playhead_from_time(self.currtime);
                 return Ok(SeekOutcome::RestoredAndReplayed {
@@ -3343,8 +3383,12 @@ impl Gource {
 
     /// Steps playback backward by one frame or seeks slightly backward.
     pub fn step_reverse(&mut self, viewport: Viewport, gfx: &mut Gfx) -> Result<bool, AppError> {
-        if let Some(snap) = self.scrubber.pop_reverse_frame() {
-            self.restore(&snap);
+        if let Some(rec) = self.scrubber.pop_reverse_tick() {
+            self.world.undo_tick(&rec.delta);
+            self.currtime = rec.currtime;
+            self.lasttime = rec.lasttime;
+            self.subseconds = rec.subseconds;
+            self.runtime = rec.runtime;
             self.scrubber.sync_playhead_from_time(self.currtime);
             return Ok(true);
         }

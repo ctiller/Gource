@@ -3,6 +3,7 @@
 use crate::pawn::Pawn;
 use glam::{Vec2, Vec3};
 use gource_core::Bounds2D;
+use gource_scene::{Fx, IVec2, ONE};
 use slotmap::new_key_type;
 
 new_key_type! {
@@ -12,11 +13,33 @@ new_key_type! {
     pub struct DirId;
 }
 
+/// A file's simulation state (fixed point; positions relative to the
+/// directory).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FileSim {
+    pub pos: IVec2,
+    /// Position at the start of the current tick (view interpolation).
+    pub prev_pos: IVec2,
+    /// Ring slot direction (UNIT-scaled) and radius: the target is
+    /// `dest * distance`.
+    pub dest: IVec2,
+    pub distance: Fx,
+    /// Weighted mode: velocity (Q8 units/s), animated diameter, target
+    /// diameter and collision radius.
+    pub vel: IVec2,
+    pub size: Fx,
+    pub target_size: Fx,
+    pub radius: Fx,
+}
+
 /// A file in the visualizer repository tree.
 /// Port of `RFile` in `file.h` / `file.cpp`.
 #[derive(Debug, Clone)]
 pub struct File {
+    /// `pawn.pos` (relative to the directory) and, in weighted mode,
+    /// `pawn.size` are float views of [`File::sim`].
     pub pawn: Pawn,
+    pub sim: FileSim,
 
     pub file_colour: Vec3,
     pub touch_colour: Vec3,
@@ -31,11 +54,6 @@ pub struct File {
     pub fade_start: f32,
     pub last_action: f32,
 
-    pub radius: f32,
-    pub dest: Vec2,
-    pub distance: f32,
-    pub vel: Vec2,
-
     pub path: String,
     pub fullpath: String,
     pub ext: String,
@@ -43,7 +61,6 @@ pub struct File {
     pub lines: u32,
     pub byte_size: u64,
     pub touch_count: u32,
-    pub target_size: f32,
     pub pulse_timer: f32,
     pub pulse_max_time: f32,
     pub pulse_delta: i32,
@@ -75,9 +92,8 @@ impl File {
         pawn.hidden = true;
         // C++: `gGourceFileDiameter * 1.05` (a double literal).
         pawn.size = (file_diameter as f64 * 1.05) as f32;
-        let radius = pawn.size * 0.5;
+        let size = crate::view::to_fx(pawn.size);
 
-        pawn.speed = 5.0;
         pawn.nametime = filename_time;
         pawn.name_interval = pawn.nametime;
         pawn.namecol = Vec3::ONE;
@@ -85,10 +101,18 @@ impl File {
 
         let (path, name, ext) = Self::parse_path(fullpath, file_extension_fallback);
         pawn.name = name;
-        let target_size = pawn.size;
+        let p = crate::view::to_ivec(pos);
 
         Self {
             pawn,
+            sim: FileSim {
+                pos: p,
+                prev_pos: p,
+                size,
+                target_size: size,
+                radius: size / 2,
+                ..FileSim::default()
+            },
             file_colour: colour,
             touch_colour: Vec3::ONE,
             dir: None,
@@ -98,17 +122,12 @@ impl File {
             removing: false,
             fade_start: -1.0,
             last_action: 0.0,
-            radius,
-            dest: Vec2::ZERO,
-            distance: 0.0,
-            vel: Vec2::ZERO,
             path,
             fullpath: fullpath.to_string(),
             ext,
             lines: 0,
             byte_size: 0,
             touch_count: 0,
-            target_size,
             pulse_timer: 0.0,
             pulse_max_time: 0.4,
             pulse_delta: 0,
@@ -258,20 +277,11 @@ impl File {
         was_expired
     }
 
-    /// Port of `RFile::logic(float dt)`.
-    /// Returns `true` if the file has completely faded out and just transitioned to expired.
+    /// Port of `RFile::logic(float dt)`, minus motion (the integer
+    /// simulation moves files): timers, fades and expiry. Returns `true` if
+    /// the file has completely faded out and just transitioned to expired.
     pub fn logic(&mut self, dt: f32, file_idle_time: f32) -> bool {
         self.pawn.logic(dt);
-
-        let dest_pos = self.dest * self.distance;
-        self.pawn.accel = dest_pos - self.pawn.pos;
-
-        let mut accel2 = self.pawn.accel * self.pawn.speed * dt;
-        if accel2.length_squared() > self.pawn.accel.length_squared() {
-            accel2 = self.pawn.accel;
-        }
-        self.pawn.pos += accel2;
-        self.pawn.accel = Vec2::ZERO;
 
         if self.solidifying {
             self.solidify_timer = (self.solidify_timer - dt).max(0.0);
@@ -280,18 +290,6 @@ impl File {
             }
         }
 
-        if self.weighted {
-            let target = if self.pawn.is_hidden() || self.removing || self.fade_start > 0.0 {
-                0.0
-            } else {
-                self.target_size
-            };
-            if (self.pawn.size - target).abs() > 1e-4 {
-                self.pawn.size += (target - self.pawn.size) * (dt * 4.0).min(1.0);
-                self.radius = (self.pawn.size * 0.5).max(0.05);
-                self.pawn.dims = Vec2::splat(self.pawn.size);
-            }
-        }
         if self.pulse_timer > 0.0 {
             self.pulse_timer = (self.pulse_timer - dt).max(0.0);
         }
@@ -316,6 +314,16 @@ impl File {
         just_expired
     }
 
+    /// The weighted-mode size the file is animating towards (Q8): zero
+    /// while hidden or fading out.
+    pub fn size_goal(&self) -> Fx {
+        if self.pawn.is_hidden() || self.removing || self.fade_start > 0.0 {
+            0
+        } else {
+            self.sim.target_size
+        }
+    }
+
     /// Update lines count, lifetime added/removed, and trigger pulse animation if configured.
     pub fn apply_line_delta(
         &mut self,
@@ -335,13 +343,24 @@ impl File {
         }
     }
 
-    /// Set target diameter based on weight relative to a reference weight.
-    pub fn set_weight_target(&mut self, weight: f32, ref_weight: f32, base_diameter: f32) {
+    /// Set the weighted-mode target diameter from `weight` relative to
+    /// `ref_weight`: `base_diameter * 1.05 * clamp(sqrt(weight / ref), 0.5,
+    /// 4)`, computed in fixed point.
+    pub fn set_weight_target(&mut self, weight: u64, ref_weight: u64, base_diameter: f32) {
         self.weighted = true;
-        let factor = (weight.max(1.0) / ref_weight.max(1.0))
-            .sqrt()
-            .clamp(0.5, 4.0);
-        self.target_size = (base_diameter as f64 * 1.05) as f32 * factor;
+        let w = weight.max(1) as u128;
+        let r = ref_weight.max(1) as u128;
+        // sqrt(w / r) in Q8 = sqrt(w * 2^16 / r).
+        let ratio = (w << 16) / r;
+        let factor = gource_scene::fixed::isqrt(ratio.min(u64::MAX as u128) as u64)
+            .clamp(ONE as u64 / 2, 4 * ONE as u64) as i64;
+        let base = crate::view::to_fx((base_diameter as f64 * 1.05) as f32) as i64;
+        self.sim.target_size = gource_scene::fixed::div_round(base * factor, ONE as i64) as Fx;
+    }
+
+    /// The weighted-mode target diameter in world units.
+    pub fn target_size(&self) -> f32 {
+        crate::view::from_fx(self.sim.target_size)
     }
 
     /// Compute active pulse ring size and color (if currently pulsing).
@@ -460,11 +479,10 @@ mod tests {
         assert!(!f.pawn.is_hidden());
         assert_eq!(f.touch_colour, Vec3::new(1.0, 0.0, 0.0));
 
-        // Logic step
-        f.dest = Vec2::new(1.0, 0.0);
-        f.distance = 10.0;
+        // Logic step (timers only; motion is the integer sim's job)
         f.logic(0.1, 5.0);
-        assert!(f.pawn.pos.x > 0.0);
+        assert!(f.pawn.elapsed > 0.0);
+        assert_eq!(f.size_goal(), f.sim.target_size);
 
         // Colour blending within 1s of touch
         let c = f.colour();
@@ -501,5 +519,23 @@ mod tests {
 
         // Overlaps
         assert!(f.overlaps(Vec2::ZERO, f.pawn.pos));
+        // Fading files shrink to nothing in weighted mode.
+        assert_eq!(f.size_goal(), 0);
+    }
+
+    #[test]
+    fn weight_targets() {
+        let mut f = File::new("/a.rs", Vec3::ONE, Vec2::ZERO, 1, 8.0, 4.0, false);
+        let base = (8.0f64 * 1.05) as f32;
+        f.set_weight_target(100, 100, 8.0);
+        assert!(f.weighted);
+        assert!((f.target_size() - base).abs() < 0.01);
+        f.set_weight_target(400, 100, 8.0);
+        assert!((f.target_size() - base * 2.0).abs() < 0.02);
+        // Clamped to [0.5, 4].
+        f.set_weight_target(1, 100, 8.0);
+        assert!((f.target_size() - base * 0.5).abs() < 0.01);
+        f.set_weight_target(1_000_000, 1, 8.0);
+        assert!((f.target_size() - base * 4.0).abs() < 0.02);
     }
 }

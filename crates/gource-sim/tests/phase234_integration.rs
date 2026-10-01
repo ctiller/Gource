@@ -98,7 +98,7 @@ fn test_phase2_git_of_theseus_and_file_sizing_and_cohorts() {
     let mut found_cohort_colour = false;
     for file in gource.world.files.values() {
         if !file.pawn.is_hidden() {
-            assert!(file.target_size > 0.0);
+            assert!(file.target_size() > 0.0);
             if file.dominant_cohort_colour.is_some() {
                 found_cohort_colour = true;
             }
@@ -406,10 +406,11 @@ fn test_scrubber_full_coverage() {
     assert_eq!(scrubber.checkpoints.len(), 0);
 
     // Test reverse buffer capacity and clear
-    scrubber.max_reverse_frames = 2;
-    scrubber.push_reverse_frame(snap.clone());
-    scrubber.push_reverse_frame(snap.clone());
-    scrubber.push_reverse_frame(snap);
+    scrubber.max_reverse_ticks = 2;
+    let rec = gource_sim::scrubber::TickRecord::default();
+    scrubber.push_reverse_tick(rec.clone());
+    scrubber.push_reverse_tick(rec.clone());
+    scrubber.push_reverse_tick(rec);
     assert_eq!(scrubber.reverse_buffer_len(), 2);
     scrubber.clear_reverse_buffer();
     assert_eq!(scrubber.reverse_buffer_len(), 0);
@@ -621,7 +622,12 @@ fn test_gource_seek_and_reverse_edge_cases() {
     );
 
     // 4. step_reverse when reverse_buffer is non-empty
-    gource.scrubber.push_reverse_frame(gource.snapshot());
+    gource
+        .scrubber
+        .push_reverse_tick(gource_sim::scrubber::TickRecord {
+            currtime: gource.currtime,
+            ..Default::default()
+        });
     assert!(gource.step_reverse(viewport, &mut gfx).unwrap());
 
     // 5. step_reverse when reverse_buffer is empty and currtime > 0

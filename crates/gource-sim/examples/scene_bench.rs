@@ -331,12 +331,7 @@ fn main() {
         }
         // Mirrors `Gource::update`, with logic and draw timed separately.
         let scaled_dt = dt.min(g.max_tick_rate) * g.settings.time_scale;
-        if !g.paused {
-            g.runtime += scaled_dt;
-        }
-        if g.settings.stop_at_time > 0.0 && g.runtime >= g.settings.stop_at_time {
-            g.stop_position_reached = true;
-        }
+        // `logic` advances `runtime` per fixed tick (and checks stop_at_time).
         let t0 = Instant::now();
         if let Err(e) = g.logic(scaled_dt, viewport, gfx) {
             eprintln!("logic error: {}", e.0);
@@ -400,12 +395,6 @@ fn main() {
     if let (Some(path), Some(g)) = (&dump_path, app.shell().gource.as_ref()) {
         dump(path, &g.world);
         eprintln!("dumped layout at runtime {:.3}s to {path}", g.runtime);
-    }
-    if let Some(g) = app.shell().gource.as_ref() {
-        eprintln!(
-            "dir force fast-path fallbacks: {} frames",
-            g.world.dir_force_fallbacks
-        );
     }
 
     let n = rows.len().max(1) as f64;

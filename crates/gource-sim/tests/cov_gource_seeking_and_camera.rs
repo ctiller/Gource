@@ -354,8 +354,7 @@ fn test_gource_hover_tooltip_rendering() {
         let world_pos = f.absolute_pos(dir_pos);
         let screen_pos = proj.to_screen(world_pos);
         g.mouse_pos = screen_pos;
-        g.world.update_bounds();
-        g.world.interact_dirs();
+        g.world.sync_view(1.0);
         g.mousetrace(&proj);
 
         // Moving mouse away

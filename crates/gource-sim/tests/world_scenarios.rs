@@ -2,6 +2,7 @@ use glam::{Vec2, Vec3};
 use gource_draw::list::{DrawList, Material, TextureId};
 use gource_draw::{Gfx, Projection};
 use gource_settings::GourceSettings;
+use gource_sim::profile::LogicProfile;
 use gource_sim::world::{SceneFonts, SceneTextures, World};
 use gource_vcs::commit::{Commit, CommitFile, FileAction};
 
@@ -78,13 +79,16 @@ fn test_world_scenarios_and_harden() {
     }
 
     // Run simulation steps to trigger action execution, touch files, update bounds
+    let mut profile = LogicProfile::default();
     for step in 0..25 {
         let t = 2.0 + (step as f32) * 0.2;
-        world.update_users(t, 0.25, &settings);
-        world.update_bounds();
+        world.begin_tick();
+        world.update_sim_bounds();
         world.interact_users();
-        world.interact_dirs();
-        world.update_dirs(0.1, 0.1, 0.0);
+        world.update_users(t, 0.25, &settings);
+        world.update_dirs(0.1, 0.1, &mut profile);
+        world.end_tick();
+        world.sync_view(1.0);
     }
 
     // Now actions should be executed / files touched

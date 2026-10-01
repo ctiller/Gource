@@ -28,9 +28,9 @@
 //! | `Gource::addUser(username)` | [`World::add_user`] |
 //! | `Gource::deleteUser(user)` | [`World::delete_user`] |
 //! | `Gource::addFileAction(commit, cf, file, t)` | [`World::add_file_action`] |
-//! | `Gource::updateBounds()` | [`World::update_bounds`] |
+//! | `Gource::updateBounds()` | [`World::update_sim_bounds`], [`World::sync_view`] |
 //! | `Gource::interactUsers()` | [`World::interact_users`] |
-//! | `Gource::interactDirs()` | [`World::interact_dirs`] |
+//! | `Gource::interactDirs()` | [`World::sync_view`] (picking tree) |
 //! | `Gource::updateDirs(dt)` | [`World::update_dirs`] |
 //! | `Gource::updateUsers(t, dt)` (per-user simulation) | [`World::update_users`] |
 //! | `Gource::changeColours()` | [`World::set_hash_seed`], [`World::change_colours`] |
@@ -40,14 +40,15 @@
 use crate::action::{Action, ActionKind};
 use crate::dirnode::DirNode;
 use crate::file::{DirId, File, FileId};
+use crate::step::SceneParams;
 use crate::user::{User, UserId};
+use crate::view::ViewTransform;
 use glam::{Vec2, Vec3, Vec4};
-use gource_core::crand::CRand;
-use gource_core::math::CPP_PI;
 use gource_core::{Bounds2D, QuadTree, StringHasher};
 use gource_draw::font::{FontId, TextStyle};
 use gource_draw::list::{DrawList, Material, TextureId, Vertex};
 use gource_draw::{Gfx, Projection};
+use gource_scene::{IVec2, ONE};
 use gource_settings::GourceSettings;
 use gource_vcs::commit::{Commit, CommitFile, FileAction};
 use slotmap::SlotMap;
@@ -154,25 +155,21 @@ pub struct World {
 
     pub tag_seq: i32,
     pub hasher: StringHasher,
-    /// The C++ `rand()` stream (physics jitter, recolouring).
-    pub rng: CRand,
+    /// Seed of the counter-based simulation RNG (`gource_scene::rng`).
+    pub seed: u64,
+    /// Simulation ticks run so far.
+    pub tick: u64,
     pub tuning: Tuning,
+    /// [`Tuning`] in fixed point.
+    pub params: SceneParams,
+    /// Simulation-space bounds of the visible directories.
+    pub sim_dir_bounds: Option<(IVec2, IVec2)>,
+    /// The user's view rotation (applied by [`World::sync_view`]).
+    pub view: ViewTransform,
     /// Users created since the owner last drained this list. `Gource` assigns
     /// their images (`RUser::assignUserImage`), which needs the texture store.
     pub new_users: Vec<UserId>,
     pub weighted_mode: bool,
-    /// Frames where the fast directory force pass fell back to the serial
-    /// reference pass (coincident directories consume the RNG).
-    pub dir_force_fallbacks: u64,
-}
-
-/// C++ `normalise(vec2((rand() % 100) - 50, (rand() % 100) - 50))`, the
-/// nudge that separates overlapping dirs and users. GCC evaluates the
-/// constructor arguments right to left, so y draws first.
-pub(crate) fn random_direction(rng: &mut CRand) -> Vec2 {
-    let y = (rng.rand() % 100 - 50) as f32;
-    let x = (rng.rand() % 100 - 50) as f32;
-    gource_core::math::normalise2(Vec2::new(x, y))
 }
 
 impl World {
@@ -183,7 +180,8 @@ impl World {
         let users = SlotMap::with_key();
 
         let tuning = Tuning::default();
-        let root_node = DirNode::new("/", tuning.file_diameter, tuning.dir_padding);
+        let params = SceneParams::from_tuning(&tuning);
+        let root_node = DirNode::new("/", params.file_area, params.padding);
         let root = dirs.insert(root_node);
 
         let mut dir_map = BTreeMap::new();
@@ -206,11 +204,14 @@ impl World {
             removed_files: Vec::new(),
             tag_seq: 1,
             hasher: StringHasher::new(hash_seed),
-            rng: CRand::new(seed as u32),
+            seed,
+            tick: 0,
             tuning,
+            params,
+            sim_dir_bounds: None,
+            view: ViewTransform::default(),
             new_users: Vec::new(),
             weighted_mode: false,
-            dir_force_fallbacks: 0,
         }
     }
 
@@ -236,41 +237,19 @@ impl World {
         self.tuning.action_dist = tuning.action_distance;
         self.tuning.personal_space_dist = tuning.personal_space;
         self.tuning.shadow_strength = tuning.shadow_strength;
+        self.params = SceneParams::from_tuning(&self.tuning);
     }
 
-    /// Rotate world directories and users by angle (sin, cos), optionally around a centre point.
+    /// Rotate the view of directories and users by angle (sin, cos),
+    /// optionally around a centre point (view space). The simulation itself
+    /// never rotates.
     pub fn rotate(&mut self, s: f32, c: f32, centre: Option<Vec2>) {
-        self.rotate_dir_recursive(self.root, s, c, centre);
-        for (_, user) in &mut self.users {
-            let u_pos = user.pawn.pos;
-            let new_pos = if let Some(ctr) = centre {
-                gource_core::math::rotate_vec2(u_pos - ctr, s, c) + ctr
-            } else {
-                gource_core::math::rotate_vec2(u_pos, s, c)
-            };
-            user.pawn.set_pos(new_pos);
-        }
-    }
-
-    fn rotate_dir_recursive(&mut self, dir_id: DirId, s: f32, c: f32, centre: Option<Vec2>) {
-        if let Some(ctr) = centre {
-            self.dirs[dir_id].rotate_around(s, c, ctr);
-        } else {
-            self.dirs[dir_id].rotate(s, c);
-        }
-        let children = self.dirs[dir_id].children.clone();
-        for cid in children {
-            self.rotate_dir_recursive(cid, s, c, centre);
-        }
+        self.view.rotate(s, c, centre);
     }
 
     /// Port of `Gource::addUser(const std::string& username)`.
     pub fn add_user(&mut self, username: &str, settings: &GourceSettings) -> UserId {
-        let pos = if self.dir_bounds.area() > 0.0 {
-            self.dir_bounds.centre()
-        } else {
-            Vec2::ZERO
-        };
+        let pos = crate::view::from_ivec(self.sim_dir_centre().unwrap_or(IVec2::ZERO));
 
         let tagid = self.tag_seq;
         self.tag_seq += 1;
@@ -351,13 +330,16 @@ impl World {
         if settings.file_size_metric != gource_settings::FileSizeMetric::None {
             file.weighted = true;
             file.pawn.size = 0.1;
-            file.radius = 0.05;
-            file.target_size = self.tuning.file_diameter;
-            let angle = (tagid as f32) * 2.399_963_1;
-            let init_pos = Vec2::new(angle.cos(), angle.sin()) * 0.5;
-            file.pawn.pos = init_pos;
-            file.distance = init_pos.length();
-            file.dest = init_pos.normalize_or_zero();
+            file.sim.size = ONE / 10;
+            file.sim.radius = ONE / 20;
+            file.sim.target_size = self.params.file_diameter;
+            let dir = gource_scene::trig::direction(
+                gource_scene::trig::GOLDEN_ANGLE.wrapping_mul(tagid as u16),
+            );
+            let init_pos = dir.unit_times(ONE as i64 / 2);
+            file.sim.pos = init_pos;
+            file.sim.prev_pos = init_pos;
+            file.pawn.pos = crate::view::from_ivec(init_pos);
         }
 
         let file_id = self.files.insert(file);
@@ -437,16 +419,17 @@ impl World {
             }
             if settings.file_size_metric != gource_settings::FileSizeMetric::None {
                 let (weight, ref_weight) = match settings.file_size_metric {
-                    gource_settings::FileSizeMetric::Lines => (file.lines.max(1) as f32, 100.0),
-                    gource_settings::FileSizeMetric::Size => (file.byte_size.max(1) as f32, 3500.0),
+                    gource_settings::FileSizeMetric::Lines => (file.lines.max(1) as u64, 100),
+                    gource_settings::FileSizeMetric::Size => (file.byte_size.max(1), 3500),
                     gource_settings::FileSizeMetric::Diff => (
-                        (cf.lines_added.unwrap_or(0) + cf.lines_removed.unwrap_or(0)).max(1) as f32,
-                        50.0,
+                        (cf.lines_added.unwrap_or(0) as u64 + cf.lines_removed.unwrap_or(0) as u64)
+                            .max(1),
+                        50,
                     ),
                     gource_settings::FileSizeMetric::Churn => {
-                        ((file.total_added + file.total_removed).max(1) as f32, 100.0)
+                        ((file.total_added + file.total_removed).max(1), 100)
                     }
-                    gource_settings::FileSizeMetric::None => (1.0, 1.0),
+                    gource_settings::FileSizeMetric::None => (1, 1),
                 };
                 file.set_weight_target(weight, ref_weight, self.tuning.file_diameter);
             }
@@ -531,8 +514,7 @@ impl World {
                 common = "/".to_string();
             }
 
-            let newparent_node =
-                DirNode::new(&common, self.tuning.file_diameter, self.tuning.dir_padding);
+            let newparent_node = DirNode::new(&common, self.params.file_area, self.params.padding);
             let newparent_id = self.dirs.insert(newparent_node);
             self.dir_map
                 .insert(self.dirs[newparent_id].abspath.clone(), newparent_id);
@@ -597,11 +579,7 @@ impl World {
         }
 
         // 6. Create new child node
-        let new_child = DirNode::new(
-            &file_path,
-            self.tuning.file_diameter,
-            self.tuning.dir_padding,
-        );
+        let new_child = DirNode::new(&file_path, self.params.file_area, self.params.padding);
         let new_child_id = self.dirs.insert(new_child);
         self.dir_map
             .insert(self.dirs[new_child_id].abspath.clone(), new_child_id);
@@ -611,24 +589,20 @@ impl World {
 
         // 7. Check for common path element among children
         let mut commonpath = String::new();
-        let mut common_pos = Vec2::ZERO;
+        let mut common_pos = IVec2::ZERO;
         for &child_id in &self.dirs[dir_id].children {
             let child = &self.dirs[child_id];
             let common = child.common_path_prefix(&file_path);
             if common.len() > current_abspath.len() && common != file_path {
                 commonpath = common;
-                common_pos = child.pos;
+                common_pos = child.sim.pos;
                 break;
             }
         }
 
         if commonpath.len() > current_abspath.len() {
-            let mut cnode = DirNode::new(
-                &commonpath,
-                self.tuning.file_diameter,
-                self.tuning.dir_padding,
-            );
-            cnode.pos = common_pos;
+            let mut cnode = DirNode::new(&commonpath, self.params.file_area, self.params.padding);
+            cnode.place(common_pos);
             let cnode_id = self.dirs.insert(cnode);
             self.dir_map
                 .insert(self.dirs[cnode_id].abspath.clone(), cnode_id);
@@ -762,46 +736,39 @@ impl World {
         }
     }
 
-    /// The children's `dir_area`s, in child order (for
-    /// [`DirNode::calc_radius`]).
-    fn children_areas(&self, dir_id: DirId) -> Vec<f32> {
+    /// The sum of the children's areas (Q16).
+    pub(crate) fn children_area(&self, dir_id: DirId) -> i64 {
         self.dirs[dir_id]
             .children
             .iter()
             .filter_map(|&cid| self.dirs.get(cid))
-            .map(|c| c.dir_area)
-            .collect()
+            .map(|c| c.sim.radii.area)
+            .sum()
+    }
+
+    fn recalc_radius(&mut self, dir_id: DirId) {
+        if self.weighted_mode {
+            self.recalc_weighted_radius(dir_id);
+        } else {
+            let children_area = self.children_area(dir_id);
+            let (fa, pad) = (self.params.file_area, self.params.padding);
+            self.dirs[dir_id].calc_radius(fa, pad, children_area);
+        }
     }
 
     fn on_file_updated(&mut self, dir_id: DirId) {
-        let children_areas = self.children_areas(dir_id);
-        if self.weighted_mode {
-            self.dirs[dir_id].calc_weighted_radius(
-                self.tuning.dir_padding,
-                children_areas,
-                &self.files,
-            );
-        } else {
-            self.dirs[dir_id].calc_radius(self.tuning.dir_padding, children_areas);
-        }
+        self.recalc_radius(dir_id);
         self.dirs[dir_id].since_last_file_change = 0.0;
         self.on_node_updated(dir_id, false);
     }
 
-    fn on_node_updated(&mut self, dir_id: DirId, user_initiated: bool) {
+    pub(crate) fn on_node_updated(&mut self, dir_id: DirId, user_initiated: bool) {
         if user_initiated {
             self.dirs[dir_id].since_last_node_change = 0.0;
         }
-        let children_areas = self.children_areas(dir_id);
-        if self.weighted_mode {
-            self.dirs[dir_id].calc_weighted_radius(
-                self.tuning.dir_padding,
-                children_areas,
-                &self.files,
-            );
-        } else {
-            self.dirs[dir_id].calc_radius(self.tuning.dir_padding, children_areas);
-            self.dirs[dir_id].update_file_positions(self.tuning.file_diameter, &mut self.files);
+        self.recalc_radius(dir_id);
+        if !self.weighted_mode {
+            self.assign_ring_slots(dir_id);
         }
         if self.dirs[dir_id].visible
             && self.dirs[dir_id].children.is_empty()
@@ -813,708 +780,6 @@ impl World {
         if let Some(parent_id) = self.dirs[dir_id].parent {
             self.on_node_updated(parent_id, true);
         }
-    }
-
-    /// Port of `Gource::updateBounds()`.
-    pub fn update_bounds(&mut self) {
-        self.user_bounds.reset();
-        self.active_user_bounds.reset();
-
-        for (_, user) in &mut self.users {
-            let b = user.pawn.bounds();
-            self.user_bounds.update_bounds(&b);
-            if !user.is_idle() {
-                self.active_user_bounds.update_bounds(&b);
-            }
-        }
-
-        self.dir_bounds.reset();
-        let visible_dirs: Vec<DirId> = self
-            .dir_map
-            .values()
-            .copied()
-            .filter(|&did| self.dirs[did].is_visible(&self.dirs))
-            .collect();
-
-        for did in visible_dirs {
-            let dir = &mut self.dirs[did];
-            dir.update_quad_item_bounds();
-            self.dir_bounds.update_bounds(&dir.quad_item_bounds);
-        }
-    }
-
-    /// Port of `Gource::interactUsers()`.
-    pub fn interact_users(&mut self) {
-        let mut quadtree_bounds = self.user_bounds;
-        quadtree_bounds.min -= Vec2::ONE;
-        quadtree_bounds.max += Vec2::ONE;
-
-        let max_depth = if self.dir_bounds.area() > 10000.0 {
-            self.tuning.max_quadtree_depth
-        } else {
-            1
-        };
-
-        // C++ adds the users in name order (the `users` map). The insertion
-        // order is the visit order, so it decides the order in which the
-        // repulsion forces are summed.
-        let mut tree = QuadTree::new(quadtree_bounds, max_depth, 1);
-        for &user_id in self.users_by_name.values() {
-            tree.insert(user_id, self.users[user_id].pawn.bounds());
-        }
-
-        let p_space = self.tuning.personal_space_dist;
-        let act_dist = self.tuning.action_dist;
-        let b_dist = self.tuning.beam_dist;
-
-        // Apply forces in BTreeMap order
-        for &user_id in self.users_by_name.values() {
-            let u_bounds = self.users[user_id].pawn.bounds();
-            let nearby_users = tree.items_in_bounds(&u_bounds);
-
-            for other_id in nearby_users {
-                if other_id == user_id {
-                    continue;
-                }
-                let other_pos = self.users[other_id].pawn.pos;
-                self.users[user_id].apply_force_user(other_pos, p_space, &mut self.rng);
-            }
-
-            // Apply force to actions (`RUser::applyForceToActions`)
-            let user = &mut self.users[user_id];
-            if user.active_actions.is_empty() && user.actions.is_empty() {
-                continue;
-            }
-            user.last_action = user.pawn.elapsed;
-            let user = &self.users[user_id];
-            let target_file_pos = if !user.active_actions.is_empty() {
-                let mut positions = Vec::new();
-                for a in user.active_actions.iter().take(3) {
-                    if let Some(file) = self.files.get(a.target) {
-                        let dir_pos = file
-                            .dir
-                            .and_then(|d| self.dirs.get(d))
-                            .map(|d| d.pos)
-                            .unwrap_or(Vec2::ZERO);
-                        positions.push(file.absolute_pos(dir_pos));
-                    }
-                }
-                positions
-            } else if let Some(a) = user.actions.first() {
-                let mut positions = Vec::new();
-                if let Some(file) = self.files.get(a.target) {
-                    let dir_pos = file
-                        .dir
-                        .and_then(|d| self.dirs.get(d))
-                        .map(|d| d.pos)
-                        .unwrap_or(Vec2::ZERO);
-                    positions.push(file.absolute_pos(dir_pos));
-                }
-                positions
-            } else {
-                Vec::new()
-            };
-
-            for t_pos in target_file_pos {
-                self.users[user_id].apply_force_action(t_pos, act_dist, b_dist, &mut self.rng);
-            }
-        }
-
-        self.user_tree = Some(tree);
-    }
-
-    /// Port of `Gource::interactDirs()`.
-    pub fn interact_dirs(&mut self) {
-        let mut quadtree_bounds = self.dir_bounds;
-        quadtree_bounds.min -= Vec2::ONE;
-        quadtree_bounds.max += Vec2::ONE;
-
-        let max_depth = if self.dir_bounds.area() > 10000.0 {
-            self.tuning.max_quadtree_depth
-        } else {
-            1
-        };
-
-        let mut tree = QuadTree::new(quadtree_bounds, max_depth, 1);
-        for &dir_id in self.dir_map.values() {
-            if !self.dirs[dir_id].is_empty() {
-                tree.insert(dir_id, self.dirs[dir_id].quad_item_bounds);
-            }
-        }
-
-        self.dir_tree = Some(tree);
-    }
-
-    /// Port of `Gource::updateDirs(float dt)`. `file_idle_time` is
-    /// `gGourceSettings.file_idle_time` (files idle longer fade out; 0 = never).
-    pub fn update_dirs(&mut self, dt: f32, elasticity: f32, file_idle_time: f32) {
-        let mut profile = crate::profile::LogicProfile::default();
-        self.update_dirs_profiled(dt, elasticity, file_idle_time, &mut profile);
-    }
-
-    /// [`World::update_dirs`], charging directory forces, per-directory
-    /// logic (springs and file layout) and the weighted layout to `profile`.
-    pub fn update_dirs_profiled(
-        &mut self,
-        dt: f32,
-        elasticity: f32,
-        file_idle_time: f32,
-        profile: &mut crate::profile::LogicProfile,
-    ) {
-        use crate::profile::LogicSpan;
-        if let Some(tree) = self.dir_tree.take() {
-            #[cfg(not(target_arch = "wasm32"))]
-            let threads = dir_force_threads(self.dirs.len());
-            #[cfg(target_arch = "wasm32")]
-            let threads = 1;
-            if !self.apply_dir_forces_fast(&tree, threads) {
-                self.dir_force_fallbacks += 1;
-                self.apply_dir_forces_recursive(self.root, &tree);
-            }
-            self.dir_tree = Some(tree);
-        }
-        profile.mark(LogicSpan::DirForces);
-        self.logic_dirs_recursive(self.root, dt, elasticity, file_idle_time);
-        profile.mark(LogicSpan::DirLogic);
-
-        if self.weighted_mode {
-            self.update_weighted_layout_step(dt);
-        }
-        profile.mark(LogicSpan::Weighted);
-    }
-
-    fn post_order_dirs(&self, dir_id: DirId, out: &mut Vec<DirId>) {
-        if let Some(dir) = self.dirs.get(dir_id) {
-            let children = dir.children.clone();
-            for cid in children {
-                self.post_order_dirs(cid, out);
-            }
-            out.push(dir_id);
-        }
-    }
-
-    /// Incremental per-frame layout step for weighted mode: steps internal file physics,
-    /// recomputes radii, and resolves contact between directories in post-order traversal.
-    pub fn update_weighted_layout_step(&mut self, dt: f32) {
-        let mut dir_ids = Vec::with_capacity(self.dirs.len());
-        self.post_order_dirs(self.root, &mut dir_ids);
-        for &did in &dir_ids {
-            self.dirs[did].step_weighted_files(dt, self.tuning.file_diameter, &mut self.files);
-            let children_areas = self.children_areas(did);
-            self.dirs[did].calc_weighted_radius(
-                self.tuning.dir_padding,
-                children_areas,
-                &self.files,
-            );
-        }
-        self.resolve_directory_contacts();
-    }
-
-    /// Walk directories and invoke [`DirNode::calc_weighted_radius`] and
-    /// [`DirNode::update_weighted_file_positions`] for variable-sized file packing,
-    /// and resolve directory circle-edge collisions so directories do not overlap.
-    pub fn update_weighted_layout(&mut self) {
-        let mut dir_ids = Vec::with_capacity(self.dirs.len());
-        self.post_order_dirs(self.root, &mut dir_ids);
-        for &did in &dir_ids {
-            self.dirs[did]
-                .update_weighted_file_positions(self.tuning.file_diameter, &mut self.files);
-            let children_areas = self.children_areas(did);
-            self.dirs[did].calc_weighted_radius(
-                self.tuning.dir_padding,
-                children_areas,
-                &self.files,
-            );
-        }
-        self.resolve_directory_contacts();
-    }
-
-    /// Resolve directory circle-edge contacts so overlapping directories push apart via Rapier 2D.
-    pub fn resolve_directory_contacts(&mut self) {
-        let dir_ids: Vec<DirId> = self.dir_map.values().copied().collect();
-        let n = dir_ids.len();
-        if n < 2 {
-            return;
-        }
-
-        let mut descs = Vec::with_capacity(n);
-        let mut ancestor_pairs = Vec::new();
-
-        for (i, &id_a) in dir_ids.iter().enumerate() {
-            let d = &self.dirs[id_a];
-            let parent_idx = d
-                .parent
-                .and_then(|p_id| dir_ids.iter().position(|&x| x == p_id));
-            descs.push(crate::physics2d::DirCircleDesc {
-                pos: d.pos,
-                dir_radius: d.dir_radius,
-                parent_radius: d.parent_radius,
-                parent_idx,
-                is_root: id_a == self.root,
-                is_empty: d.is_empty(),
-            });
-
-            for (j_offset, &id_b) in dir_ids[i + 1..].iter().enumerate() {
-                let j = i + 1 + j_offset;
-                if self.is_ancestor(id_a, id_b) || self.is_ancestor(id_b, id_a) {
-                    ancestor_pairs.push((i, j));
-                }
-            }
-        }
-
-        let resolved_positions =
-            crate::physics2d::resolve_directory_contacts_rapier(&descs, &ancestor_pairs, 15);
-
-        for (i, &id) in dir_ids.iter().enumerate() {
-            let delta = resolved_positions[i] - self.dirs[id].pos;
-            if delta.length_squared() > 1e-6 {
-                let v = self.dirs[id].vel;
-                if v.dot(delta) < 0.0 {
-                    let norm = delta.normalize();
-                    self.dirs[id].vel -= norm * v.dot(norm);
-                }
-                self.dirs[id].spos += delta;
-            }
-            self.dirs[id].pos = resolved_positions[i];
-            self.dirs[id].update_quad_item_bounds();
-        }
-    }
-
-    fn apply_dir_forces_recursive(&mut self, dir_id: DirId, tree: &QuadTree<DirId>) {
-        let children = self.dirs[dir_id].children.clone();
-        for cid in children {
-            self.apply_dir_forces_recursive(cid, tree);
-        }
-
-        let parent_id = match self.dirs[dir_id].parent {
-            Some(pid) => pid,
-            None => return,
-        };
-
-        // Query tree for nearby dirnodes (C++ queries with the cached
-        // quadItemBounds, stale for hidden dirs).
-        let bounds = self.dirs[dir_id].quad_item_bounds;
-        let nearby = tree.items_in_bounds(&bounds);
-
-        for other_id in nearby {
-            if other_id == dir_id
-                || other_id == parent_id
-                || self.is_ancestor(dir_id, other_id)
-                || self.is_ancestor(other_id, dir_id)
-            {
-                continue;
-            }
-            let other_pos = self.dirs[other_id].pos;
-            let other_radius = self.dirs[other_id].dir_radius;
-            self.dirs[dir_id].apply_force_dir(other_pos, other_radius, &mut self.rng);
-        }
-
-        // Parent force
-        let parent_pos = self.dirs[parent_id].pos;
-        let parent_radius = self.dirs[parent_id].dir_radius;
-        self.dirs[dir_id].apply_force_dir(parent_pos, parent_radius, &mut self.rng);
-
-        let parent_dist = self.dirs[dir_id].distance_to_parent(&self.dirs[parent_id]);
-        let dir_to_parent = parent_pos - self.dirs[dir_id].pos;
-        let dir_len = dir_to_parent.length();
-        let norm_to_parent = if dir_len > 0.0 {
-            dir_to_parent / dir_len
-        } else {
-            Vec2::ZERO
-        };
-
-        self.dirs[dir_id].accel += self.tuning.force_gravity * parent_dist * norm_to_parent;
-
-        // Parent's parent push force
-        if let Some(pparent_id) = self.dirs[parent_id].parent {
-            let parent_edge = parent_pos - self.dirs[pparent_id].pos;
-            let pe_len = parent_edge.length();
-            let pe_norm = if pe_len > 0.0 {
-                parent_edge / pe_len
-            } else {
-                Vec2::ZERO
-            };
-            let dest = (parent_pos
-                + (self.dirs[parent_id].dir_radius + self.dirs[dir_id].dir_radius) * pe_norm)
-                - self.dirs[dir_id].pos;
-            self.dirs[dir_id].accel += dest;
-        }
-
-        // Sibling repulsion
-        let siblings = self.dirs[parent_id].children.clone();
-        if !siblings.is_empty() {
-            let mut sib_accel = Vec2::ZERO;
-            let mut visible_sibs = 1;
-
-            for &sib_id in &siblings {
-                if sib_id == dir_id || !self.dirs[sib_id].is_visible(&self.dirs) {
-                    continue;
-                }
-                visible_sibs += 1;
-                let s_dir = self.dirs[sib_id].pos - self.dirs[dir_id].pos;
-                let s_len = s_dir.length();
-                if s_len > 0.0 {
-                    sib_accel -= s_dir / s_len;
-                }
-            }
-
-            if visible_sibs > 1 {
-                // C++: (radius * PI) in double, divided by a float, then
-                // rounded to float.
-                let slice_size = ((self.dirs[parent_id].dir_radius as f64 * CPP_PI)
-                    / ((visible_sibs as f32 + 1.0) as f64)) as f32;
-                sib_accel *= slice_size;
-                self.dirs[dir_id].accel += sib_accel;
-            }
-        }
-    }
-
-    /// The directory force pass of [`World::apply_dir_forces_recursive`],
-    /// computed as a pure function of the current positions, with per-frame
-    /// caches for visibility and ancestry (Euler-tour intervals) instead of
-    /// recursive walks. Each directory's acceleration accumulates its
-    /// contributions in the same order as the recursive pass, so the result
-    /// is bit-identical. On native targets large trees are split across
-    /// threads (each directory writes only its own acceleration).
-    ///
-    /// Returns false, changing nothing, when some pair of directories
-    /// coincide: that consumes the shared RNG in traversal order, so the
-    /// caller must run the serial pass instead.
-    fn apply_dir_forces_fast(&mut self, tree: &QuadTree<DirId>, threads: usize) -> bool {
-        let mut order = Vec::with_capacity(self.dirs.len());
-        self.post_order_dirs(self.root, &mut order);
-        if order.len() != self.dirs.len() {
-            return false; // detached directories: keep the reference path
-        }
-        let cache = DirFrameCache::build(self, &order);
-        let work: Vec<DirId> = order
-            .iter()
-            .copied()
-            .filter(|&d| self.dirs[d].parent.is_some())
-            .collect();
-
-        let results: Option<Vec<Vec2>> = {
-            let this = &*self;
-            let compute = |chunk: &[DirId]| -> Option<Vec<Vec2>> {
-                chunk
-                    .iter()
-                    .map(|&d| this.dir_force_accel(d, tree, &cache))
-                    .collect()
-            };
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                if threads > 1 && work.len() > 1 {
-                    let chunk = work.len().div_ceil(threads);
-                    std::thread::scope(|s| {
-                        let handles: Vec<_> = work
-                            .chunks(chunk)
-                            .map(|c| s.spawn(move || compute(c)))
-                            .collect();
-                        let mut all = Vec::with_capacity(work.len());
-                        for h in handles {
-                            all.extend(h.join().expect("dir force worker panicked")?);
-                        }
-                        Some(all)
-                    })
-                } else {
-                    compute(&work)
-                }
-            }
-            #[cfg(target_arch = "wasm32")]
-            {
-                let _ = threads;
-                compute(&work)
-            }
-        };
-        let Some(accels) = results else {
-            return false;
-        };
-        for (&d, a) in work.iter().zip(accels) {
-            self.dirs[d].accel = a;
-        }
-        true
-    }
-
-    /// New acceleration of `dir_id` after the directory force pass, or None
-    /// if a coincident pair needs the RNG.
-    fn dir_force_accel(
-        &self,
-        dir_id: DirId,
-        tree: &QuadTree<DirId>,
-        cache: &DirFrameCache,
-    ) -> Option<Vec2> {
-        let me = &self.dirs[dir_id];
-        let parent_id = me.parent?;
-        let parent = &self.dirs[parent_id];
-        let mut accel = me.accel;
-
-        // Mirrors `DirNode::apply_force_dir`, without the RNG branch.
-        let force = |accel: &mut Vec2, other_pos: Vec2, other_radius: f32| -> Option<()> {
-            let dir = other_pos - me.pos;
-            let posd2 = dir.length_squared();
-            let sumradius = me.dir_radius + other_radius;
-            let distance2 = posd2 - sumradius * sumradius;
-            if distance2 > 0.0 {
-                return Some(());
-            }
-            let posd = posd2.sqrt();
-            let distance = posd - me.dir_radius - other_radius;
-            if posd < 0.00001 {
-                return None;
-            }
-            *accel += distance * (dir / posd);
-            Some(())
-        };
-
-        for other_id in tree.items_in_bounds(&me.quad_item_bounds) {
-            if other_id == dir_id
-                || other_id == parent_id
-                || cache.is_ancestor(dir_id, other_id)
-                || cache.is_ancestor(other_id, dir_id)
-            {
-                continue;
-            }
-            let o = &self.dirs[other_id];
-            force(&mut accel, o.pos, o.dir_radius)?;
-        }
-
-        let parent_pos = parent.pos;
-        force(&mut accel, parent_pos, parent.dir_radius)?;
-
-        let parent_dist = me.distance_to_parent(parent);
-        let dir_to_parent = parent_pos - me.pos;
-        let dir_len = dir_to_parent.length();
-        let norm_to_parent = if dir_len > 0.0 {
-            dir_to_parent / dir_len
-        } else {
-            Vec2::ZERO
-        };
-        accel += self.tuning.force_gravity * parent_dist * norm_to_parent;
-
-        if let Some(pparent_id) = parent.parent {
-            let parent_edge = parent_pos - self.dirs[pparent_id].pos;
-            let pe_len = parent_edge.length();
-            let pe_norm = if pe_len > 0.0 {
-                parent_edge / pe_len
-            } else {
-                Vec2::ZERO
-            };
-            let dest = (parent_pos + (parent.dir_radius + me.dir_radius) * pe_norm) - me.pos;
-            accel += dest;
-        }
-
-        if !parent.children.is_empty() {
-            let mut sib_accel = Vec2::ZERO;
-            let mut visible_sibs = 1;
-            for &sib_id in &parent.children {
-                if sib_id == dir_id || !cache.visible[sib_id] {
-                    continue;
-                }
-                visible_sibs += 1;
-                let s_dir = self.dirs[sib_id].pos - me.pos;
-                let s_len = s_dir.length();
-                if s_len > 0.0 {
-                    sib_accel -= s_dir / s_len;
-                }
-            }
-            if visible_sibs > 1 {
-                let slice_size = ((parent.dir_radius as f64 * CPP_PI)
-                    / ((visible_sibs as f32 + 1.0) as f64)) as f32;
-                sib_accel *= slice_size;
-                accel += sib_accel;
-            }
-        }
-        Some(accel)
-    }
-
-    fn is_ancestor(&self, ancestor: DirId, desc: DirId) -> bool {
-        let mut curr = self.dirs[desc].parent;
-        while let Some(pid) = curr {
-            if pid == ancestor {
-                return true;
-            }
-            curr = self.dirs[pid].parent;
-        }
-        false
-    }
-
-    fn logic_dirs_recursive(
-        &mut self,
-        dir_id: DirId,
-        dt: f32,
-        elasticity: f32,
-        file_idle_time: f32,
-    ) {
-        if !self.dirs[dir_id].is_empty()
-            && !self.dirs[dir_id].position_initialized
-            && let Some(pid) = self.dirs[dir_id].parent
-        {
-            let p_pos = self.dirs[pid].pos;
-            let pp_pos = self.dirs[pid].parent.map(|ppid| self.dirs[ppid].pos);
-            self.dirs[dir_id].set_initial_position(p_pos, pp_pos, &self.hasher);
-        }
-
-        self.dirs[dir_id].move_step(dt, elasticity);
-
-        if let Some(pid) = self.dirs[dir_id].parent {
-            let p_pos = self.dirs[pid].pos;
-            self.dirs[dir_id].update_spline_point(dt, p_pos);
-            let to_parent = self.dirs[dir_id].pos - p_pos;
-            let tp_len = to_parent.length();
-            self.dirs[dir_id].node_normal = if tp_len > 0.0 {
-                to_parent / tp_len
-            } else {
-                Vec2::ZERO
-            };
-        }
-
-        // Logic files
-        let file_ids = self.dirs[dir_id].files.clone();
-        for fid in file_ids {
-            if let Some(file) = self.files.get_mut(fid) {
-                let expired = file.logic(dt, file_idle_time);
-                if expired {
-                    self.removed_files.push(fid);
-                }
-            }
-        }
-
-        let children = self.dirs[dir_id].children.clone();
-        for cid in children {
-            self.logic_dirs_recursive(cid, dt, elasticity, file_idle_time);
-        }
-
-        self.dirs[dir_id].calc_colour(&self.files);
-
-        if self.dirs[dir_id].visible {
-            self.dirs[dir_id].since_node_visible += dt;
-        }
-        self.dirs[dir_id].since_last_file_change += dt;
-        self.dirs[dir_id].since_last_node_change += dt;
-    }
-
-    /// Advance users, execute actions against touched files, and collect inactive user IDs.
-    /// Port of `Gource::updateUsers`.
-    pub fn update_users(&mut self, t: f32, dt: f32, settings: &GourceSettings) -> Vec<UserId> {
-        let mut inactive_users = Vec::new();
-        let user_ids: Vec<UserId> = self.users_by_name.values().copied().collect();
-
-        for uid in user_ids {
-            let user = &mut self.users[uid];
-            let max_lag = settings.max_file_lag;
-            let b_dist = self.tuning.beam_dist;
-            let friction = settings.user_friction;
-
-            let events = user.logic(t, dt, max_lag, b_dist, friction, |fid| {
-                self.files.get(fid).map(|f| {
-                    let dir_pos = f
-                        .dir
-                        .and_then(|d| self.dirs.get(d))
-                        .map(|d| d.pos)
-                        .unwrap_or(Vec2::ZERO);
-                    f.absolute_pos(dir_pos)
-                })
-            });
-
-            // Apply action side effects
-            for (action, needs_apply, finished_now) in events {
-                if needs_apply && let Some(file) = self.files.get_mut(action.target) {
-                    let was_hidden = file.pawn.is_hidden();
-                    let unexpired = file.touch(action.timestamp, action.colour);
-                    if unexpired {
-                        self.removed_files.retain(|&rf| rf != action.target);
-                    }
-                    if self.weighted_mode {
-                        let user_pos = self.users[uid].pawn.pos;
-                        let dir_pos = file
-                            .dir
-                            .and_then(|d| self.dirs.get(d))
-                            .map(|d| d.pos)
-                            .unwrap_or(Vec2::ZERO);
-                        let file_world_pos = file.absolute_pos(dir_pos);
-                        let beam_vec = file_world_pos - user_pos;
-                        let beam_dir = beam_vec.normalize_or_zero();
-
-                        if was_hidden {
-                            file.pawn.size = 0.1;
-                            file.radius = 0.05;
-                            file.pawn.dims = Vec2::splat(0.1);
-                            let init_nudge = if beam_dir != Vec2::ZERO {
-                                -beam_dir * 0.5
-                            } else {
-                                let angle = (file.pawn.tagid as f32) * 2.399_963_1;
-                                Vec2::new(angle.cos(), angle.sin()) * 0.5
-                            };
-                            file.pawn.pos = init_nudge;
-                            file.distance = init_nudge.length();
-                            file.dest = init_nudge.normalize_or_zero();
-                        }
-
-                        if beam_dir != Vec2::ZERO {
-                            file.vel = (file.vel + beam_dir * 6.0).clamp_length_max(25.0);
-                            if let Some(did) = file.dir
-                                && did != self.root
-                                && let Some(dir) = self.dirs.get_mut(did)
-                            {
-                                dir.accel += beam_dir * 4.0;
-                            }
-                        }
-                    }
-                    if let Some(did) = file.dir {
-                        if was_hidden {
-                            self.dirs[did].add_visible();
-                        }
-                        self.dirs[did].since_last_file_change = 0.0;
-                        self.on_node_updated(did, true);
-                    }
-                }
-                if finished_now
-                    && matches!(action.kind, ActionKind::Remove)
-                    && let Some(file) = self.files.get_mut(action.target)
-                {
-                    file.remove_with_timestamp(action.timestamp);
-                }
-            }
-
-            // Continuous gentle laser push away from author while laser is active
-            if self.weighted_mode {
-                let user_pos = self.users[uid].pawn.pos;
-                let active_fids: Vec<FileId> = self.users[uid]
-                    .active_actions
-                    .iter()
-                    .map(|a| a.target)
-                    .collect();
-                for target_fid in active_fids {
-                    if let Some(file) = self.files.get_mut(target_fid)
-                        && !file.pawn.is_hidden()
-                    {
-                        let dir_pos = file
-                            .dir
-                            .and_then(|d| self.dirs.get(d))
-                            .map(|d| d.pos)
-                            .unwrap_or(Vec2::ZERO);
-                        let file_world_pos = file.absolute_pos(dir_pos);
-                        let beam_dir = (file_world_pos - user_pos).normalize_or_zero();
-                        if beam_dir != Vec2::ZERO {
-                            file.vel = (file.vel + beam_dir * (18.0 * dt)).clamp_length_max(20.0);
-                            if let Some(did) = file.dir
-                                && did != self.root
-                                && let Some(dir) = self.dirs.get_mut(did)
-                            {
-                                dir.accel += beam_dir * 2.0;
-                            }
-                        }
-                    }
-                }
-            }
-
-            let user = &self.users[uid];
-            if user.is_inactive() {
-                inactive_users.push(uid);
-            }
-        }
-
-        inactive_users
     }
 
     /// Calculate edge geometry and screen positions.
@@ -2124,7 +1389,7 @@ impl World {
 
         self.dirs.clear();
         self.dir_map.clear();
-        let root_node = DirNode::new("/", self.tuning.file_diameter, self.tuning.dir_padding);
+        let root_node = DirNode::new("/", self.params.file_area, self.params.padding);
         self.root = self.dirs.insert(root_node);
         self.dir_map.insert("/".to_string(), self.root);
 
@@ -2178,28 +1443,27 @@ impl World {
                 file.touch(live.last_timestamp, colour);
 
                 // If a file size metric is enabled, set target weight and snap initial size
-                let weight = match settings.file_size_metric {
-                    gource_settings::FileSizeMetric::None => 0.0,
-                    gource_settings::FileSizeMetric::Size => live.byte_size as f32,
-                    gource_settings::FileSizeMetric::Lines => live.lines as f32,
-                    gource_settings::FileSizeMetric::Diff => (live.lines.max(1)) as f32,
-                    gource_settings::FileSizeMetric::Churn => {
-                        live.cohorts.total_churn_removed as f32
-                    }
+                let weight: u64 = match settings.file_size_metric {
+                    gource_settings::FileSizeMetric::None => 0,
+                    gource_settings::FileSizeMetric::Size => live.byte_size,
+                    gource_settings::FileSizeMetric::Lines => live.lines as u64,
+                    gource_settings::FileSizeMetric::Diff => live.lines.max(1) as u64,
+                    gource_settings::FileSizeMetric::Churn => live.cohorts.total_churn_removed,
                 };
-                if weight > 0.0 {
+                if weight > 0 {
                     file.weighted = true;
                     let ref_weight = match settings.file_size_metric {
-                        gource_settings::FileSizeMetric::Size => 1024.0,
-                        gource_settings::FileSizeMetric::Lines => 100.0,
-                        gource_settings::FileSizeMetric::Diff => 50.0,
-                        gource_settings::FileSizeMetric::Churn => 100.0,
-                        _ => 100.0,
+                        gource_settings::FileSizeMetric::Size => 1024,
+                        gource_settings::FileSizeMetric::Lines => 100,
+                        gource_settings::FileSizeMetric::Diff => 50,
+                        gource_settings::FileSizeMetric::Churn => 100,
+                        _ => 100,
                     };
                     file.set_weight_target(weight, ref_weight, self.tuning.file_diameter);
-                    file.pawn.size = file.target_size;
-                    file.radius = file.target_size * 0.5;
-                    file.pawn.dims = Vec2::splat(file.target_size);
+                    file.sim.size = file.sim.target_size;
+                    file.sim.radius = file.sim.target_size / 2;
+                    file.pawn.size = file.target_size();
+                    file.pawn.dims = Vec2::splat(file.pawn.size);
                 }
 
                 (file.dir, was_hidden)
@@ -2227,109 +1491,29 @@ impl World {
         for (username, path) in user_last_file_path {
             let uid = self.add_user(&username, settings);
             if let Some(&fid) = self.files_by_path.get(&path)
-                && let Some(file) = self.files.get(fid)
+                && let Some(file_pos) = self.file_sim_pos(fid)
             {
-                let dir_pos = file
-                    .dir
-                    .and_then(|d| self.dirs.get(d))
-                    .map(|d| d.pos)
-                    .unwrap_or(Vec2::ZERO);
-                let file_pos = file.absolute_pos(dir_pos);
-                let nudge = random_direction(&mut self.rng) * self.tuning.action_dist * 0.5;
-                self.users[uid].pawn.set_pos(file_pos + nudge);
+                self.place_user_near(uid, file_pos);
             }
         }
 
-        // Settle layout simulation physics
-        for _ in 0..settle_steps {
-            self.update_bounds();
-            self.interact_dirs();
-            self.update_dirs(1.0 / 60.0, settings.elasticity, 0.0);
-        }
-    }
-}
-
-/// Per-frame directory facts for the force pass: recursive visibility and
-/// Euler-tour intervals (ancestry in O(1)).
-struct DirFrameCache {
-    visible: slotmap::SecondaryMap<DirId, bool>,
-    tin: slotmap::SecondaryMap<DirId, u32>,
-    tout: slotmap::SecondaryMap<DirId, u32>,
-}
-
-impl DirFrameCache {
-    /// `post_order` lists every directory, children before parents.
-    fn build(world: &World, post_order: &[DirId]) -> DirFrameCache {
-        let mut visible = slotmap::SecondaryMap::with_capacity(post_order.len());
-        for &d in post_order {
-            let dir = &world.dirs[d];
-            let v = dir.visible || dir.children.iter().any(|c| visible.get(*c) == Some(&true));
-            visible.insert(d, v);
-        }
-        let mut tin = slotmap::SecondaryMap::with_capacity(post_order.len());
-        let mut tout = slotmap::SecondaryMap::with_capacity(post_order.len());
-        let mut clock = 0u32;
-        let mut stack = vec![(world.root, false)];
-        while let Some((d, done)) = stack.pop() {
-            if done {
-                tout.insert(d, clock);
-                continue;
-            }
-            tin.insert(d, clock);
-            clock += 1;
-            stack.push((d, true));
-            for &c in world.dirs[d].children.iter().rev() {
-                if world.dirs.contains_key(c) {
-                    stack.push((c, false));
-                }
-            }
-        }
-        DirFrameCache { visible, tin, tout }
-    }
-
-    /// True if `ancestor` is a proper ancestor of `desc`.
-    fn is_ancestor(&self, ancestor: DirId, desc: DirId) -> bool {
-        ancestor != desc
-            && self.tin[ancestor] < self.tin[desc]
-            && self.tout[desc] <= self.tout[ancestor]
-    }
-}
-
-/// Worker threads for a force pass over `n` directories: none below a size
-/// where spawning costs more than it saves. `GOURCE_SIM_THREADS` (read once)
-/// overrides the hardware-based default.
-#[cfg(not(target_arch = "wasm32"))]
-fn dir_force_threads(n: usize) -> usize {
-    static OVERRIDE: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
-    let requested = *OVERRIDE.get_or_init(|| {
-        std::env::var("GOURCE_SIM_THREADS")
-            .ok()
-            .and_then(|s| s.parse::<usize>().ok())
-    });
-    let hw = std::thread::available_parallelism().map_or(1, |n| n.get());
-    dir_force_threads_for(n, requested, hw)
-}
-
-/// [`dir_force_threads`] with its inputs explicit.
-#[cfg(not(target_arch = "wasm32"))]
-fn dir_force_threads_for(n: usize, requested: Option<usize>, hw: usize) -> usize {
-    const PER_THREAD: usize = 256;
-    match requested {
-        Some(t) => t.max(1).min(n.div_ceil(PER_THREAD).max(1)),
-        None => hw.min(8).min(n / PER_THREAD).max(1),
+        // Settle the layout
+        self.settle(settle_steps);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::profile::LogicProfile;
+    use crate::step::{TICK_DT, TickDelta};
 
-    /// A world with a few hundred files over a nested tree, simulated until
-    /// directories have spread out.
-    fn spread_world(frames: usize) -> World {
-        let mut world = World::new(7, 31);
+    /// A world with a few hundred files over a nested tree.
+    fn nested_world(seed: u64) -> World {
+        let mut world = World::new(seed, 31);
         let settings = GourceSettings::default();
         world.add_user("alice", &settings);
+        world.add_user("bob", &settings);
         let mut cfs = Vec::new();
         for a in 0..6 {
             for b in 0..5 {
@@ -2343,175 +1527,154 @@ mod tests {
                 }
             }
         }
-        let commit = Commit {
-            timestamp: 1000,
-            username: "alice".to_string(),
-            files: cfs.clone(),
-            ..Default::default()
-        };
-        for cf in &cfs {
+        for (i, cf) in cfs.iter().enumerate() {
+            let commit = Commit {
+                timestamp: 1000,
+                username: if i % 2 == 0 { "alice" } else { "bob" }.to_string(),
+                files: vec![cf.clone()],
+                ..Default::default()
+            };
             let fid = world.add_file(cf, &settings).expect("file added");
             world.add_file_action(&commit, cf, fid, 0.0, &settings);
-        }
-        let dt = 1.0 / 60.0;
-        for i in 0..frames {
-            world.update_bounds();
-            world.interact_users();
-            world.update_users(i as f32 * dt, dt, &settings);
-            world.interact_dirs();
-            world.update_dirs(dt, 0.0, 0.0);
         }
         world
     }
 
-    fn accels(w: &World) -> Vec<(DirId, u32, u32)> {
-        let mut v: Vec<_> = w
-            .dirs
-            .iter()
-            .map(|(k, d)| (k, d.accel.x.to_bits(), d.accel.y.to_bits()))
-            .collect();
-        v.sort_by_key(|e| e.0);
-        v
+    fn tick(world: &mut World, n: u64, settings: &GourceSettings) -> TickDelta {
+        let mut profile = LogicProfile::default();
+        world.begin_tick();
+        world.update_sim_bounds();
+        world.interact_users();
+        world.update_users(n as f32 * TICK_DT, TICK_DT, settings);
+        world.update_dirs(TICK_DT, 0.0, &mut profile);
+        world.end_tick()
     }
 
     #[test]
-    fn fast_dir_forces_match_recursive_bit_for_bit() {
-        let mut world = spread_world(0);
-        let dt = 1.0 / 60.0;
+    fn simulation_is_deterministic_and_spreads() {
         let settings = GourceSettings::default();
-        let mut compared = 0;
-        for i in 0..240 {
-            world.update_bounds();
-            world.interact_users();
-            world.update_users(i as f32 * dt, dt, &settings);
-            world.interact_dirs();
-            let tree = world.dir_tree.clone().expect("dir tree");
-            let mut reference = world.clone();
-            reference.apply_dir_forces_recursive(reference.root, &tree);
-            for threads in [1, 3] {
-                let mut fast = world.clone();
-                if fast.apply_dir_forces_fast(&tree, threads) {
-                    assert_eq!(
-                        accels(&fast),
-                        accels(&reference),
-                        "frame {i}, {threads} threads"
-                    );
-                    assert_eq!(fast.rng.clone().rand(), reference.rng.clone().rand());
-                    compared += 1;
-                } else {
-                    assert_eq!(accels(&fast), accels(&world), "fallback must not mutate");
-                }
-            }
-            world.update_dirs(dt, 0.0, 0.0);
+        let mut a = nested_world(7);
+        let mut b = nested_world(7);
+        for n in 0..600 {
+            tick(&mut a, n, &settings);
+            tick(&mut b, n, &settings);
         }
-        assert!(
-            world.dirs.len() > 30,
-            "tree should be nested: {}",
-            world.dirs.len()
-        );
-        assert!(compared > 300, "fast path should usually apply: {compared}");
+        assert_eq!(a.state_hash(), b.state_hash());
+        assert_eq!(a.tick, 600);
+        // A different seed diverges only through coincident tie-breaks, so
+        // the hashes may match; the layout must have spread either way.
+        a.sync_view(1.0);
+        assert!(a.dir_bounds.area() > 10000.0, "{:?}", a.dir_bounds);
+        assert!(a.dirs.len() > 30);
+        // Every file is visible and sits near its ring slot.
+        for f in a.files.values() {
+            assert!(!f.pawn.is_hidden());
+            let target = f.sim.dest.unit_times(f.sim.distance as i64);
+            assert!(
+                (f.sim.pos - target).length() < ONE,
+                "{:?} vs {target:?}",
+                f.sim.pos
+            );
+        }
+        assert!(a.user_tree.is_some() && a.dir_tree.is_some());
     }
 
     #[test]
-    fn fast_dir_forces_fall_back_on_coincident_dirs() {
-        let mut world = World::new(1, 31);
+    fn undo_restores_positions_exactly() {
         let settings = GourceSettings::default();
-        for name in ["/x/a.rs", "/y/b.rs"] {
+        let mut world = nested_world(3);
+        for n in 0..120 {
+            tick(&mut world, n, &settings);
+        }
+        let before: Vec<_> = world
+            .dirs
+            .values()
+            .map(|d| (d.sim.pos, d.sim.spos))
+            .collect();
+        let files_before: Vec<_> = world.files.values().map(|f| f.sim.pos).collect();
+        let users_before: Vec<_> = world.users.values().map(|u| u.sim.pos).collect();
+        let mut deltas = Vec::new();
+        for n in 120..180 {
+            deltas.push(tick(&mut world, n, &settings));
+        }
+        assert!(deltas.iter().any(|d| !d.is_empty()));
+        for d in deltas.iter().rev() {
+            world.undo_tick(d);
+        }
+        assert_eq!(world.tick, 120);
+        let after: Vec<_> = world
+            .dirs
+            .values()
+            .map(|d| (d.sim.pos, d.sim.spos))
+            .collect();
+        assert_eq!(before, after);
+        assert_eq!(
+            files_before,
+            world.files.values().map(|f| f.sim.pos).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            users_before,
+            world.users.values().map(|u| u.sim.pos).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn view_interpolates_and_rotates() {
+        let settings = GourceSettings::default();
+        let mut world = nested_world(5);
+        for n in 0..30 {
+            tick(&mut world, n, &settings);
+        }
+        let d = *world.dir_map.values().find(|&&d| d != world.root).unwrap();
+        let (p0, p1) = (world.dirs[d].sim.prev_pos, world.dirs[d].sim.pos);
+        world.sync_view(0.5);
+        let mid = (crate::view::from_ivec(p0) + crate::view::from_ivec(p1)) * 0.5;
+        assert!((world.dirs[d].pos - mid).length() < 1e-3);
+        world.rotate(1.0, 0.0, None);
+        world.sync_view(1.0);
+        let p = crate::view::from_ivec(p1);
+        assert!((world.dirs[d].pos - Vec2::new(-p.y, p.x)).length() < 1e-3);
+        // Rotation never touches the simulation.
+        assert_eq!(world.dirs[d].sim.pos, p1);
+    }
+
+    #[test]
+    fn weighted_mode_runs_and_packs() {
+        let settings = GourceSettings {
+            file_size_metric: gource_settings::FileSizeMetric::Lines,
+            ..Default::default()
+        };
+        let mut world = World::new(9, 31);
+        world.weighted_mode = true;
+        for i in 0..20 {
             let cf = CommitFile {
-                filename: name.to_string(),
+                filename: format!("/w/f{i}.rs"),
                 action: FileAction::Add,
                 colour: Vec3::ONE,
+                lines_added: Some(10 * (i + 1)),
                 ..Default::default()
             };
-            world.add_file(&cf, &settings).expect("file added");
+            let commit = Commit {
+                timestamp: 10,
+                username: "u".to_string(),
+                files: vec![cf.clone()],
+                ..Default::default()
+            };
+            let fid = world.add_file(&cf, &settings).unwrap();
+            world.add_file_action(&commit, &cf, fid, 0.0, &settings);
         }
-        let dir = |name: &str| {
-            *world
-                .dir_map
-                .iter()
-                .find(|(k, _)| k.trim_end_matches('/') == name)
-                .expect("dir exists")
-                .1
-        };
-        let (x, y) = (dir("/x"), dir("/y"));
-        let mut tree = QuadTree::new(
-            Bounds2D::from_points(Vec2::splat(-100.0), Vec2::splat(100.0)),
-            1,
-            1,
-        );
-        for id in [x, y] {
-            let d = &mut world.dirs[id];
-            d.pos = Vec2::new(10.0, 10.0);
-            d.visible = true;
-            d.update_quad_item_bounds();
-            tree.insert(id, d.quad_item_bounds);
+        for n in 0..400 {
+            tick(&mut world, n, &settings);
         }
-        let before = accels(&world);
-        assert!(!world.apply_dir_forces_fast(&tree, 1));
-        assert_eq!(accels(&world), before);
-
-        // The serial pass handles it, consuming the RNG.
-        let mut fresh_rng = world.rng.clone();
-        world.apply_dir_forces_recursive(world.root, &tree);
-        assert_ne!(accels(&world), before);
-        assert_ne!(world.rng.rand(), fresh_rng.rand());
-    }
-
-    #[test]
-    fn fast_dir_forces_fall_back_on_detached_dirs() {
-        let mut world = spread_world(5);
-        let tree = world.dir_tree.clone().expect("dir tree");
-        let (fd, pad) = (world.tuning.file_diameter, world.tuning.dir_padding);
-        world.dirs.insert(DirNode::new("orphan", fd, pad));
-        let before = accels(&world);
-        assert!(!world.apply_dir_forces_fast(&tree, 2));
-        assert_eq!(accels(&world), before);
-    }
-
-    #[test]
-    fn update_dirs_counts_fallbacks() {
-        let mut world = spread_world(2);
-        let start = world.dir_force_fallbacks;
-        let (fd, pad) = (world.tuning.file_diameter, world.tuning.dir_padding);
-        world.dirs.insert(DirNode::new("orphan", fd, pad));
-        world.interact_dirs();
-        world.update_dirs(1.0 / 60.0, 0.0, 0.0);
-        assert_eq!(world.dir_force_fallbacks, start + 1);
-    }
-
-    #[test]
-    fn dir_frame_cache_matches_tree_walks() {
-        let world = spread_world(3);
-        let mut order = Vec::new();
-        world.post_order_dirs(world.root, &mut order);
-        let cache = DirFrameCache::build(&world, &order);
-        for &a in &order {
-            assert_eq!(cache.visible[a], world.dirs[a].is_visible(&world.dirs));
-            for &b in &order {
-                assert_eq!(
-                    cache.is_ancestor(a, b),
-                    world.is_ancestor(a, b),
-                    "{:?} {:?}",
-                    world.dirs[a].path(),
-                    world.dirs[b].path()
-                );
-            }
-        }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn dir_force_thread_heuristic() {
-        // Hardware default: capped at 8, at least 256 dirs per thread.
-        assert_eq!(dir_force_threads_for(100, None, 64), 1);
-        assert_eq!(dir_force_threads_for(1024, None, 64), 4);
-        assert_eq!(dir_force_threads_for(100_000, None, 64), 8);
-        assert_eq!(dir_force_threads_for(100_000, None, 2), 2);
-        // Explicit request: honoured up to one thread per 256 dirs.
-        assert_eq!(dir_force_threads_for(100_000, Some(16), 2), 16);
-        assert_eq!(dir_force_threads_for(300, Some(16), 2), 2);
-        assert_eq!(dir_force_threads_for(10, Some(0), 2), 1);
-        assert!(dir_force_threads(10) >= 1);
+        world.update_weighted_layout();
+        world.sync_view(1.0);
+        let files: Vec<_> = world
+            .files
+            .values()
+            .filter(|f| !f.pawn.is_hidden())
+            .collect();
+        assert!(files.len() > 10);
+        assert!(files.iter().all(|f| f.sim.size > ONE));
     }
 
     #[test]
@@ -2546,16 +1709,14 @@ mod tests {
         let inactives = world.update_users(1.0, 0.25, &settings);
         assert!(inactives.is_empty());
 
-        world.update_bounds();
-        assert!(!world.dir_bounds.is_empty());
-
+        world.update_sim_bounds();
+        assert!(world.sim_dir_bounds.is_some());
         world.interact_users();
+        world.update_dirs(0.1, 0.0, &mut LogicProfile::default());
+        world.sync_view(1.0);
+        assert!(!world.dir_bounds.is_empty());
         assert!(world.user_tree.is_some());
-
-        world.interact_dirs();
         assert!(world.dir_tree.is_some());
-
-        world.update_dirs(0.1, 0.0, 0.0);
 
         let inactives = world.update_users(1.1, 0.1, &settings);
         assert!(inactives.is_empty());

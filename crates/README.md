@@ -10,6 +10,9 @@ gource (bin, Bevy)        window, input, GPU upload of draw lists, PPM/PNG captu
   └─ gource-sim           the simulation: tree, files, users, actions, camera,
      │                    Gource state machine, multi-repo shell. Tessellates
      │                    each frame into a DrawList.
+     ├─ gource-scene      integer-only layout kernels (Q24.8 fixed point):
+     │                    directory forces, file rings/packing, user
+     │                    movement; deterministic across threads and targets
      ├─ gource-widgets    HUD widgets: file key, captions, slider, tooltip, cursor
      ├─ gource-vcs        commit model, log parsers, repository detection
      ├─ gource-settings   command line, config files, defaults, help text
@@ -30,11 +33,15 @@ Design rules:
   the owning struct and are passed explicitly.
 * **Arenas instead of pointers.** Directories, files and users live in
   `slotmap` arenas and refer to each other by id.
-* **Preserve behaviour.** The goal of the first milestone is a faithful port:
-  same command line, same config files, same layout physics, same look.
-  Keep C++ arithmetic (f32, integer truncation, iteration order of
-  `std::map` → `BTreeMap`) where it affects output. Doc comments name the C++
-  function being ported.
+* **Preserve behaviour, not bits.** Same command line, config files and
+  look as C++ Gource, but bit-exact layout parity is no longer a goal.
+  Doc comments name the C++ function a piece derives from.
+* **Integer simulation, float view.** Layout runs in `gource-scene` integers
+  at a fixed 60 Hz tick (`gource-sim/src/step.rs`), so it is bit-identical
+  for any thread count and on wasm, and a tick can be undone exactly
+  (reverse playback). Each frame `World::sync_view(alpha)` interpolates the
+  integer state into the float fields the draw code reads; rotation is a
+  view transform only. `--elasticity` is accepted but has no effect.
 * **Rendering in gamma space.** Colours and texels are used as-is, and
   blending happens on gamma-encoded values like the original OpenGL renderer
   (Bevy's `CompositingSpace::Srgb`, non-sRGB textures).

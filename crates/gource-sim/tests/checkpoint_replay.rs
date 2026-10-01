@@ -182,16 +182,16 @@ fn test_change_colours_determinism() {
     // Run colour changes
     gource.change_colours();
     let seed1 = gource.world.hasher.seed;
-    let rng_state1 = gource.world.rng.clone();
+    let hash1 = gource.world.state_hash();
 
     // Restore snapshot and recolour again
     gource.restore(&snapshot);
     gource.change_colours();
     let seed2 = gource.world.hasher.seed;
-    let rng_state2 = gource.world.rng.clone();
+    let hash2 = gource.world.state_hash();
 
     assert_eq!(seed1, seed2, "change_colours must be fully deterministic");
-    assert_eq!(rng_state1, rng_state2, "CRand state must match bit-for-bit");
+    assert_eq!(hash1, hash2, "simulation state must match bit-for-bit");
 }
 
 #[test]

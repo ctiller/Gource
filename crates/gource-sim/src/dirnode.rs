@@ -1,11 +1,29 @@
-//! Directory node layout, physics and drawing (port of dirnode.cpp).
+//! Directory nodes (port of dirnode.cpp): tree bookkeeping, the integer
+//! simulation state ([`DirSim`]) and the float view fields derived from it.
 
 use crate::file::{DirId, File, FileId};
 use crate::spline::SplineEdge;
 use glam::{Vec2, Vec3, Vec4};
 use gource_core::Bounds2D;
-use gource_core::math::{CPP_PI, rotate_vec2};
+use gource_scene::dirs::Radii;
+use gource_scene::{Fx, IVec2};
 use slotmap::SlotMap;
+
+/// A directory's simulation state (fixed point; see `gource-scene`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DirSim {
+    pub pos: IVec2,
+    /// Position at the start of the current tick (view interpolation).
+    pub prev_pos: IVec2,
+    /// Spline control point.
+    pub spos: IVec2,
+    pub prev_spos: IVec2,
+    /// Extra acceleration for the next tick (weighted-mode beam pushes).
+    pub ext_accel: IVec2,
+    pub radii: Radii,
+    /// C++ `position_initialized`: placed next to its parent.
+    pub initialized: bool,
+}
 
 /// A directory node in the visualizer tree.
 /// Port of `RDirNode` in `dirnode.h` / `dirnode.cpp`.
@@ -22,26 +40,30 @@ pub struct DirNode {
     pub spline: SplineEdge,
     pub col: Vec4,
 
+    /// Simulation state; everything below `sim` that is a position or a
+    /// radius is a float view derived from it.
+    pub sim: DirSim,
+
+    /// View: interpolated, rotated spline point.
     pub spos: Vec2,
     pub projected_pos: Vec2,
     pub projected_spos: Vec2,
 
+    /// View: interpolated, rotated position.
     pub pos: Vec2,
-    pub vel: Vec2,
-    pub accel: Vec2,
-    pub prev_accel: Vec2,
 
+    /// View of [`Radii::area`].
     pub dir_area: f32,
     pub visible: bool,
     pub in_frustum: bool,
-    pub position_initialized: bool,
 
     pub since_node_visible: f32,
     pub since_last_file_change: f32,
     pub since_last_node_change: f32,
 
-    pub file_area: f32,
+    /// View of [`Radii::radius`].
     pub dir_radius: f32,
+    /// View of [`Radii::parent_radius`].
     pub parent_radius: f32,
 
     pub depth: i32,
@@ -50,25 +72,21 @@ pub struct DirNode {
     pub screenpos: Vec3,
     pub node_normal: Vec2,
 
-    /// C++ `QuadItem::quadItemBounds`: refreshed by
-    /// [`DirNode::update_quad_item_bounds`] only while the dir is visible
-    /// (`Gource::updateBounds`), so a hidden dir keeps its last bounds (the
-    /// empty box at the origin if it was never visible). The dir quadtree,
-    /// the dir force query and the frustum test all use this cached value.
+    /// View: the box `pos ± radius`, refreshed by
+    /// [`DirNode::update_quad_item_bounds`] while the dir is visible, so a
+    /// hidden dir keeps its last bounds. Picking and the frustum test use it.
     pub quad_item_bounds: Bounds2D,
 }
 
 impl DirNode {
     /// Port of `RDirNode::RDirNode(RDirNode* parent, const std::string & abspath)`.
-    pub fn new(abspath: &str, file_diameter: f32, dir_padding: f32) -> Self {
+    /// `file_area` is one file's area (Q16), `padding` the directory padding
+    /// (Q8).
+    pub fn new(abspath: &str, file_area: i64, padding: Fx) -> Self {
         let mut fixed_path = abspath.to_string();
         if fixed_path.is_empty() || !fixed_path.ends_with('/') {
             fixed_path.push('/');
         }
-
-        let padded_file_radius = file_diameter * 0.5;
-        // C++: float * float, then * PI (double).
-        let file_area = ((padded_file_radius * padded_file_radius) as f64 * CPP_PI) as f32;
 
         let mut node = Self {
             // C++: the constructor's setParent(parent) calls adjustPath(),
@@ -83,21 +101,17 @@ impl DirNode {
             files: Vec::new(),
             spline: SplineEdge::new(),
             col: Vec4::ONE,
+            sim: DirSim::default(),
             spos: Vec2::ZERO,
             projected_pos: Vec2::ZERO,
             projected_spos: Vec2::ZERO,
             pos: Vec2::ZERO,
-            vel: Vec2::ZERO,
-            accel: Vec2::ZERO,
-            prev_accel: Vec2::ZERO,
             dir_area: 0.0,
             visible: false,
             in_frustum: false,
-            position_initialized: false,
             since_node_visible: 0.0,
             since_last_file_change: 0.0,
             since_last_node_change: 0.0,
-            file_area,
             dir_radius: 1.0,
             parent_radius: 1.0,
             depth: 1,
@@ -106,7 +120,7 @@ impl DirNode {
             node_normal: Vec2::ZERO,
             quad_item_bounds: Bounds2D::new(),
         };
-        node.calc_radius(dir_padding, []);
+        node.calc_radius(file_area, padding, 0);
         node.calc_colour(&SlotMap::with_key());
         node
     }
@@ -135,8 +149,10 @@ impl DirNode {
         self.pos
     }
 
-    /// Port of `RDirNode::setPos(const vec2 & pos)`.
+    /// Port of `RDirNode::setPos(const vec2 & pos)`: teleports the
+    /// simulation position (rounded to fixed point) and the view.
     pub fn set_pos(&mut self, pos: Vec2) {
+        self.place(crate::view::to_ivec(pos));
         self.pos = pos;
     }
 
@@ -256,19 +272,21 @@ impl DirNode {
         self.visible_count == 0 && self.children.is_empty()
     }
 
-    /// Port of `RDirNode::calcRadius()`. `children_areas` are the children's
-    /// `dir_area`s in child order: C++ adds them to the file area one at a
-    /// time, and float addition is not associative, so a pre-summed total
-    /// can round differently.
-    pub fn calc_radius(&mut self, dir_padding: f32, children_areas: impl IntoIterator<Item = f32>) {
-        let total_file_area = self.file_area * (self.visible_count as f32);
-        let mut dir_area = total_file_area;
-        for area in children_areas {
-            dir_area += area;
-        }
-        self.dir_area = dir_area;
-        self.dir_radius = 1.0f32.max(self.dir_area.sqrt()) * dir_padding;
-        self.parent_radius = 1.0f32.max(total_file_area.sqrt() * dir_padding);
+    /// Set the radii (C++ `calcRadius`, or the weighted variant), keeping the
+    /// float view fields in step.
+    pub fn set_radii(&mut self, radii: Radii) {
+        self.sim.radii = radii;
+        self.dir_area = crate::view::from_area(radii.area);
+        self.dir_radius = crate::view::from_fx(radii.radius);
+        self.parent_radius = crate::view::from_fx(radii.parent_radius);
+    }
+
+    /// Port of `RDirNode::calcRadius()` in fixed point: `file_area` is one
+    /// file's area (Q16), `children_area` the sum of the children's areas.
+    pub fn calc_radius(&mut self, file_area: i64, padding: Fx, children_area: i64) {
+        let r =
+            gource_scene::dirs::radii(file_area, self.visible_count as u32, children_area, padding);
+        self.set_radii(r);
     }
 
     /// Port of `RDirNode::calcColour()`.
@@ -292,471 +310,11 @@ impl DirNode {
         self.col /= (fcount as f32) + 1.0;
     }
 
-    /// Port of `RDirNode::calcFileDest(int max_files, int file_no)`.
-    pub fn calc_file_dest(max_files: usize, file_no: usize) -> Vec2 {
-        let arc = 1.0 / (max_files as f32);
-        let frac = arc * 0.5 + arc * (file_no as f32);
-        // C++ `sinf(frac*PI*2.0)`: double product, rounded to float.
-        let angle = ((frac as f64) * CPP_PI * 2.0) as f32;
-        Vec2::new(angle.sin(), angle.cos())
-    }
-
-    /// Port of `RDirNode::updateFilePositions()`.
-    pub fn update_file_positions(&mut self, file_diameter: f32, files: &mut SlotMap<FileId, File>) {
-        let mut max_files = 1;
-        let mut diameter = 1;
-        let mut file_no = 0;
-        let mut d = 0.0f32;
-
-        let mut files_left = self.visible_count;
-
-        for &fid in &self.files {
-            if let Some(file) = files.get_mut(fid) {
-                if file.pawn.is_hidden() {
-                    file.dest = Vec2::ZERO;
-                    file.distance = 0.0;
-                    continue;
-                }
-
-                let dest = Self::calc_file_dest(max_files, file_no);
-                file.dest = dest;
-                file.distance = d;
-
-                files_left = files_left.saturating_sub(1);
-                file_no += 1;
-
-                if file_no >= max_files {
-                    diameter += 1;
-                    d += file_diameter;
-                    max_files = (1.0f64.max((diameter as f64) * CPP_PI)) as usize;
-
-                    if files_left < max_files {
-                        max_files = files_left;
-                    }
-
-                    file_no = 0;
-                }
-            }
-        }
-    }
-
-    /// Weighted radius calculation based on actual file sizes (`file.radius` or `file.target_size`)
-    /// and the actual packed extent of tightly packed files, enforcing a minimum directory radius.
-    pub fn calc_weighted_radius(
-        &mut self,
-        dir_padding: f32,
-        children_areas: impl IntoIterator<Item = f32>,
-        files: &SlotMap<FileId, File>,
-    ) {
-        let mut total_file_area = 0.0f32;
-        let mut max_extent = 0.0f32;
-        for &fid in &self.files {
-            if let Some(file) = files.get(fid)
-                && !file.pawn.is_hidden()
-            {
-                let r = file.radius;
-                let area = ((r * r) as f64 * CPP_PI) as f32;
-                total_file_area += area;
-                let file_extent = file.distance + file.radius;
-                if file_extent > max_extent {
-                    max_extent = file_extent;
-                }
-            }
-        }
-        let packed_area = max_extent * max_extent;
-        total_file_area = total_file_area.max(packed_area);
-
-        let mut dir_area = total_file_area;
-        for area in children_areas {
-            dir_area += area;
-        }
-        self.dir_area = dir_area;
-
-        // Default floor of 10.0 for min_dir_size
-        let min_dir_size = 10.0f32;
-        self.dir_radius = min_dir_size.max(1.0f32.max(self.dir_area.sqrt()) * dir_padding);
-        self.parent_radius = min_dir_size
-            .max(1.0f32.max(total_file_area.sqrt() * dir_padding))
-            .max(max_extent * dir_padding);
-        self.dir_radius = self.dir_radius.max(self.parent_radius);
-    }
-
-    /// Incremental per-frame 2D physics stepping for files in this directory.
-    ///
-    /// Preserves existing positions and velocities, smoothly pulling files toward
-    /// the directory center and letting them swirl around each other without jitter.
-    pub fn step_weighted_files(
-        &mut self,
-        dt: f32,
-        _base_diameter: f32,
-        files: &mut SlotMap<FileId, File>,
-    ) {
-        let mut visible_fids = Vec::new();
-        for &fid in &self.files {
-            if let Some(f) = files.get(fid)
-                && !f.pawn.is_hidden()
-            {
-                visible_fids.push(fid);
-            }
-        }
-
-        if visible_fids.is_empty() {
-            return;
-        }
-
-        if visible_fids.len() == 1 {
-            let f = &mut files[visible_fids[0]];
-            f.pawn.pos = Vec2::ZERO;
-            f.vel = Vec2::ZERO;
-            f.distance = 0.0;
-            f.dest = Vec2::ZERO;
-            return;
-        }
-
-        // Collect (pos, vel, radius)
-        let mut sim_files = Vec::with_capacity(visible_fids.len());
-        for (i, &fid) in visible_fids.iter().enumerate() {
-            let f = &files[fid];
-            let mut pos = f.pawn.pos;
-            // If sitting exactly at origin, nudge out by golden-angle offset
-            if pos.length_squared() < 1e-4 {
-                let angle = (i as f32) * 2.399_963_1;
-                pos = Vec2::new(angle.cos(), angle.sin()) * 0.5;
-            }
-            let r = (f.pawn.size * 0.5).max(0.05);
-            sim_files.push((pos, f.vel, r));
-        }
-
-        crate::physics2d::step_directory_files_incremental(&mut sim_files, dt, 2);
-
-        for (i, &fid) in visible_fids.iter().enumerate() {
-            let (new_pos, new_vel, _) = sim_files[i];
-            let f = &mut files[fid];
-            f.pawn.pos = new_pos;
-            f.vel = new_vel;
-            let dist = new_pos.length();
-            f.distance = dist;
-            f.dest = if dist > 1e-5 {
-                new_pos / dist
-            } else {
-                Vec2::ZERO
-            };
-        }
-    }
-
-    /// Deterministic tight tangent circle packing with central attraction and edge collision simulation.
-    pub fn update_weighted_file_positions(
-        &mut self,
-        base_diameter: f32,
-        files: &mut SlotMap<FileId, File>,
-    ) {
-        struct FileItem {
-            fid: FileId,
-            radius: f32,
-            target_key: i32,
-            orig_idx: usize,
-        }
-
-        let mut visible = Vec::new();
-        let mut any_placed = false;
-        for (orig_idx, &fid) in self.files.iter().enumerate() {
-            if let Some(file) = files.get_mut(fid) {
-                if file.pawn.is_hidden() {
-                    file.dest = Vec2::ZERO;
-                    file.distance = 0.0;
-                    file.pawn.pos = Vec2::ZERO;
-                } else {
-                    if file.pawn.pos.length_squared() > 1e-4 {
-                        any_placed = true;
-                    }
-                    let r = (file.pawn.size * 0.5).max(base_diameter * 0.25);
-                    let target_key = (file.target_size * 4.0).round() as i32;
-                    visible.push(FileItem {
-                        fid,
-                        radius: r,
-                        target_key,
-                        orig_idx,
-                    });
-                }
-            }
-        }
-
-        if visible.is_empty() {
-            return;
-        }
-
-        if visible.len() == 1 {
-            let f = &mut files[visible[0].fid];
-            f.dest = Vec2::ZERO;
-            f.distance = 0.0;
-            f.pawn.pos = Vec2::ZERO;
-            return;
-        }
-
-        // If files already have active positions, incrementally step rather than re-packing from scratch
-        if any_placed {
-            self.step_weighted_files(0.016, base_diameter, files);
-            return;
-        }
-
-        // Sort visible files by (Reverse(target_key), orig_idx)
-        visible.sort_by(|a, b| {
-            b.target_key
-                .cmp(&a.target_key)
-                .then_with(|| a.orig_idx.cmp(&b.orig_idx))
-        });
-
-        let n = visible.len();
-        let mut placed: Vec<(Vec2, f32)> = Vec::with_capacity(n);
-        let mut buried: Vec<bool> = vec![false; n];
-
-        // Place circle 0 at origin
-        placed.push((Vec2::ZERO, visible[0].radius));
-
-        // Place circle 1 tangent to circle 0
-        placed.push((
-            Vec2::new(visible[0].radius + visible[1].radius, 0.0),
-            visible[1].radius,
-        ));
-
-        for (k, item) in visible.iter().enumerate().skip(2) {
-            let r_k = item.radius;
-            let mut best_candidate: Option<Vec2> = None;
-            let mut best_score = f32::INFINITY;
-
-            // Search over active placed circles
-            let candidate_indices: Vec<usize> = if k > 48 {
-                let mut unburied: Vec<usize> = (0..k).filter(|&idx| !buried[idx]).collect();
-                if unburied.len() > 48 {
-                    // Pick the 48 closest to the outer frontier (highest length + radius)
-                    unburied.sort_by(|&a, &b| {
-                        let score_a = placed[a].0.length() + placed[a].1;
-                        let score_b = placed[b].0.length() + placed[b].1;
-                        score_b
-                            .partial_cmp(&score_a)
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    });
-                    unburied.truncate(48);
-                }
-                unburied
-            } else {
-                (0..k).filter(|&idx| !buried[idx]).collect()
-            };
-
-            for (ci_idx, &i) in candidate_indices.iter().enumerate() {
-                let (p_i, r_i) = placed[i];
-                for &j in &candidate_indices[ci_idx + 1..] {
-                    let (p_j, r_j) = placed[j];
-                    let diff = p_j - p_i;
-                    let d = diff.length();
-                    let d_ik = r_i + r_k;
-                    let d_jk = r_j + r_k;
-
-                    if d > 1e-5 && d <= d_ik + d_jk {
-                        let u = diff / d;
-                        let normal = Vec2::new(-u.y, u.x);
-                        let a = (d_ik * d_ik - d_jk * d_jk + d * d) / (2.0 * d);
-                        let h_sq = d_ik * d_ik - a * a;
-                        let h = h_sq.max(0.0).sqrt();
-
-                        let c_pos = p_i + u * a + normal * h;
-                        let c_neg = p_i + u * a - normal * h;
-
-                        for c in [c_pos, c_neg] {
-                            // Validate against all placed circles 0..k
-                            let mut valid = true;
-                            for (m, &(p_m, r_m)) in placed.iter().enumerate() {
-                                if m == i || m == j {
-                                    continue;
-                                }
-                                let min_dist = r_m + r_k - 1e-3;
-                                if (c - p_m).length_squared() < min_dist * min_dist {
-                                    valid = false;
-                                    break;
-                                }
-                            }
-
-                            if valid {
-                                let score = c.length() + r_k;
-                                if score < best_score - 1e-5
-                                    || ((score - best_score).abs() <= 1e-5
-                                        && (best_candidate.is_none()
-                                            || c.x < best_candidate.unwrap().x
-                                            || ((c.x - best_candidate.unwrap().x).abs() <= 1e-5
-                                                && c.y < best_candidate.unwrap().y)))
-                                {
-                                    best_score = score;
-                                    best_candidate = Some(c);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            let p_k = if let Some(c) = best_candidate {
-                c
-            } else {
-                // Fallback placement
-                let max_extent = placed
-                    .iter()
-                    .map(|(p, r)| p.length() + r)
-                    .fold(0.0f32, f32::max);
-                Vec2::new(max_extent + r_k, 0.0)
-            };
-
-            placed.push((p_k, r_k));
-
-            // Check if any circle is now buried (completely surrounded)
-            for i in 0..k {
-                if !buried[i] {
-                    let (p_i, r_i) = placed[i];
-                    let mut surrounded_count = 0;
-                    for (m, &(p_m, r_m)) in placed.iter().enumerate() {
-                        if m != i && (p_m - p_i).length() <= (r_i + r_m) + 0.1 {
-                            surrounded_count += 1;
-                        }
-                    }
-                    if surrounded_count >= 6 {
-                        buried[i] = true;
-                    }
-                }
-            }
-        }
-
-        // Center the placed tangent-pack cluster
-        let mut min_b = Vec2::splat(f32::INFINITY);
-        let mut max_b = Vec2::splat(-f32::INFINITY);
-        for &(p, r) in &placed {
-            min_b = min_b.min(p - Vec2::splat(r));
-            max_b = max_b.max(p + Vec2::splat(r));
-        }
-        let center = (min_b + max_b) * 0.5;
-
-        // Assign dest, distance, and pawn.pos to visible files
-        for (i, item) in visible.iter().enumerate() {
-            let p = placed[i].0 - center;
-            let dist = p.length();
-            let dest = if dist > 1e-5 { p / dist } else { Vec2::ZERO };
-
-            let f = &mut files[item.fid];
-            f.distance = dist;
-            f.dest = dest;
-            f.pawn.pos = p;
-            f.vel = Vec2::ZERO;
-        }
-    }
-
-    /// Port of `RDirNode::distanceToParent()`.
-    pub fn distance_to_parent(&self, parent: &DirNode) -> f32 {
-        let posd = (parent.pos - self.pos).length();
-        posd - (self.dir_radius + parent.parent_radius)
-    }
-
-    /// Port of `RDirNode::applyForceDir(RDirNode* node)`.
-    pub fn apply_force_dir(
-        &mut self,
-        other_pos: Vec2,
-        other_radius: f32,
-        rng: &mut gource_core::crand::CRand,
-    ) {
-        let dir = other_pos - self.pos;
-        let posd2 = dir.length_squared();
-        let myradius = self.dir_radius;
-        let your_radius = other_radius;
-        let sumradius = myradius + your_radius;
-
-        let distance2 = posd2 - sumradius * sumradius;
-        if distance2 > 0.0 {
-            return;
-        }
-
-        let posd = posd2.sqrt();
-        let distance = posd - myradius - your_radius;
-
-        if posd < 0.00001 {
-            self.accel += crate::world::random_direction(rng);
-            return;
-        }
-
-        self.accel += distance * (dir / posd);
-    }
-
-    /// Port of `RDirNode::updateSplinePoint(float dt)`.
-    pub fn update_spline_point(&mut self, dt: f32, parent_pos: Vec2) {
-        let td = (parent_pos - self.pos) * 0.5;
-        let mid = self.pos + td;
-        let delta = mid - self.spos;
-
-        if delta.length_squared() > td.length_squared() {
-            let delta_len = delta.length();
-            let td_len = td.length();
-            if delta_len > 0.0 {
-                self.spos += (delta / delta_len) * (delta_len - td_len);
-            }
-        }
-
-        self.spos += delta * (dt * 2.0).min(1.0);
-    }
-
-    /// Port of `RDirNode::setInitialPosition()`.
-    pub fn set_initial_position(
-        &mut self,
-        parent_pos: Vec2,
-        parent_parent_pos: Option<Vec2>,
-        hasher: &gource_core::StringHasher,
-    ) {
-        self.pos = parent_pos;
-        let h = hasher.vec2_hash(&self.abspath);
-
-        if let Some(pp_pos) = parent_parent_pos {
-            let p_edge = parent_pos - pp_pos;
-            let p_edge_len = p_edge.length();
-            let p_edge_norm = if p_edge_len > 0.0 {
-                p_edge / p_edge_len
-            } else {
-                Vec2::ZERO
-            };
-            let combo = p_edge_norm * 2.0 + h;
-            let clen = combo.length();
-            self.pos += if clen > 0.0 { combo / clen } else { combo };
-        } else {
-            self.pos += h;
-        }
-
-        self.spos = self.pos - (parent_pos - self.pos) * 0.5;
-        self.position_initialized = true;
-    }
-
-    /// Port of `RDirNode::move(float dt)`.
-    pub fn move_step(&mut self, dt: f32, elasticity: f32) {
-        if self.parent.is_none() {
-            return;
-        }
-
-        self.pos += self.accel * dt;
-
-        if elasticity > 0.0 {
-            let diff = self.accel - self.prev_accel;
-            let m = dt * elasticity;
-            let accel3 = self.prev_accel * (1.0 - m) + diff * m;
-            self.pos += accel3;
-            self.prev_accel = accel3;
-        }
-
-        self.accel = Vec2::ZERO;
-    }
-
-    /// Port of `RDirNode::rotate(float s, float c)`.
-    pub fn rotate(&mut self, s: f32, c: f32) {
-        self.pos = rotate_vec2(self.pos, s, c);
-        self.spos = rotate_vec2(self.spos, s, c);
-    }
-
-    /// Port of `RDirNode::rotate(float s, float c, const vec2& centre)`.
-    pub fn rotate_around(&mut self, s: f32, c: f32, centre: Vec2) {
-        self.pos = rotate_vec2(self.pos - centre, s, c) + centre;
-        self.spos = rotate_vec2(self.spos - centre, s, c) + centre;
+    /// Teleport the directory (simulation and view) to `pos`.
+    pub fn place(&mut self, pos: IVec2) {
+        self.sim.pos = pos;
+        self.sim.prev_pos = pos;
+        self.pos = crate::view::from_ivec(pos);
     }
 
     /// The box `RDirNode::updateQuadItemBounds()` computes: `pos ± radius`.
@@ -819,16 +377,22 @@ impl DirNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gource_scene::ONE;
+
+    fn area() -> i64 {
+        gource_scene::dirs::file_area(8 * ONE)
+    }
 
     #[test]
     fn dirnode_basics() {
-        let mut node = DirNode::new("/a/b", 8.0, 1.5);
+        let mut node = DirNode::new("/a/b", area(), 384);
         assert_eq!(node.path(), "/a/b/");
         assert_eq!(node.depth(), 1);
         assert!(node.prefixed_by("/a"));
         assert!(node.prefixed_by("/a/"));
         assert!(node.prefixed_by("/a/b"));
         assert!(!node.prefixed_by("/a/c"));
+        assert!(!node.prefixed_by(""));
         assert_eq!(node.common_path_prefix("/a/c/foo"), "/a/");
         assert_eq!(node.common_path_prefix("/x/y"), "/");
         assert_eq!(node.common_path_prefix("x/y"), "");
@@ -846,35 +410,31 @@ mod tests {
         node.add_visible();
         assert!(!node.is_empty());
         assert_eq!(node.visible_count, 1);
-
-        let dest0 = DirNode::calc_file_dest(1, 0);
-        let angle = CPP_PI as f32; // frac = 0.5 -> angle = PI
-        assert_eq!(dest0, Vec2::new(angle.sin(), angle.cos()));
     }
 
     #[test]
-    fn dirnode_physics_and_forces() {
-        let mut node = DirNode::new("/foo/", 8.0, 1.5);
-        let mut rng = gource_core::crand::CRand::new(42);
+    fn radii_and_placement() {
+        let mut node = DirNode::new("/foo/", area(), 384);
+        // An empty dir has the minimum radius: 1 unit * padding.
+        assert_eq!(node.radius(), 1.5);
+        assert_eq!(node.parent_radius(), 1.0);
+        node.add_visible();
+        node.add_visible();
+        node.calc_radius(area(), 384, 0);
+        // Two 8-unit files: area 2 * 16 pi, radius sqrt(32 pi) * 1.5.
+        let expect = (32.0 * std::f32::consts::PI).sqrt() * 1.5;
+        assert!((node.radius() - expect).abs() < 0.05, "{}", node.radius());
+        assert!(node.area() > 100.0);
 
-        let mut sm: SlotMap<DirId, ()> = SlotMap::with_key();
-        let dummy_parent = sm.insert(());
-        node.parent = Some(dummy_parent);
-
-        node.pos = Vec2::new(10.0, 0.0);
-        node.dir_radius = 10.0;
-
-        // Other node overlapping
-        node.apply_force_dir(Vec2::new(15.0, 0.0), 10.0, &mut rng);
-        assert!(node.accel.x != 0.0);
-
-        // Move
-        node.move_step(0.1, 0.5);
-        assert_eq!(node.accel, Vec2::ZERO);
-
-        // Rotations
-        node.pos = Vec2::new(10.0, 0.0);
-        node.rotate(1.0, 0.0); // 90 deg
-        assert!((node.pos.y - 10.0).abs() < 1e-5);
+        node.set_pos(Vec2::new(10.0, -2.5));
+        assert_eq!(node.pos(), Vec2::new(10.0, -2.5));
+        assert_eq!(node.sim.pos, IVec2::new(10 * ONE, -640));
+        assert_eq!(node.sim.prev_pos, node.sim.pos);
+        node.update_quad_item_bounds();
+        assert_eq!(node.quad_item_bounds, node.bounds());
+        assert_eq!(node.spos(), Vec2::ZERO);
+        assert_eq!(node.node_normal(), Vec2::ZERO);
+        assert_eq!(node.projected_pos(), Vec2::ZERO);
+        assert_eq!(node.colour(), node.col);
     }
 }

@@ -63,19 +63,16 @@ fn test_user_uncovered_branches() {
     let a2 = Action::new(f2, 10, 1.0, ActionKind::Create);
     user.active_actions.push(a1);
     user.actions.push(a2);
-    let mut rng = gource_core::crand::CRand::new(42);
-    user.apply_force_user(Vec2::new(10.0, 0.0), 100.0, &mut rng);
-    assert!(user.pawn.accel.x != 0.0);
 
-    // user.rs:274 / 281 / 283: in_range false when get_file_pos returns None
+    // user.rs: in_range false when get_file_pos returns None
     user.action_interval = 0.0;
     // Closure returns None for get_file_pos
-    let _ = user.logic(0.0, 0.1, 5.0, 100.0, 0.5, |_| None);
+    let _ = user.logic(0.0, 0.1, 5.0, 100 * gource_scene::ONE, |_| None);
 }
 
 #[test]
 fn test_dirnode_uncovered_branches() {
-    let mut dir = DirNode::new("/alpha/beta", 8.0, 1.5);
+    let mut dir = DirNode::new("/alpha/beta", 8, 1);
     // adjust_path when parent.is_none() and abspath has content
     dir.adjust_path(0);
     assert_eq!(dir.path_token, "");
@@ -102,12 +99,9 @@ fn test_dirnode_uncovered_branches() {
     dir.files.push(hfid);
     dir.calc_colour(&files);
 
-    // update_file_positions with hidden file (dirnode.rs:318, 319)
-    dir.update_file_positions(8.0, &mut files);
-
     // average_file_colour with hidden file and child (dirnode.rs:453, 457, 478, 479)
     let mut dirs: SlotMap<gource_sim::file::DirId, DirNode> = SlotMap::with_key();
-    let child_node = DirNode::new("/alpha/beta/child", 8.0, 1.5);
+    let child_node = DirNode::new("/alpha/beta/child", 8, 1);
     let cid = dirs.insert(child_node);
     dir.children.push(cid);
     let avg = dir.average_file_colour(&files, &dirs);

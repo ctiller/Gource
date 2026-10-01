@@ -5,13 +5,14 @@
 //! - Periodic checkpoint snapshots with thinning policy ([`crate::checkpoint::CheckpointStore`])
 //! - Fast checkpoint restoration + deterministic replaying up to a target timestamp
 //! - High-speed historical tree materialization fallback via [`gource_history::History`]
-//! - Smooth reverse playback using a short-term simulation frame buffer ([`SimSnapshot`])
+//! - Smooth reverse playback from exact per-tick integer deltas ([`TickRecord`])
 //! - Cache invalidation / thinning on interactive settings changes ([`gource_settings::SettingClass`])
 
 use std::collections::VecDeque;
 
 use crate::checkpoint::CheckpointStore;
 use crate::gource::SimSnapshot;
+use crate::step::TickDelta;
 use gource_history::{History, ScrubberState, TimelineIndex};
 use gource_settings::SettingClass;
 
@@ -29,6 +30,17 @@ pub enum SeekOutcome {
     FallbackLegacySeek,
 }
 
+/// One forward tick, as needed to play it backwards: the exact position
+/// deltas and the clock before the tick.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TickRecord {
+    pub delta: TickDelta,
+    pub currtime: i64,
+    pub lasttime: i64,
+    pub subseconds: f32,
+    pub runtime: f32,
+}
+
 /// Simulation timeline scrubber and reverse playback controller.
 pub struct SimScrubber {
     /// In-memory checkpoint store for fast seek/replay.
@@ -37,14 +49,14 @@ pub struct SimScrubber {
     pub state: ScrubberState,
     /// Timeline histogram index and time-fraction mapper.
     pub timeline: Option<TimelineIndex>,
-    /// Recent frame snapshots for smooth reverse playback.
-    reverse_buffer: VecDeque<SimSnapshot>,
+    /// Recent ticks for smooth reverse playback.
+    reverse_buffer: VecDeque<TickRecord>,
     /// Minimum simulation runtime interval (in seconds) between automatic checkpoint captures.
     pub checkpoint_interval_sim_secs: f32,
     /// Simulation runtime when the last checkpoint was recorded.
     pub last_checkpoint_runtime: f32,
-    /// Maximum number of recent frames kept in the reverse playback buffer.
-    pub max_reverse_frames: usize,
+    /// Maximum number of recent ticks kept in the reverse playback buffer.
+    pub max_reverse_ticks: usize,
 }
 
 impl Default for SimScrubber {
@@ -65,7 +77,7 @@ impl SimScrubber {
             reverse_buffer: VecDeque::new(),
             checkpoint_interval_sim_secs: 1.0,
             last_checkpoint_runtime: -f32::INFINITY,
-            max_reverse_frames: 120,
+            max_reverse_ticks: 600,
         }
     }
 
@@ -98,25 +110,25 @@ impl SimScrubber {
         }
     }
 
-    /// Pushes a simulation frame snapshot onto the reverse playback buffer.
-    pub fn push_reverse_frame(&mut self, snap: SimSnapshot) {
-        if self.reverse_buffer.len() >= self.max_reverse_frames {
+    /// Pushes a tick onto the reverse playback buffer.
+    pub fn push_reverse_tick(&mut self, rec: TickRecord) {
+        if self.reverse_buffer.len() >= self.max_reverse_ticks {
             self.reverse_buffer.pop_front();
         }
-        self.reverse_buffer.push_back(snap);
+        self.reverse_buffer.push_back(rec);
     }
 
-    /// Pops the most recent frame from the reverse playback buffer.
-    pub fn pop_reverse_frame(&mut self) -> Option<SimSnapshot> {
+    /// Pops the most recent tick from the reverse playback buffer.
+    pub fn pop_reverse_tick(&mut self) -> Option<TickRecord> {
         self.reverse_buffer.pop_back()
     }
 
-    /// Clears all frames from the reverse playback buffer.
+    /// Clears all ticks from the reverse playback buffer.
     pub fn clear_reverse_buffer(&mut self) {
         self.reverse_buffer.clear();
     }
 
-    /// Number of frames currently in the reverse playback buffer.
+    /// Number of ticks currently in the reverse playback buffer.
     pub fn reverse_buffer_len(&self) -> usize {
         self.reverse_buffer.len()
     }
@@ -160,7 +172,18 @@ mod tests {
         assert_eq!(scrubber.checkpoint_interval_sim_secs, 1.0);
 
         // Test reverse buffer empty pop
-        assert!(scrubber.pop_reverse_frame().is_none());
+        assert!(scrubber.pop_reverse_tick().is_none());
+        scrubber.max_reverse_ticks = 2;
+        for t in 0..3 {
+            scrubber.push_reverse_tick(TickRecord {
+                currtime: t,
+                ..TickRecord::default()
+            });
+        }
+        assert_eq!(scrubber.reverse_buffer_len(), 2);
+        assert_eq!(scrubber.pop_reverse_tick().unwrap().currtime, 2);
+        scrubber.clear_reverse_buffer();
+        assert_eq!(scrubber.reverse_buffer_len(), 0);
 
         // Test setting history
         let mut builder = HistoryBuilder::new(

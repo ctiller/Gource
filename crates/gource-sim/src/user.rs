@@ -5,6 +5,7 @@ use crate::file::FileId;
 use crate::pawn::Pawn;
 use glam::{UVec2, Vec2, Vec3};
 use gource_draw::TextureId;
+use gource_scene::{Fx, IVec2};
 use slotmap::new_key_type;
 
 new_key_type! {
@@ -12,11 +13,23 @@ new_key_type! {
     pub struct UserId;
 }
 
+/// A user's simulation state (fixed point).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UserSim {
+    pub pos: IVec2,
+    /// Position at the start of the current tick (view interpolation).
+    pub prev_pos: IVec2,
+    /// C++ `accel`: a decaying velocity, Q8 units/s.
+    pub accel: IVec2,
+}
+
 /// A committer/user avatar in the simulation.
 /// Port of `RUser` in `user.h` / `user.cpp`.
 #[derive(Debug, Clone)]
 pub struct User {
+    /// `pawn.pos` is a float view of [`User::sim`].
     pub pawn: Pawn,
+    pub sim: UserSim,
 
     pub actions: Vec<Action>,
     pub active_actions: Vec<Action>,
@@ -57,8 +70,14 @@ impl User {
         pawn.shadow = true;
         pawn.name_interval = 5.0;
 
+        let p = crate::view::to_ivec(pos);
         let mut user = Self {
             pawn,
+            sim: UserSim {
+                pos: p,
+                prev_pos: p,
+                accel: IVec2::ZERO,
+            },
             actions: Vec::new(),
             active_actions: Vec::new(),
             removed_active_count: 0,
@@ -202,77 +221,39 @@ impl User {
         self.pawn.name_visible() || highlight_all_users || self.highlighted
     }
 
-    /// Port of `RUser::applyForceUser(RUser* u)`.
-    pub fn apply_force_user(
-        &mut self,
-        other_pos: Vec2,
-        personal_space_dist: f32,
-        rng: &mut gource_core::crand::CRand,
-    ) {
-        let dir = other_pos - self.pawn.pos;
-        let dist = dir.length();
-
-        let desired_dist = if self.action_count() == 0 {
+    /// The personal space this user wants (C++ `applyForceUser`): the full
+    /// distance when it has no actions, a tenth while it only has pending
+    /// ones, half while it is working.
+    pub fn personal_space(&self, personal_space_dist: Fx) -> Fx {
+        if self.action_count() == 0 {
             personal_space_dist
         } else if !self.actions.is_empty() && self.active_actions.is_empty() {
-            // C++: `gGourcePersonalSpaceDist * 0.1` is evaluated in double.
-            (personal_space_dist as f64 * 0.1) as f32
+            personal_space_dist / 10
         } else {
-            personal_space_dist * 0.5
-        };
-
-        if dist < 0.001 {
-            self.pawn.accel += crate::world::random_direction(rng);
-            return;
-        }
-
-        if dist < desired_dist {
-            let norm = dir / dist;
-            self.pawn.accel -= (desired_dist - dist) * norm;
+            personal_space_dist / 2
         }
     }
 
-    /// Port of `RUser::applyForceAction(RAction* action)`.
-    pub fn apply_force_action(
-        &mut self,
-        target_pos: Vec2,
-        action_dist: f32,
-        beam_dist: f32,
-        rng: &mut gource_core::crand::CRand,
-    ) {
-        let dir = target_pos - self.pawn.pos;
-        let dist = dir.length();
-        let desired_dist = action_dist;
-
-        if dist < 0.001 {
-            self.pawn.accel += crate::world::random_direction(rng);
-            return;
-        }
-
-        let norm = dir / dist;
-        if dist < desired_dist {
-            self.pawn.accel -= (desired_dist - dist) * norm;
-            return;
-        }
-
-        if dist > beam_dist {
-            self.pawn.accel += (dist - beam_dist) * norm;
-        }
+    /// Teleport the user (simulation and view) to `pos`.
+    pub fn place(&mut self, pos: IVec2) {
+        self.sim.pos = pos;
+        self.sim.prev_pos = pos;
+        self.pawn.pos = crate::view::from_ivec(pos);
     }
 
-    /// Advance physics, queue active actions that are in range or overdue,
-    /// and advance active actions.
-    /// Port of `RUser::logic(float t, float dt)`.
-    /// `get_file_pos`: closure mapping `FileId` to its absolute position.
+    /// Queue active actions that are in range or overdue, and advance
+    /// active actions. Port of `RUser::logic(float t, float dt)` minus the
+    /// motion (the integer simulation moves users).
+    /// `get_file_pos`: closure mapping `FileId` to its absolute simulation
+    /// position; `beam_dist` is Q8.
     /// Returns a list of actions that were triggered (`(Action, needs_apply, finished_now)`).
     pub fn logic(
         &mut self,
         t: f32,
         dt: f32,
         max_file_lag: f32,
-        beam_dist: f32,
-        user_friction: f32,
-        mut get_file_pos: impl FnMut(FileId) -> Option<Vec2>,
+        beam_dist: Fx,
+        mut get_file_pos: impl FnMut(FileId) -> Option<IVec2>,
     ) -> Vec<(Action, bool, bool)> {
         self.pawn.logic(dt);
         self.action_interval -= dt;
@@ -297,7 +278,9 @@ impl User {
 
             let file_pos = get_file_pos(self.actions[i].target);
             let in_range = match file_pos {
-                Some(pos) => (pos - self.pawn.pos).length() < beam_dist,
+                Some(pos) => {
+                    (pos - self.sim.pos).len_sq() < (beam_dist as i64) * (beam_dist as i64)
+                }
                 None => false,
             };
 
@@ -338,18 +321,6 @@ impl User {
                 a_idx += 1;
             }
         }
-
-        // Move user
-        let speed = self.pawn.speed;
-        if self.pawn.accel.length_squared() > speed * speed {
-            let len = self.pawn.accel.length();
-            if len > 0.0 {
-                self.pawn.accel = (self.pawn.accel / len) * speed;
-            }
-        }
-
-        self.pawn.pos += self.pawn.accel * dt;
-        self.pawn.accel *= (1.0 - user_friction * dt).max(0.0);
 
         executed_events
     }
@@ -392,18 +363,20 @@ mod tests {
         u.file_removed(f2);
         assert_eq!(u.action_count(), 1);
 
-        // Forces
-        let mut rng = gource_core::crand::CRand::new(123);
-        u.apply_force_user(Vec2::new(5.0, 0.0), 100.0, &mut rng);
-        assert!(u.pawn.accel.x < 0.0);
-
-        u.apply_force_action(Vec2::new(200.0, 0.0), 50.0, 100.0, &mut rng);
-        assert!(u.pawn.accel.x != 0.0);
+        // Personal space: pending only -> a tenth.
+        assert_eq!(u.personal_space(1000), 100);
 
         // Logic step: file in range (dt >= 0.2 so action_interval expires)
-        let events = u.logic(2.0, 0.25, 5.0, 150.0, 1.0, |_| Some(Vec2::new(10.0, 0.0)));
+        let one = gource_scene::ONE;
+        let events = u.logic(2.0, 0.25, 5.0, 150 * one, |_| Some(IVec2::new(10 * one, 0)));
         assert_eq!(u.active_actions.len(), 1);
         assert_eq!(events.len(), 1); // newly active action needs apply!
+        // Working -> half.
+        assert_eq!(u.personal_space(1000), 500);
+
+        u.place(IVec2::new(one, -one));
+        assert_eq!(u.pawn.pos, Vec2::new(1.0, -1.0));
+        assert_eq!(u.sim.prev_pos, u.sim.pos);
     }
 
     #[test]
@@ -411,6 +384,7 @@ mod tests {
         let hasher = StringHasher::default();
         let mut u = User::new("carol", Vec2::ZERO, 11, 500.0, 1.0, &hasher);
         assert!(u.is_idle());
+        assert_eq!(u.personal_space(1000), 1000);
         assert!(!u.is_fading(3.0));
         assert!(!u.is_inactive());
 

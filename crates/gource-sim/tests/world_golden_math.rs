@@ -2,7 +2,6 @@
 #![allow(clippy::excessive_precision)]
 
 use glam::{Vec2, Vec4};
-use gource_sim::dirnode::DirNode;
 use gource_sim::pawn::Pawn;
 use gource_sim::spline::SplineEdge;
 
@@ -53,61 +52,6 @@ fn test_golden_world_math_spline() {
     assert!((spline2.spline_point[0].y - 80.0).abs() < 1e-4);
     assert!((spline2.spline_point[10].x - 50.0).abs() < 1e-4);
     assert!((spline2.spline_point[10].y - (-20.0)).abs() < 1e-4);
-}
-
-#[test]
-fn test_golden_world_math_file_dest() {
-    // FILE_DEST 1 0 -0.000000 -1.000000
-    // FILE_DEST 3 0 0.866025 0.500000
-    // FILE_DEST 3 1 -0.000000 -1.000000
-    // FILE_DEST 3 2 -0.866025 0.500000
-    // FILE_DEST 6 4 -1.000000 0.000000
-    let d1_0 = DirNode::calc_file_dest(1, 0);
-    assert!((d1_0.x - 0.0).abs() < 1e-4);
-    assert!((d1_0.y - (-1.0)).abs() < 1e-4);
-
-    let d3_0 = DirNode::calc_file_dest(3, 0);
-    assert!((d3_0.x - 0.866025).abs() < 1e-4);
-    assert!((d3_0.y - 0.5).abs() < 1e-4);
-
-    let d3_1 = DirNode::calc_file_dest(3, 1);
-    assert!((d3_1.x - 0.0).abs() < 1e-4);
-    assert!((d3_1.y - (-1.0)).abs() < 1e-4);
-
-    let d3_2 = DirNode::calc_file_dest(3, 2);
-    assert!((d3_2.x - (-0.866025)).abs() < 1e-4);
-    assert!((d3_2.y - 0.5).abs() < 1e-4);
-
-    let d6_4 = DirNode::calc_file_dest(6, 4);
-    assert!((d6_4.x - (-1.0)).abs() < 1e-4);
-    assert!((d6_4.y - 0.0).abs() < 1e-4);
-}
-
-#[test]
-fn test_golden_world_math_radius() {
-    // RADIUS 0.000000 1.500000 1.000000 (diameter=8, visible=0, sum=0, padding=1.5)
-    let mut node1 = DirNode::new("/test1", 8.0, 1.5);
-    node1.visible_count = 0;
-    node1.calc_radius(1.5, []);
-    assert_eq!(node1.area(), 0.0);
-    assert!((node1.radius() - 1.5).abs() < 1e-4);
-    assert!((node1.parent_radius() - 1.0).abs() < 1e-4);
-
-    // RADIUS 451.327423 31.866703 23.779964 (diameter=8, visible=5, sum=200, padding=1.5)
-    let mut node2 = DirNode::new("/test2", 8.0, 1.5);
-    node2.visible_count = 5;
-    node2.calc_radius(1.5, [200.0]);
-    assert!((node2.area() - 451.327423).abs() < 1e-3);
-    assert!((node2.radius() - 31.866703).abs() < 1e-3);
-    assert!((node2.parent_radius() - 23.779964).abs() < 1e-3);
-
-    // RADIUS 3827.433350 123.732506 106.347229 (diameter=12, visible=25, sum=1000, padding=2.0)
-    let mut node3 = DirNode::new("/test3", 12.0, 2.0);
-    node3.visible_count = 25;
-    node3.calc_radius(2.0, [1000.0]);
-    assert!((node3.area() - 3827.433350).abs() < 1e-2);
-    assert!((node3.radius() - 123.732506).abs() < 1e-3);
-    assert!((node3.parent_radius() - 106.347229).abs() < 1e-3);
 }
 
 #[test]
