@@ -1,0 +1,31 @@
+[package]
+name = "gource-serve"
+description = "Serves a Gource commit history to remote clients over HTTP streaming"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["gix"]
+# In-process git reading for repositories (passed through to gource-vcs).
+gix = ["gource-vcs/gix"]
+# Server-side video rendering (placeholder; needs gource-render).
+video = []
+
+[dependencies]
+gource-core = { workspace = true }
+gource-model = { workspace = true }
+gource-vcs = { workspace = true }
+fancy-regex = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "signal"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+tower-http = { version = "0.6", features = ["fs"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+tempfile = { workspace = true }
