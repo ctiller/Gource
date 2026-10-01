@@ -193,7 +193,10 @@ fn test_shell_recording_multi_repo_stops_at_end() {
     };
 
     // When recording is true, multi repo should return Ok(None) after the last repo
-    let opts = AppOptions { recording: true };
+    let opts = AppOptions {
+        recording: true,
+        ..Default::default()
+    };
     let mut app = GourceApp::new(config, opts).expect("create app");
     let viewport = Viewport::new(800, 600);
     let mut list = DrawList::new(glam::UVec2::new(800, 600));

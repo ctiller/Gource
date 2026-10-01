@@ -293,7 +293,10 @@ fn test_app_recording_mode() {
         _ => unreachable!(),
     };
 
-    let opts = AppOptions { recording: true };
+    let opts = AppOptions {
+        recording: true,
+        ..Default::default()
+    };
     let mut app = GourceApp::new(config, opts).expect("create recording app");
     let viewport = Viewport::new(640, 480);
     let mut list = DrawList::new(glam::UVec2::new(640, 480));
@@ -348,7 +351,14 @@ fn capture_frames(framerate: &str, captures: usize) -> Vec<usize> {
         CliAction::Run(cfg) => cfg,
         _ => unreachable!(),
     };
-    let mut app = GourceApp::new(config, AppOptions { recording: true }).expect("create app");
+    let mut app = GourceApp::new(
+        config,
+        AppOptions {
+            recording: true,
+            ..Default::default()
+        },
+    )
+    .expect("create app");
     let viewport = Viewport::new(640, 480);
     let mut list = DrawList::new(glam::UVec2::new(640, 480));
 
@@ -416,7 +426,10 @@ fn test_headless_recording_finishes_and_emits_quit_exactly_once() {
         _ => unreachable!(),
     };
 
-    let opts = AppOptions { recording: true };
+    let opts = AppOptions {
+        recording: true,
+        ..Default::default()
+    };
     let mut app = GourceApp::new(config, opts).expect("create app");
     let viewport = Viewport::new(1280, 720);
     let mut list = DrawList::new(glam::UVec2::new(1280, 720));

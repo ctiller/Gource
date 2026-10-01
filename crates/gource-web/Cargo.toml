@@ -1,0 +1,47 @@
+[package]
+name = "gource-web"
+description = "Gource in the browser: a gource-serve stream rendered with WebGL2"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+gource-app = { path = "../gource-app", default-features = false }
+gource-core = { workspace = true }
+gource-draw = { workspace = true }
+gource-model = { workspace = true }
+gource-settings = { workspace = true }
+gource-vcs = { workspace = true }
+glam = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+gource-webgl = { path = "../gource-webgl" }
+wasm-bindgen = "0.2.129"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3.106"
+web-sys = { version = "0.3.106", features = [
+    "console",
+    "Document",
+    "Element",
+    "Event",
+    "EventTarget",
+    "HtmlElement",
+    "Location",
+    "HtmlCanvasElement",
+    "KeyboardEvent",
+    "MouseEvent",
+    "WheelEvent",
+    "Performance",
+    "ReadableStream",
+    "ReadableStreamDefaultReader",
+    "Response",
+    "WebGl2RenderingContext",
+    "Window",
+] }
+
+[dev-dependencies]
+gource-serve = { path = "../gource-serve", default-features = false }

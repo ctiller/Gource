@@ -45,6 +45,9 @@ pub struct AppOptions {
     /// position slider and disables interactive repository switching, like
     /// the C++ code does when an exporter is present.
     pub recording: bool,
+    /// Read commits from this feed (a remote stream) instead of loading
+    /// `settings.path`.
+    pub feed: Option<gource_vcs::CommitFeed>,
 }
 
 /// The running application.

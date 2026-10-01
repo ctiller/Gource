@@ -3170,6 +3170,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "gource-web"
+version = "0.57.0"
+dependencies = [
+ "glam",
+ "gource-app",
+ "gource-core",
+ "gource-draw",
+ "gource-model",
+ "gource-serve",
+ "gource-settings",
+ "gource-vcs",
+ "gource-webgl",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "gource-webgl"
 version = "0.57.0"
 dependencies = [

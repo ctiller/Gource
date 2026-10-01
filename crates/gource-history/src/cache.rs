@@ -393,17 +393,19 @@ impl History {
                 .unwrap_or(0)
         );
         let temp_path = parent.join(temp_filename);
-        let mut file = File::create(&temp_path)
-            .map_err(|e| CacheError::Io(format!("failed to create temp file: {e}")))?;
-        if let Err(e) = file.write_all(&bytes) {
-            let _ = std::fs::remove_file(&temp_path);
-            return Err(CacheError::Io(format!("failed to write cache: {e}")));
+        {
+            // Closed at the end of the scope, before the rename.
+            let mut file = File::create(&temp_path)
+                .map_err(|e| CacheError::Io(format!("failed to create temp file: {e}")))?;
+            if let Err(e) = file.write_all(&bytes) {
+                let _ = std::fs::remove_file(&temp_path);
+                return Err(CacheError::Io(format!("failed to write cache: {e}")));
+            }
+            if let Err(e) = file.sync_all() {
+                let _ = std::fs::remove_file(&temp_path);
+                return Err(CacheError::Io(format!("failed to sync cache: {e}")));
+            }
         }
-        if let Err(e) = file.sync_all() {
-            let _ = std::fs::remove_file(&temp_path);
-            return Err(CacheError::Io(format!("failed to sync cache: {e}")));
-        }
-        drop(file);
         std::fs::rename(&temp_path, path).map_err(|e| {
             let _ = std::fs::remove_file(&temp_path);
             CacheError::Io(format!("failed to persist cache file: {e}"))

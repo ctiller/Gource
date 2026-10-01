@@ -81,6 +81,7 @@ fn main() -> ExitCode {
 
     let options = AppOptions {
         recording: exporter.is_some(),
+        ..Default::default()
     };
     let sim = match GourceApp::new(config, options) {
         Ok(sim) => sim,

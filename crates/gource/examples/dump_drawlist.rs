@@ -27,7 +27,14 @@ fn main() {
         dpi_ratio: 1.0,
     };
     let recording = !config.display.output_ppm_filename.is_empty();
-    let mut app = GourceApp::new(config, AppOptions { recording }).expect("start");
+    let mut app = GourceApp::new(
+        config,
+        AppOptions {
+            recording,
+            ..Default::default()
+        },
+    )
+    .expect("start");
     let mut list = DrawList::default();
     for frame in 0..frames {
         app.frame(1.0 / 60.0, viewport, &mut list);

@@ -387,7 +387,10 @@ impl Gource {
         }
 
         let vcs_opts = crate::app::vcs_options(&settings);
-        let logmill = LogMill::spawn(&settings.path, vcs_opts);
+        let (logmill, commitlog) = match &options.feed {
+            Some(feed) => (None, Some(CommitLog::from_feed(feed.clone(), vcs_opts))),
+            None => (Some(LogMill::spawn(&settings.path, vcs_opts)), None),
+        };
 
         let mut max_tick_rate = 1.0 / 60.0;
         let mut frameskip = 0;
@@ -453,8 +456,8 @@ impl Gource {
             settings,
             world,
             camera,
-            logmill: Some(logmill),
-            commitlog: None,
+            logmill,
+            commitlog,
             slider,
             file_key,
             textbox,

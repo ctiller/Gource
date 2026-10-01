@@ -36,7 +36,14 @@ fn test_shell_multi_repo_default_stop_at_time_and_exhaustion() {
     // When recording is true, after repo 2 finishes, current_repo_idx >= gource_sections.len()
     // triggers line 77: return Ok(None)
     // and line 183-185: shell.is_finished = true, shell.requests.push_back(PlatformRequest::Quit)
-    let mut app = GourceApp::new(config, AppOptions { recording: true }).expect("create app");
+    let mut app = GourceApp::new(
+        config,
+        AppOptions {
+            recording: true,
+            ..Default::default()
+        },
+    )
+    .expect("create app");
     let viewport = Viewport::new(800, 600);
     let mut list = DrawList::new(glam::UVec2::new(800, 600));
 
@@ -83,7 +90,14 @@ fn test_shell_recording_alt_return_ignored() {
         panic!("expected run");
     };
 
-    let mut app = GourceApp::new(config, AppOptions { recording: true }).unwrap();
+    let mut app = GourceApp::new(
+        config,
+        AppOptions {
+            recording: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let viewport = Viewport::new(640, 480);
     let mut list = DrawList::new(glam::UVec2::new(640, 480));
     app.frame(0.016, viewport, &mut list);

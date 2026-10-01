@@ -33,6 +33,23 @@ pub struct CommitFeed {
     inner: Arc<Mutex<FeedState>>,
 }
 
+impl std::fmt::Debug for CommitFeed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = self.state();
+        f.debug_struct("CommitFeed")
+            .field("queued", &s.queue.len())
+            .field("ended", &s.ended)
+            .finish()
+    }
+}
+
+/// Feeds are equal when they share the same queue.
+impl PartialEq for CommitFeed {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
 impl CommitFeed {
     pub fn new() -> Self {
         Self::default()

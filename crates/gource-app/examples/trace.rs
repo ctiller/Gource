@@ -31,7 +31,14 @@ fn main() {
     );
     let viewport = Viewport::new(width, height);
     let mut list = DrawList::new(glam::UVec2::new(width, height));
-    let mut app = GourceApp::new(config, AppOptions { recording }).unwrap_or_else(|e| {
+    let mut app = GourceApp::new(
+        config,
+        AppOptions {
+            recording,
+            ..Default::default()
+        },
+    )
+    .unwrap_or_else(|e| {
         eprintln!("{e}");
         std::process::exit(1);
     });
