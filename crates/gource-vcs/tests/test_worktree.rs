@@ -322,3 +322,40 @@ fn test_branch_and_head_parsers_and_edge_cases() {
     assert_eq!(read_branch_name(&temp.path().join("nonexistent")), None);
     assert_eq!(read_head_sha(&temp.path().join("nonexistent")), None);
 }
+
+#[test]
+fn test_worktree_with_prefix() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo_dir = temp.path().join("repo-xyz");
+    fs::create_dir_all(&repo_dir).unwrap();
+    run_git(&repo_dir, &["init", "-b", "main"]);
+    run_git(&repo_dir, &["config", "user.name", "Tester"]);
+    run_git(&repo_dir, &["config", "user.email", "test@example.com"]);
+
+    let f_plain = repo_dir.join("code.rs");
+    fs::write(&f_plain, "fn test() {}\n").unwrap();
+
+    let mut watcher = WorktreeWatcher::new(
+        repo_dir,
+        VcsOptions {
+            watch_worktrees: true,
+            ..Default::default()
+        },
+    )
+    .with_prefix("my-prefix".to_string());
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    watcher.poll_and_stream(&tx).unwrap();
+
+    let mut lines = Vec::new();
+    while let Ok(line) = rx.try_recv() {
+        if !line.is_empty() {
+            lines.push(line);
+        }
+    }
+
+    assert!(
+        lines.iter().any(|l| l.contains("/my-prefix/code.rs")),
+        "expected /my-prefix/code.rs in {lines:?}"
+    );
+}

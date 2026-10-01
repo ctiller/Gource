@@ -17,22 +17,39 @@ use std::time::Duration;
 /// Live Git repository watcher that polls for new commits and streams them to a `CommitLog`.
 pub struct LiveGitWatcher;
 
+struct RepoWatchTarget {
+    repo_dir: PathBuf,
+    prefix: Option<String>,
+    target_ref: String,
+    last_sha: String,
+    worktree_watcher: Option<crate::worktree::WorktreeWatcher>,
+}
+
 impl LiveGitWatcher {
-    /// Spawns a background thread polling `repo_dir` for new commits.
+    /// Spawns a background thread polling `repo_dir` (or multiple `options.watch_paths`) for new commits.
     pub fn spawn(
         repo_dir: PathBuf,
         options: VcsOptions,
         abort_flag: Arc<AtomicBool>,
     ) -> Result<CommitLog, String> {
-        // Verify git works in repo_dir
-        let git_check = Command::new("git")
-            .args(["rev-parse", "--git-dir"])
-            .current_dir(&repo_dir)
-            .output();
+        // Determine list of repository directories to watch
+        let repo_dirs: Vec<PathBuf> = if !options.watch_paths.is_empty() {
+            options.watch_paths.clone()
+        } else {
+            vec![repo_dir]
+        };
 
-        match git_check {
-            Ok(output) if output.status.success() => {}
-            _ => return Err("failed to generate log file".to_string()),
+        // Verify git works in each repo_dir
+        for dir in &repo_dirs {
+            let git_check = Command::new("git")
+                .args(["rev-parse", "--git-dir"])
+                .current_dir(dir)
+                .output();
+
+            match git_check {
+                Ok(output) if output.status.success() => {}
+                _ => return Err("failed to generate log file".to_string()),
+            }
         }
 
         // Validate git_branch to prevent flag injection (must not start with '-')
@@ -48,20 +65,44 @@ impl LiveGitWatcher {
             options.git_branch.clone()
         };
 
-        let worker_repo_dir = repo_dir;
+        let is_multi = repo_dirs.len() > 1;
+        let mut targets = Vec::new();
+        for dir in repo_dirs {
+            let prefix = if is_multi {
+                let name = dir
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "repo".to_string());
+                Some(name)
+            } else {
+                None
+            };
+            let wt_watcher = if options.watch_worktrees {
+                let mut watcher =
+                    crate::worktree::WorktreeWatcher::new(dir.clone(), options.clone());
+                if let Some(ref p) = prefix {
+                    watcher = watcher.with_prefix(p.clone());
+                }
+                Some(watcher)
+            } else {
+                None
+            };
+            targets.push(RepoWatchTarget {
+                repo_dir: dir,
+                prefix,
+                target_ref: target_ref.clone(),
+                last_sha: String::new(),
+                worktree_watcher: wt_watcher,
+            });
+        }
+
         let worker_options = options.clone();
         let worker_abort = abort_flag;
 
         thread::Builder::new()
             .name("gource-live-git".to_string())
             .spawn(move || {
-                Self::worker_loop(
-                    worker_repo_dir,
-                    target_ref,
-                    worker_options,
-                    worker_abort,
-                    tx,
-                );
+                Self::worker_loop(targets, worker_options, worker_abort, tx);
             })
             .map_err(|e| e.to_string())?;
 
@@ -69,81 +110,76 @@ impl LiveGitWatcher {
     }
 
     fn worker_loop(
-        repo_dir: PathBuf,
-        target_ref: String,
+        mut targets: Vec<RepoWatchTarget>,
         options: VcsOptions,
         abort_flag: Arc<AtomicBool>,
         tx: Sender<String>,
     ) {
-        // 1. Resolve initial SHA
-        let mut last_sha = resolve_rev(&repo_dir, &target_ref).unwrap_or_default();
+        // 1. Initial backfill across all watched repositories
+        for target in &mut targets {
+            target.last_sha = resolve_rev(&target.repo_dir, &target.target_ref).unwrap_or_default();
+            if !target.last_sha.is_empty() {
+                let mut cmd = Command::new("git");
+                cmd.args([
+                    "log",
+                    "--reverse",
+                    "--raw",
+                    "--encoding=UTF-8",
+                    "--no-renames",
+                ]);
+                if options.include_numstat {
+                    cmd.arg("--numstat");
+                }
+                cmd.arg("--no-show-signature");
+                if options.author_time {
+                    cmd.arg("--pretty=format:user:%aN%n%at");
+                } else {
+                    cmd.arg("--pretty=format:user:%aN%n%ct");
+                }
+                if options.start_timestamp != 0 {
+                    use chrono::TimeZone;
+                    if let Some(dt) = chrono::Local
+                        .timestamp_opt(options.start_timestamp, 0)
+                        .single()
+                    {
+                        cmd.args(["--since", &dt.format("%Y-%m-%d").to_string()]);
+                    }
+                }
+                if options.stop_timestamp != 0 {
+                    use chrono::TimeZone;
+                    if let Some(dt) = chrono::Local
+                        .timestamp_opt(options.stop_timestamp, 0)
+                        .single()
+                    {
+                        cmd.args(["--until", &dt.format("%Y-%m-%d").to_string()]);
+                    }
+                }
+                cmd.arg(&target.last_sha);
+                cmd.current_dir(&target.repo_dir);
 
-        // 2. Initial backfill: run git log up to current SHA if repository has commits
-        if !last_sha.is_empty() {
-            let mut cmd = Command::new("git");
-            cmd.args([
-                "log",
-                "--reverse",
-                "--raw",
-                "--encoding=UTF-8",
-                "--no-renames",
-            ]);
-            if options.include_numstat {
-                cmd.arg("--numstat");
-            }
-            cmd.arg("--no-show-signature");
-            if options.author_time {
-                cmd.arg("--pretty=format:user:%aN%n%at");
-            } else {
-                cmd.arg("--pretty=format:user:%aN%n%ct");
-            }
-            if options.start_timestamp != 0 {
-                use chrono::TimeZone;
-                if let Some(dt) = chrono::Local
-                    .timestamp_opt(options.start_timestamp, 0)
-                    .single()
+                if let Ok(output) = cmd.output()
+                    && output.status.success()
                 {
-                    cmd.args(["--since", &dt.format("%Y-%m-%d").to_string()]);
+                    let text = String::from_utf8_lossy(&output.stdout);
+                    if !stream_git_log_commits(&text, target.prefix.as_deref(), &options, &tx) {
+                        return;
+                    }
                 }
             }
-            if options.stop_timestamp != 0 {
-                use chrono::TimeZone;
-                if let Some(dt) = chrono::Local
-                    .timestamp_opt(options.stop_timestamp, 0)
-                    .single()
-                {
-                    cmd.args(["--until", &dt.format("%Y-%m-%d").to_string()]);
-                }
-            }
-            cmd.arg(&last_sha);
-            cmd.current_dir(&repo_dir);
 
-            if let Ok(output) = cmd.output()
-                && output.status.success()
-            {
-                let text = String::from_utf8_lossy(&output.stdout);
-                if !stream_git_log_commits(&text, &options, &tx) {
-                    return;
-                }
+            // Initial worktree poll
+            if let Some(ref mut wt_watcher) = target.worktree_watcher {
+                let _ = wt_watcher.poll_and_stream(&tx);
             }
         }
 
-        // 3. Polling loop
+        // 2. Polling loop
         let interval_secs = if options.live_interval_secs > 0.0 {
             options.live_interval_secs
         } else {
             5.0
         };
 
-        let mut worktree_watcher = if options.watch_worktrees {
-            let mut watcher =
-                crate::worktree::WorktreeWatcher::new(repo_dir.clone(), options.clone());
-            // Initial poll on startup
-            let _ = watcher.poll_and_stream(&tx);
-            Some(watcher)
-        } else {
-            None
-        };
         let worktree_interval = Duration::from_secs_f32(if options.worktree_poll_interval > 0.0 {
             options.worktree_poll_interval
         } else {
@@ -165,10 +201,12 @@ impl LiveGitWatcher {
                 thread::sleep(sleep_duration);
                 elapsed += sleep_duration;
 
-                if let Some(ref mut wt_watcher) = worktree_watcher
-                    && last_worktree_poll.elapsed() >= worktree_interval
-                {
-                    let _ = wt_watcher.poll_and_stream(&tx);
+                if last_worktree_poll.elapsed() >= worktree_interval {
+                    for target in &mut targets {
+                        if let Some(ref mut wt_watcher) = target.worktree_watcher {
+                            let _ = wt_watcher.poll_and_stream(&tx);
+                        }
+                    }
                     last_worktree_poll = std::time::Instant::now();
                 }
             }
@@ -177,56 +215,60 @@ impl LiveGitWatcher {
                 return;
             }
 
-            // Optional live fetch
-            if options.live_fetch {
-                let _ = Command::new("git")
-                    .args(["fetch", "--quiet"])
-                    .current_dir(&repo_dir)
-                    .status();
-            }
+            for target in &mut targets {
+                // Optional live fetch
+                if options.live_fetch {
+                    let _ = Command::new("git")
+                        .args(["fetch", "--quiet"])
+                        .current_dir(&target.repo_dir)
+                        .status();
+                }
 
-            let new_sha = match resolve_rev(&repo_dir, &target_ref) {
-                Some(sha) if !sha.is_empty() => sha,
-                _ => continue,
-            };
-
-            if new_sha != last_sha {
-                let range = if !last_sha.is_empty() && is_ancestor(&repo_dir, &last_sha, &new_sha) {
-                    format!("{last_sha}..{new_sha}")
-                } else {
-                    new_sha.clone()
+                let new_sha = match resolve_rev(&target.repo_dir, &target.target_ref) {
+                    Some(sha) if !sha.is_empty() => sha,
+                    _ => continue,
                 };
 
-                let mut cmd = Command::new("git");
-                cmd.args([
-                    "log",
-                    "--reverse",
-                    "--raw",
-                    "--encoding=UTF-8",
-                    "--no-renames",
-                ]);
-                if options.include_numstat {
-                    cmd.arg("--numstat");
-                }
-                cmd.arg("--no-show-signature");
-                if options.author_time {
-                    cmd.arg("--pretty=format:user:%aN%n%at");
-                } else {
-                    cmd.arg("--pretty=format:user:%aN%n%ct");
-                }
-                cmd.arg(&range);
-                cmd.current_dir(&repo_dir);
+                if new_sha != target.last_sha {
+                    let range = if !target.last_sha.is_empty()
+                        && is_ancestor(&target.repo_dir, &target.last_sha, &new_sha)
+                    {
+                        format!("{}..{new_sha}", target.last_sha)
+                    } else {
+                        new_sha.clone()
+                    };
 
-                if let Ok(output) = cmd.output()
-                    && output.status.success()
-                {
-                    let text = String::from_utf8_lossy(&output.stdout);
-                    if !stream_git_log_commits(&text, &options, &tx) {
-                        return;
+                    let mut cmd = Command::new("git");
+                    cmd.args([
+                        "log",
+                        "--reverse",
+                        "--raw",
+                        "--encoding=UTF-8",
+                        "--no-renames",
+                    ]);
+                    if options.include_numstat {
+                        cmd.arg("--numstat");
                     }
-                }
+                    cmd.arg("--no-show-signature");
+                    if options.author_time {
+                        cmd.arg("--pretty=format:user:%aN%n%at");
+                    } else {
+                        cmd.arg("--pretty=format:user:%aN%n%ct");
+                    }
+                    cmd.arg(&range);
+                    cmd.current_dir(&target.repo_dir);
 
-                last_sha = new_sha;
+                    if let Ok(output) = cmd.output()
+                        && output.status.success()
+                    {
+                        let text = String::from_utf8_lossy(&output.stdout);
+                        if !stream_git_log_commits(&text, target.prefix.as_deref(), &options, &tx) {
+                            return;
+                        }
+                    }
+
+                    target.last_sha = new_sha;
+                }
             }
         }
     }
@@ -259,7 +301,12 @@ fn is_ancestor(repo_dir: &Path, ancestor: &str, descendant: &str) -> bool {
 
 /// Parses git log commits from raw output and sends custom format lines followed by a sentinel line `""`.
 /// Returns false if receiver has disconnected.
-fn stream_git_log_commits(git_log_text: &str, options: &VcsOptions, tx: &Sender<String>) -> bool {
+fn stream_git_log_commits(
+    git_log_text: &str,
+    prefix: Option<&str>,
+    options: &VcsOptions,
+    tx: &Sender<String>,
+) -> bool {
     let lines: Vec<&str> = git_log_text.lines().collect();
     let mut idx = 0;
     let total = lines.len();
@@ -282,13 +329,31 @@ fn stream_git_log_commits(git_log_text: &str, options: &VcsOptions, tx: &Sender<
 
         // Format into custom log lines
         for file in &commit.files {
+            let filename = match prefix {
+                Some(p) => {
+                    let raw = &file.filename;
+                    if raw.starts_with('/') {
+                        format!("/{p}{raw}")
+                    } else {
+                        format!("/{p}/{raw}")
+                    }
+                }
+                None => {
+                    if file.filename.starts_with('/') {
+                        file.filename.clone()
+                    } else {
+                        format!("/{}", file.filename)
+                    }
+                }
+            };
+
             let line = if file.is_binary {
                 format!(
                     "{}|{}|{}|{}|-|-",
                     commit.timestamp,
                     commit.username,
                     file.action.code(),
-                    file.filename
+                    filename
                 )
             } else if let (Some(added), Some(removed)) = (file.lines_added, file.lines_removed) {
                 format!(
@@ -296,7 +361,7 @@ fn stream_git_log_commits(git_log_text: &str, options: &VcsOptions, tx: &Sender<
                     commit.timestamp,
                     commit.username,
                     file.action.code(),
-                    file.filename,
+                    filename,
                     added,
                     removed
                 )
@@ -306,7 +371,7 @@ fn stream_git_log_commits(git_log_text: &str, options: &VcsOptions, tx: &Sender<
                     commit.timestamp,
                     commit.username,
                     file.action.code(),
-                    file.filename
+                    filename
                 )
             };
 

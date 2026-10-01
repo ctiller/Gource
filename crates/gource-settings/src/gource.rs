@@ -391,6 +391,7 @@ pub struct GourceSettings {
     pub watch_worktrees: bool,
     pub worktree_poll_interval: f32,
     pub shadow_alpha: f32,
+    pub watch_paths: Vec<String>,
 }
 
 impl Default for GourceSettings {
@@ -547,6 +548,7 @@ impl Default for GourceSettings {
             watch_worktrees: false,
             worktree_poll_interval: 0.25,
             shadow_alpha: 0.45,
+            watch_paths: Vec::new(),
         };
         s.set_scaled_font_sizes();
         s
@@ -806,6 +808,11 @@ impl GourceSettings {
         if (self.shadow_alpha - def.shadow_alpha).abs() > 1e-4 {
             args.push("--shadow-alpha".to_string());
             args.push(self.shadow_alpha.to_string());
+        }
+
+        for wp in &self.watch_paths {
+            args.push("--watch-paths".to_string());
+            args.push(wp.clone());
         }
 
         if !self.default_path && !self.path.is_empty() && self.path != "." {
@@ -1798,13 +1805,72 @@ impl GourceSettings {
             }
         }
 
-        // validate path
-        if gource_settings.has_value("path") {
-            settings.path = gource_settings.get_string("path");
-            settings.default_path = false;
+        // parse watch-paths if provided
+        for entry in gource_settings.entries_named("watch-paths") {
+            if !entry.has_value() || entry.value.is_empty() {
+                return Err(conf.missing_value_error(entry));
+            }
+            for part in entry.value.split([',', ':']) {
+                let p = part.trim();
+                if !p.is_empty() {
+                    settings.watch_paths.push(p.to_string());
+                }
+            }
         }
 
-        if settings.path == "-" {
+        // validate path and watch_paths
+        if gource_settings.has_value("path") {
+            let raw_path = gource_settings.get_string("path");
+            settings.default_path = false;
+
+            // Check if raw_path is a comma/colon list of paths
+            if (raw_path.contains(',') || raw_path.contains(':'))
+                && !raw_path.starts_with("https://")
+                && !raw_path.starts_with("http://")
+                && !raw_path.starts_with("github:")
+            {
+                for part in raw_path.split([',', ':']) {
+                    let p = part.trim();
+                    if !p.is_empty() {
+                        settings.watch_paths.push(p.to_string());
+                    }
+                }
+                if let Some(first) = settings.watch_paths.first() {
+                    settings.path = first.clone();
+                }
+            } else {
+                settings.path = raw_path;
+            }
+        }
+
+        if !settings.watch_paths.is_empty() {
+            // Deduplicate watch_paths preserving order
+            let mut unique_paths = Vec::new();
+            for p in &settings.watch_paths {
+                let mut clean_p = p.clone();
+                while clean_p.ends_with('/') || clean_p.ends_with('\\') {
+                    clean_p.pop();
+                }
+                if !unique_paths.contains(&clean_p) {
+                    unique_paths.push(clean_p);
+                }
+            }
+            settings.watch_paths = unique_paths;
+
+            for p in &settings.watch_paths {
+                if !Path::new(p).exists() {
+                    return Err(SettingsError(format!(
+                        "'{p}' does not appear to be a valid file or directory"
+                    )));
+                }
+            }
+            if let Some(first) = settings.watch_paths.first() {
+                settings.path = first.clone();
+            }
+            if settings.watch_paths.len() > 1 && gource_settings.entry("live").is_none() {
+                settings.live = true;
+            }
+        } else if settings.path == "-" {
             if settings.log_format.is_empty() {
                 return Err(SettingsError(
                     "log-format required when reading from STDIN".to_owned(),
@@ -2297,6 +2363,44 @@ mod tests {
         assert!(GourceSettings::import(&conf_err, None).is_err());
 
         let conf_missing = ConfFile::parse("[gource]\ngit-backend=\n", "test.conf").unwrap();
+        assert!(GourceSettings::import(&conf_missing, None).is_err());
+    }
+
+    #[test]
+    fn test_watch_paths_parsing_and_import() {
+        let mut conf = ConfFile::new();
+        let sec = conf.add_section("gource");
+        sec.add_entry("watch-paths", ".");
+        sec.add_entry("watch-paths", "src");
+        let s = GourceSettings::import(&conf, None).unwrap();
+        assert_eq!(s.watch_paths, vec![".".to_string(), "src".to_string()]);
+        assert!(s.live);
+        assert_eq!(s.path, ".");
+
+        let cli_args = s.to_cli_args();
+        assert!(cli_args.contains(&"--watch-paths".to_string()));
+
+        // Comma-separated path
+        let mut conf2 = ConfFile::new();
+        conf2.set_entry("gource", "path", "., src");
+        let s2 = GourceSettings::import(&conf2, None).unwrap();
+        assert_eq!(s2.watch_paths, vec![".".to_string(), "src".to_string()]);
+        assert!(s2.live);
+
+        // Colon-separated path
+        let mut conf3 = ConfFile::new();
+        conf3.set_entry("gource", "path", ".:src");
+        let s3 = GourceSettings::import(&conf3, None).unwrap();
+        assert_eq!(s3.watch_paths, vec![".".to_string(), "src".to_string()]);
+        assert!(s3.live);
+
+        // Invalid path in watch-paths
+        let mut conf_err = ConfFile::new();
+        conf_err.set_entry("gource", "watch-paths", "/nonexistent_path_xyz123");
+        assert!(GourceSettings::import(&conf_err, None).is_err());
+
+        // Missing value error
+        let conf_missing = ConfFile::parse("[gource]\nwatch-paths=\n", "test.conf").unwrap();
         assert!(GourceSettings::import(&conf_missing, None).is_err());
     }
 }

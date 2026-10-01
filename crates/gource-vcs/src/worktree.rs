@@ -319,6 +319,8 @@ pub struct WorktreeWatcher {
     in_flight_state: BTreeMap<(PathBuf, String), InFlightFile>,
     /// Last seen HEAD per worktree path.
     worktree_heads: BTreeMap<PathBuf, String>,
+    /// Optional path prefix for multiple trees (e.g. "repo-name").
+    path_prefix: Option<String>,
 }
 
 impl WorktreeWatcher {
@@ -330,7 +332,14 @@ impl WorktreeWatcher {
             worktrees: Vec::new(),
             in_flight_state: BTreeMap::new(),
             worktree_heads: BTreeMap::new(),
+            path_prefix: None,
         }
+    }
+
+    /// Set an optional path prefix to prepend to file paths (e.g. when watching multiple repositories).
+    pub fn with_prefix(mut self, prefix: String) -> Self {
+        self.path_prefix = Some(prefix);
+        self
     }
 
     /// Refresh worktrees and poll for in-flight changes, streaming any new shadow commits to `tx`.
@@ -364,12 +373,18 @@ impl WorktreeWatcher {
                 };
 
                 if changed {
+                    let raw_path = if file.path.starts_with('/') {
+                        file.path.clone()
+                    } else {
+                        format!("/{}", file.path)
+                    };
+                    let final_path = match &self.path_prefix {
+                        Some(prefix) => format!("/{prefix}{raw_path}"),
+                        None => raw_path,
+                    };
+
                     let cf = CommitFile {
-                        filename: if file.path.starts_with('/') {
-                            file.path.clone()
-                        } else {
-                            format!("/{}", file.path)
-                        },
+                        filename: final_path,
                         action: file.action.clone(),
                         colour: file_colour(&file.path, &self.options.hasher),
                         lines_added: Some(file.lines_added),
@@ -428,15 +443,21 @@ impl WorktreeWatcher {
                         .map(|w| w.branch.as_str())
                         .unwrap_or("worktree");
 
+                    let raw_path = if prev.path.starts_with('/') {
+                        prev.path
+                    } else {
+                        format!("/{}", prev.path)
+                    };
+                    let final_path = match &self.path_prefix {
+                        Some(prefix) => format!("/{prefix}{raw_path}"),
+                        None => raw_path,
+                    };
+
                     let discard_commit = Commit {
                         timestamp: now,
                         username: format!("worktree:{branch}"),
                         files: vec![CommitFile {
-                            filename: if prev.path.starts_with('/') {
-                                prev.path
-                            } else {
-                                format!("/{}", prev.path)
-                            },
+                            filename: final_path,
                             action: FileAction::Delete,
                             colour: file_colour(&key.1, &self.options.hasher),
                             lines_added: None,

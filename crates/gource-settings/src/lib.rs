@@ -255,6 +255,7 @@ fn get_option_type(opt: &str) -> Option<&'static str> {
         "file-show-filter" => Some("multi-value"),
         "follow-user" => Some("multi-value"),
         "highlight-user" => Some("multi-value"),
+        "watch-paths" => Some("multi-value"),
 
         "log-level" => Some("string"),
         "background-image" => Some("string"),
@@ -597,6 +598,27 @@ mod tests {
             CliAction::Run(cfg) => {
                 assert_eq!(cfg.gource.path, ".");
                 assert_eq!(cfg.display.display_width, 1024);
+            }
+            _ => panic!("expected Run"),
+        }
+    }
+
+    #[test]
+    fn test_watch_paths_cli() {
+        let res = parse_command_line(&[
+            "--watch-paths".to_string(),
+            ".".to_string(),
+            "--watch-paths".to_string(),
+            "src".to_string(),
+        ])
+        .unwrap();
+        match res {
+            CliAction::Run(cfg) => {
+                assert_eq!(
+                    cfg.gource.watch_paths,
+                    vec![".".to_string(), "src".to_string()]
+                );
+                assert!(cfg.gource.live);
             }
             _ => panic!("expected Run"),
         }

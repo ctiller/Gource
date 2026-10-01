@@ -150,5 +150,10 @@ pub fn vcs_options(settings: &GourceSettings) -> VcsOptions {
         watch_worktrees: settings.watch_worktrees,
         worktree_poll_interval: settings.worktree_poll_interval,
         shadow_alpha: settings.shadow_alpha,
+        watch_paths: settings
+            .watch_paths
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect(),
     }
 }

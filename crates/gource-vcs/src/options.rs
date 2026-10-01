@@ -72,4 +72,6 @@ pub struct VcsOptions {
     pub worktree_poll_interval: f32,
     /// Opacity multiplier for shadow in-flight files and beams (default: 0.45).
     pub shadow_alpha: f32,
+    /// Paths to multiple repositories to watch concurrently.
+    pub watch_paths: Vec<std::path::PathBuf>,
 }

@@ -393,3 +393,125 @@ fn test_logmill_dispatch_live_and_github() {
             || status == gource_vcs::LogMillStatus::Success
     );
 }
+
+#[test]
+fn test_multi_tree_live_watching() {
+    let temp_parent = tempfile::tempdir().unwrap();
+    let repo_a = temp_parent.path().join("repo-alpha");
+    let repo_b = temp_parent.path().join("repo-beta");
+    std::fs::create_dir(&repo_a).unwrap();
+    std::fs::create_dir(&repo_b).unwrap();
+
+    let init_repo = |path: &std::path::Path, file: &str, content: &str, msg: &str| {
+        let run = |args: &[&str]| {
+            let status = Command::new("git")
+                .args(args)
+                .current_dir(path)
+                .status()
+                .expect("git execution failed");
+            assert!(status.success());
+        };
+        run(&["init", "-b", "main"]);
+        run(&["config", "user.name", "AlphaAuthor"]);
+        run(&["config", "user.email", "alpha@example.com"]);
+        run(&["config", "commit.gpgsign", "false"]);
+        std::fs::write(path.join(file), content).unwrap();
+        run(&["add", file]);
+        run(&["commit", "-m", msg]);
+    };
+
+    init_repo(&repo_a, "main.rs", "fn main() {}\n", "Initial commit alpha");
+    init_repo(
+        &repo_b,
+        "lib.rs",
+        "pub fn lib() {}\n",
+        "Initial commit beta",
+    );
+
+    let opts = VcsOptions {
+        live: true,
+        live_interval_secs: 0.1,
+        include_numstat: true,
+        watch_paths: vec![repo_a.clone(), repo_b.clone()],
+        ..Default::default()
+    };
+
+    let abort_flag = Arc::new(AtomicBool::new(false));
+    let mut clog = LiveGitWatcher::spawn(repo_a.clone(), opts, Arc::clone(&abort_flag)).unwrap();
+    clog.wait_for_input(true);
+
+    // Initial backfill should read from both repos with directory prefix!
+    let mut files_seen = Vec::new();
+    for _ in 0..2 {
+        let c = clog
+            .next_commit()
+            .expect("expected commit from initial backfill");
+        for f in &c.files {
+            files_seen.push(f.filename.clone());
+        }
+    }
+
+    assert!(
+        files_seen.contains(&"/repo-alpha/main.rs".to_string()),
+        "expected /repo-alpha/main.rs in {files_seen:?}"
+    );
+    assert!(
+        files_seen.contains(&"/repo-beta/lib.rs".to_string()),
+        "expected /repo-beta/lib.rs in {files_seen:?}"
+    );
+
+    // Now commit to repo_b dynamically
+    std::fs::write(repo_b.join("extra.rs"), "pub fn extra() {}\n").unwrap();
+    let status = Command::new("git")
+        .args(["add", "extra.rs"])
+        .current_dir(&repo_b)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let status = Command::new("git")
+        .args(["commit", "-m", "Dynamic commit beta"])
+        .current_dir(&repo_b)
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    // Next commit from stream should be from repo-beta with prefix!
+    let live_c = clog.next_commit().expect("expected dynamic live commit");
+    assert_eq!(live_c.files[0].filename, "/repo-beta/extra.rs");
+
+    // Test in-flight worktree change in repo_a with watch_worktrees = true
+    let opts_wt = VcsOptions {
+        live: true,
+        live_interval_secs: 0.1,
+        watch_worktrees: true,
+        worktree_poll_interval: 0.05,
+        watch_paths: vec![repo_a.clone(), repo_b.clone()],
+        ..Default::default()
+    };
+    let abort_wt = Arc::new(AtomicBool::new(false));
+    let mut clog_wt =
+        LiveGitWatcher::spawn(repo_a.clone(), opts_wt, Arc::clone(&abort_wt)).unwrap();
+    clog_wt.wait_for_input(true);
+
+    // Consume all backfill commits (repo_a has 1 commit, repo_b has 2 commits = total 3 commits)
+    let c_bf1 = clog_wt.next_commit().expect("expected backfill commit 1");
+    let c_bf2 = clog_wt.next_commit().expect("expected backfill commit 2");
+    let c_bf3 = clog_wt.next_commit().expect("expected backfill commit 3");
+    assert!(!c_bf1.is_shadow);
+    assert!(!c_bf2.is_shadow);
+    assert!(!c_bf3.is_shadow);
+
+    // Create uncommitted in-flight file in repo_a
+    std::fs::write(repo_a.join("uncommitted.rs"), "fn inflight() {}\n").unwrap();
+
+    // WorktreeWatcher will poll and stream shadow commit with prefix /repo-alpha/uncommitted.rs!
+    let shadow_c = clog_wt
+        .next_commit()
+        .expect("expected in-flight shadow commit");
+    assert!(shadow_c.is_shadow);
+    assert_eq!(shadow_c.files[0].filename, "/repo-alpha/uncommitted.rs");
+    assert!(shadow_c.files[0].is_shadow);
+
+    abort_wt.store(true, Ordering::SeqCst);
+    abort_flag.store(true, Ordering::SeqCst);
+}

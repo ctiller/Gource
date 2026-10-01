@@ -314,6 +314,9 @@ fn fetch_internal(
     } else if crate::github::GitHubTarget::looks_like_github_path(path) {
         let target = crate::github::GitHubTarget::parse(path)?;
         return crate::github::GitHubWatcher::spawn(target, options.clone(), abort_clone);
+    } else if !options.watch_paths.is_empty() {
+        let first_repo = options.watch_paths[0].clone();
+        return crate::live::LiveGitWatcher::spawn(first_repo, options.clone(), abort_clone);
     } else if options.live || options.watch_worktrees {
         let path_obj = Path::new(path);
         if path_obj.is_dir()
