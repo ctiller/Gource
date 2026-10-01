@@ -9,7 +9,7 @@ fn add(world: &mut World, settings: &GourceSettings, path: &str) {
     let cf = CommitFile {
         filename: path.to_string(),
         action: FileAction::Add,
-        colour: Vec3::ONE,
+        colour: <[f32; 3]>::from(Vec3::ONE),
         ..Default::default()
     };
     world.add_file(&cf, settings).expect("file added");

@@ -2,8 +2,8 @@
 //! Port of `src/formats/custom.cpp`.
 
 use crate::commit::Commit;
+use crate::commit::CommitExt;
 use crate::options::VcsOptions;
-use glam::Vec3;
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -22,7 +22,7 @@ static CUSTOM_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Parse colour from a 6-digit hex string (e.g. `RRGGBB` or `#RRGGBB`).
-pub fn parse_colour(cstr: &str) -> Option<Vec3> {
+pub fn parse_colour(cstr: &str) -> Option<[f32; 3]> {
     let hex = cstr.strip_prefix('#').unwrap_or(cstr);
     // ASCII check first: byte slicing below must not split a character.
     if hex.len() != 6 || !hex.is_ascii() {
@@ -31,11 +31,7 @@ pub fn parse_colour(cstr: &str) -> Option<Vec3> {
     let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
     let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
     let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-    Some(Vec3::new(
-        r as f32 / 255.0,
-        g as f32 / 255.0,
-        b as f32 / 255.0,
-    ))
+    Some([r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0])
 }
 
 /// C `atoll`: skip leading whitespace, take an optional sign and the longest

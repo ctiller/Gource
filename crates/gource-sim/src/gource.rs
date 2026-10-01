@@ -1360,7 +1360,13 @@ impl Gource {
                             "Top Contributors",
                             series_data.active_editors_count,
                         )
-                        .with_rows(&series_data.top_editors);
+                        .with_rows(
+                            &series_data
+                                .top_editors
+                                .iter()
+                                .map(|(n, c, a, b)| (n.clone(), glam::Vec3::from(*c), *a, *b))
+                                .collect::<Vec<_>>(),
+                        );
                         self.dashboards
                             .add_panel(DashboardPanel::EditorsLeaderboard(p));
                     }

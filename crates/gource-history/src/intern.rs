@@ -1,6 +1,5 @@
 //! Interned identifiers and tables for paths, users, and cohorts.
 
-use glam::Vec3;
 use gource_core::StringHasher;
 use std::collections::HashMap;
 
@@ -28,7 +27,7 @@ pub struct PathEntry {
     /// File extension without dot (e.g. `"rs"`), or empty if none.
     pub ext: String,
     /// Deterministic RGB colour computed from the extension via [`StringHasher`].
-    pub colour: Vec3,
+    pub colour: [f32; 3],
 }
 
 /// Bidirectional table interning normalized file paths.
@@ -109,7 +108,7 @@ impl PathTable {
             _ => String::new(),
         };
 
-        let colour = self.hasher.colour_hash(&ext);
+        let colour = self.hasher.colour_rgb(&ext);
         let id = PathId(self.entries.len() as u32);
         self.entries.push(PathEntry {
             path: norm.clone(),

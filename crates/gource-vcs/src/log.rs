@@ -2,6 +2,7 @@
 //! formats/commitlog.cpp and `SeekLog`/`StreamLog` in core/seeklog.cpp).
 
 use crate::commit::Commit;
+use crate::commit::CommitExt;
 use crate::formats;
 use crate::options::VcsOptions;
 use std::collections::VecDeque;

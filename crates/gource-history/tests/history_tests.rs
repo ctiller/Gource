@@ -23,7 +23,7 @@ fn test_intern_tables_paths_users_cohorts() {
     assert_eq!(entry1.name, "main.rs");
     assert_eq!(entry1.dir, "/src/");
     assert_eq!(entry1.ext, "rs");
-    assert!(entry1.colour.length() > 0.0);
+    assert!(entry1.colour.iter().map(|c| c * c).sum::<f32>() > 0.0);
     assert_eq!(pt.resolve(id1), Some("/src/main.rs"));
     assert_eq!(pt.find("src/main.rs"), Some(id1));
     assert_eq!(pt.find("nonexistent"), None);

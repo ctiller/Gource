@@ -12,7 +12,7 @@ fn test_single_file_touch_increments_visible_count() {
     let cf = CommitFile {
         filename: "/src/main.rs".to_string(),
         action: FileAction::Add,
-        colour: Vec3::new(1.0, 0.0, 0.0),
+        colour: <[f32; 3]>::from(Vec3::new(1.0, 0.0, 0.0)),
         ..Default::default()
     };
 
@@ -54,7 +54,7 @@ fn test_repeated_touch_does_not_inflate_visible_count() {
     let cf = CommitFile {
         filename: "/src/main.rs".to_string(),
         action: FileAction::Add,
-        colour: Vec3::new(1.0, 0.0, 0.0),
+        colour: <[f32; 3]>::from(Vec3::new(1.0, 0.0, 0.0)),
         ..Default::default()
     };
 
@@ -113,7 +113,7 @@ fn test_dir_radius_parity_after_multiple_commits() {
     let cf = CommitFile {
         filename: "/src/main.rs".to_string(),
         action: FileAction::Add,
-        colour: Vec3::new(1.0, 0.0, 0.0),
+        colour: <[f32; 3]>::from(Vec3::new(1.0, 0.0, 0.0)),
         ..Default::default()
     };
 

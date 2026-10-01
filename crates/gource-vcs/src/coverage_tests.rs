@@ -1,3 +1,4 @@
+use crate::commit::CommitExt;
 use crate::commit::{Commit, CommitFile, FileAction, file_colour};
 use crate::formats;
 use crate::log::{CommitLog, StreamLog};
@@ -3380,11 +3381,11 @@ fn test_commit_and_filters_thorough() {
 
     // test file_colour with various extensions
     let h = gource_core::StringHasher::default();
-    assert_eq!(file_colour("/no_ext", &h), glam::Vec3::ONE);
-    assert_eq!(file_colour("no_slash_no_ext", &h), glam::Vec3::ONE);
-    assert_eq!(file_colour("/path.d/no_ext", &h), glam::Vec3::ONE);
-    assert_eq!(file_colour("plain.c", &h), h.colour_hash("c"));
-    assert_eq!(file_colour("/a/b/c.tar.gz", &h), h.colour_hash("gz"));
+    assert_eq!(file_colour("/no_ext", &h), crate::commit::WHITE);
+    assert_eq!(file_colour("no_slash_no_ext", &h), crate::commit::WHITE);
+    assert_eq!(file_colour("/path.d/no_ext", &h), crate::commit::WHITE);
+    assert_eq!(file_colour("plain.c", &h), h.colour_rgb("c"));
+    assert_eq!(file_colour("/a/b/c.tar.gz", &h), h.colour_rgb("gz"));
 
     // test Commit::is_valid without files
     commit.files.clear();
@@ -3412,7 +3413,7 @@ fn test_commit_and_filters_thorough() {
     opts.filters.file_show_filters.clear();
 
     // test add_file_with_colour
-    let custom_color = glam::Vec3::new(0.5, 0.5, 0.5);
+    let custom_color = [0.5, 0.5, 0.5];
     commit.add_file_with_colour("/custom_col.txt", "M", custom_color, &opts);
     assert_eq!(commit.files.last().unwrap().colour, custom_color);
 
@@ -3442,7 +3443,7 @@ fn test_commit_and_filters_thorough() {
         let cf = CommitFile {
             filename: format!("/path/{}.txt", a.code()),
             action: a.clone(),
-            colour: glam::Vec3::ONE,
+            colour: crate::commit::WHITE,
             ..Default::default()
         };
         assert_eq!(cf.action.code(), a.code());
@@ -3608,9 +3609,7 @@ fn test_large_variety_of_paths_and_extensions() {
     ];
     for p in paths {
         let col = file_colour(p, &h);
-        assert!(col.x >= 0.0 && col.x <= 1.0);
-        assert!(col.y >= 0.0 && col.y <= 1.0);
-        assert!(col.z >= 0.0 && col.z <= 1.0);
+        assert!(col.iter().all(|c| (0.0..=1.0).contains(c)));
     }
 }
 
@@ -3682,12 +3681,12 @@ fn test_coverage_boost_more() {
     let cf = CommitFile {
         filename: "/test.txt".to_string(),
         action: FileAction::Add,
-        colour: glam::Vec3::ZERO,
+        colour: [0.0; 3],
         ..Default::default()
     };
     assert_eq!(cf.filename, "/test.txt");
     assert_eq!(cf.action, FileAction::Add);
-    assert_eq!(cf.colour, glam::Vec3::ZERO);
+    assert_eq!(cf.colour, [0.0; 3]);
 
     // 9. write_custom_log on empty log
     let temp_in = tempfile::NamedTempFile::new().unwrap();

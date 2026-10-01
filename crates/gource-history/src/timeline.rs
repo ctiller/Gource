@@ -1,7 +1,6 @@
 //! Timeline histogram indexing, playhead scrubbing state, clip in/out markers,
 //! and dashboard metrics series extraction.
 
-use glam::Vec3;
 use gource_core::StringHasher;
 use std::collections::{HashMap, HashSet};
 
@@ -297,7 +296,7 @@ pub struct DashboardSeriesData {
     /// Distinct active authors in the sliding window.
     pub active_editors_count: usize,
     /// Top editors in window: `(name, colour, commits, lines_added)`.
-    pub top_editors: Vec<(String, Vec3, u32, u64)>,
+    pub top_editors: Vec<(String, [f32; 3], u32, u64)>,
     /// Git-of-Theseus cohort stacked breakdown and churn metrics.
     pub theseus_cohorts: TheseusDashboardData,
 }
@@ -327,13 +326,13 @@ impl DashboardSeriesData {
         let active_editors_count = win.distinct_active_editors as usize;
 
         let hasher = StringHasher::default();
-        let top_editors: Vec<(String, Vec3, u32, u64)> = win
+        let top_editors: Vec<(String, [f32; 3], u32, u64)> = win
             .top_editors
             .iter()
             .take(5)
             .map(|e| {
                 let name = history.users.get(e.user).unwrap_or("unknown").to_string();
-                let col = hasher.colour_hash(&name);
+                let col = hasher.colour_rgb(&name);
                 (name, col, e.commits, e.lines_added)
             })
             .collect();

@@ -2,6 +2,7 @@
 //! Port of `src/formats/gitraw.cpp`.
 
 use crate::commit::Commit;
+use crate::commit::CommitExt;
 use crate::options::VcsOptions;
 use regex::Regex;
 use std::sync::LazyLock;

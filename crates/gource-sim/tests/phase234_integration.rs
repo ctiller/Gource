@@ -791,7 +791,7 @@ fn test_interactive_search_and_caret_positioning() {
     let cf = gource_vcs::commit::CommitFile {
         filename: "/src/search_test.rs".to_string(),
         action: gource_vcs::commit::FileAction::Add,
-        colour: glam::Vec3::ONE,
+        colour: <[f32; 3]>::from(glam::Vec3::ONE),
         ..Default::default()
     };
     let fid = gource

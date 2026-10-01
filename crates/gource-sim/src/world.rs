@@ -316,7 +316,7 @@ impl World {
 
         let mut file = File::new(
             &cf.filename,
-            cf.colour,
+            Vec3::from(cf.colour),
             Vec2::ZERO,
             tagid,
             self.tuning.file_diameter,
@@ -400,7 +400,7 @@ impl World {
             FileAction::Delete => ActionKind::Remove,
             FileAction::Add => ActionKind::Create,
             FileAction::Modify | FileAction::Other(_) => ActionKind::Modify {
-                modify_colour: cf.colour,
+                modify_colour: Vec3::from(cf.colour),
             },
         };
 
@@ -1407,7 +1407,7 @@ impl World {
                 .paths
                 .get(live.path)
                 .map(|e| e.colour)
-                .unwrap_or(Vec3::ONE);
+                .unwrap_or(gource_vcs::commit::WHITE);
 
             let cf = CommitFile {
                 filename: fullpath.clone(),
@@ -1440,7 +1440,7 @@ impl World {
 
                 // Touch to make the file visible in the simulation
                 let was_hidden = file.pawn.is_hidden();
-                file.touch(live.last_timestamp, colour);
+                file.touch(live.last_timestamp, Vec3::from(colour));
 
                 // If a file size metric is enabled, set target weight and snap initial size
                 let weight: u64 = match settings.file_size_metric {
@@ -1521,7 +1521,7 @@ mod tests {
                     cfs.push(CommitFile {
                         filename: format!("/a{a}/b{b}/c{}/f{f}.rs", (a + b) % 3),
                         action: FileAction::Add,
-                        colour: Vec3::ONE,
+                        colour: gource_vcs::commit::WHITE,
                         ..Default::default()
                     });
                 }
@@ -1650,7 +1650,7 @@ mod tests {
             let cf = CommitFile {
                 filename: format!("/w/f{i}.rs"),
                 action: FileAction::Add,
-                colour: Vec3::ONE,
+                colour: gource_vcs::commit::WHITE,
                 lines_added: Some(10 * (i + 1)),
                 ..Default::default()
             };
@@ -1688,7 +1688,7 @@ mod tests {
         let cf = CommitFile {
             filename: "/src/main.rs".to_string(),
             action: FileAction::Add,
-            colour: Vec3::ONE,
+            colour: gource_vcs::commit::WHITE,
             ..Default::default()
         };
 
@@ -1743,7 +1743,7 @@ mod tests {
         let cf1 = CommitFile {
             filename: "/repo1/a.rs".to_string(),
             action: FileAction::Add,
-            colour: Vec3::ONE,
+            colour: gource_vcs::commit::WHITE,
             ..Default::default()
         };
         let _ = world.add_file(&cf1, &settings);
@@ -1751,7 +1751,7 @@ mod tests {
         let cf2 = CommitFile {
             filename: "/repo2/b.rs".to_string(),
             action: FileAction::Add,
-            colour: Vec3::ONE,
+            colour: gource_vcs::commit::WHITE,
             ..Default::default()
         };
         let _ = world.add_file(&cf2, &settings);

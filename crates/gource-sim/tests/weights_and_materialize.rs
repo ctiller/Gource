@@ -127,7 +127,7 @@ fn test_dirnode_weighted_radius_and_packing() {
             &gource_vcs::CommitFile {
                 filename: "/test/a.rs".to_string(),
                 action: gource_vcs::FileAction::Add,
-                colour: Vec3::ONE,
+                colour: <[f32; 3]>::from(Vec3::ONE),
                 lines_added: Some(100),
                 ..Default::default()
             },
@@ -140,7 +140,7 @@ fn test_dirnode_weighted_radius_and_packing() {
             &gource_vcs::CommitFile {
                 filename: "/test/b.rs".to_string(),
                 action: gource_vcs::FileAction::Add,
-                colour: Vec3::ONE,
+                colour: <[f32; 3]>::from(Vec3::ONE),
                 lines_added: Some(400),
                 ..Default::default()
             },
@@ -556,7 +556,7 @@ fn test_no_jitter_on_file_edit_and_smooth_swirl() {
             .add_file(
                 &gource_vcs::CommitFile {
                     filename: path,
-                    colour: Vec3::ONE,
+                    colour: <[f32; 3]>::from(Vec3::ONE),
                     action: gource_vcs::FileAction::Add,
                     lines_added: Some(50 + (i * 20) as u32),
                     lines_removed: None,
@@ -612,7 +612,7 @@ fn test_no_jitter_on_file_edit_and_smooth_swirl() {
         .add_file(
             &gource_vcs::CommitFile {
                 filename: "/src/new_file.rs".to_string(),
-                colour: Vec3::ONE,
+                colour: <[f32; 3]>::from(Vec3::ONE),
                 action: gource_vcs::FileAction::Add,
                 lines_added: Some(100),
                 lines_removed: None,
@@ -658,7 +658,7 @@ fn test_laser_touch_applies_push_force() {
     let cf = gource_vcs::CommitFile {
         filename: "/src/laser_target.rs".to_string(),
         action: gource_vcs::FileAction::Modify,
-        colour: Vec3::ONE,
+        colour: <[f32; 3]>::from(Vec3::ONE),
         lines_added: Some(10),
         lines_removed: None,
         is_binary: false,

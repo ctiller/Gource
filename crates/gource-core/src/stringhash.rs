@@ -5,7 +5,9 @@
 //! XOR with the remaining length, wrapping 32-bit integer arithmetic) so that
 //! file colours and directory layouts match the original program.
 
+#[cfg(feature = "glam")]
 use crate::math::normalise3;
+#[cfg(feature = "glam")]
 use glam::{Vec2, Vec3};
 
 /// Default hash seed (`gStringHashSeed` in the C++ code).
@@ -45,6 +47,7 @@ impl StringHasher {
     }
 
     /// `vec2Hash`: a unit direction derived from the hash.
+    #[cfg(feature = "glam")]
     pub fn vec2_hash(&self, s: &str) -> Vec2 {
         let hash = self.hash(s);
         let x = (hash / 7) % 255 - 127;
@@ -55,6 +58,7 @@ impl StringHasher {
     }
 
     /// `vec3Hash`.
+    #[cfg(feature = "glam")]
     pub fn vec3_hash(&self, s: &str) -> Vec3 {
         let hash = self.hash(s);
         let x = (hash / 7) % 255 - 127;
@@ -64,21 +68,51 @@ impl StringHasher {
     }
 
     /// `colourHash`: a normalised RGB colour derived from the hash.
+    #[cfg(feature = "glam")]
     pub fn colour_hash(&self, s: &str) -> Vec3 {
+        Vec3::from(self.colour_rgb(s))
+    }
+
+    /// `colourHash` as plain `[r, g, b]` (no glam): the same f32 arithmetic
+    /// as `normalise3` (`sqrt(r*r + g*g + b*b)`, then divide).
+    pub fn colour_rgb(&self, s: &str) -> [f32; 3] {
         let mut hash = self.hash(s);
         if hash == 0 {
             hash += 1;
         }
-        let r = (hash / 7) % 255;
-        let g = (hash / 3) % 255;
-        let b = hash % 255;
-        normalise3(Vec3::new(r as f32, g as f32, b as f32))
+        let v = [
+            ((hash / 7) % 255) as f32,
+            ((hash / 3) % 255) as f32,
+            (hash % 255) as f32,
+        ];
+        let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+        if l > 0.0 {
+            [v[0] / l, v[1] / l, v[2] / l]
+        } else {
+            v
+        }
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "glam"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn colour_rgb_matches_colour_hash_bits() {
+        let h = StringHasher::default();
+        for s in ["", "rs", "cpp", "Makefile", "a", "zzzzzz"] {
+            let a = h.colour_rgb(s);
+            let b = h.colour_hash(s);
+            let expect = normalise3(Vec3::new(
+                ((h.hash(s).max(1) / 7) % 255) as f32,
+                ((h.hash(s).max(1) / 3) % 255) as f32,
+                (h.hash(s).max(1) % 255) as f32,
+            ));
+            assert_eq!(a.map(f32::to_bits), b.to_array().map(f32::to_bits));
+            assert_eq!(b, expect, "{s}");
+        }
+    }
 
     #[test]
     fn empty_string_hashes_to_zero() {

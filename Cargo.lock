@@ -3012,10 +3012,17 @@ name = "gource-history"
 version = "0.57.0"
 dependencies = [
  "chrono",
- "glam",
  "gource-core",
+ "gource-model",
  "tempfile",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "gource-model"
+version = "0.57.0"
+dependencies = [
+ "gource-core",
 ]
 
 [[package]]
@@ -3060,8 +3067,8 @@ dependencies = [
  "chrono",
  "fancy-regex",
  "gix",
- "glam",
  "gource-core",
+ "gource-model",
  "log",
  "regex",
  "roxmltree",

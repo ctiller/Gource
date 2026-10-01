@@ -12,7 +12,7 @@ default = ["gix"]
 gix = ["gource-vcs/gix"]
 
 [dependencies]
-gource-core = { workspace = true }
+gource-core = { workspace = true, features = ["glam"] }
 gource-draw = { workspace = true }
 gource-settings = { workspace = true }
 gource-vcs = { workspace = true }

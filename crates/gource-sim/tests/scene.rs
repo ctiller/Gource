@@ -254,7 +254,7 @@ fn test_world_drawing_and_frustum() {
     let cf = CommitFile {
         filename: "/sub/file.rs".to_string(),
         action: FileAction::Add,
-        colour: Vec3::new(0.8, 0.2, 0.1),
+        colour: <[f32; 3]>::from(Vec3::new(0.8, 0.2, 0.1)),
         ..Default::default()
     };
     let fid = world.add_file(&cf, &settings).unwrap();
@@ -338,13 +338,13 @@ fn test_world_edge_cases() {
     let cf1 = CommitFile {
         filename: "/a.txt".to_string(),
         action: FileAction::Add,
-        colour: Vec3::ONE,
+        colour: <[f32; 3]>::from(Vec3::ONE),
         ..Default::default()
     };
     let cf2 = CommitFile {
         filename: "/b.txt".to_string(),
         action: FileAction::Add,
-        colour: Vec3::ONE,
+        colour: <[f32; 3]>::from(Vec3::ONE),
         ..Default::default()
     };
     assert!(world.add_file(&cf1, &settings).is_some());
@@ -354,14 +354,14 @@ fn test_world_edge_cases() {
     let _cf_dir = CommitFile {
         filename: "/a.txt".to_string(),
         action: FileAction::Add,
-        colour: Vec3::ONE,
+        colour: <[f32; 3]>::from(Vec3::ONE),
         ..Default::default()
     };
     // Already exists as file, but is_dir checks if filename + "/" is dir
     let cf_sub = CommitFile {
         filename: "/a.txt/nested.txt".to_string(),
         action: FileAction::Add,
-        colour: Vec3::ONE,
+        colour: <[f32; 3]>::from(Vec3::ONE),
         ..Default::default()
     };
     settings.max_files = 10;
@@ -526,19 +526,19 @@ fn test_world_comprehensive_coverage() {
     let cf1 = CommitFile {
         filename: "/src/core/engine.rs".to_string(),
         action: FileAction::Add,
-        colour: Vec3::new(1.0, 0.0, 0.0),
+        colour: <[f32; 3]>::from(Vec3::new(1.0, 0.0, 0.0)),
         ..Default::default()
     };
     let cf2 = CommitFile {
         filename: "/src/core/render.rs".to_string(),
         action: FileAction::Add,
-        colour: Vec3::new(0.0, 1.0, 0.0),
+        colour: <[f32; 3]>::from(Vec3::new(0.0, 1.0, 0.0)),
         ..Default::default()
     };
     let cf3 = CommitFile {
         filename: "/src/net/socket.rs".to_string(),
         action: FileAction::Add,
-        colour: Vec3::new(0.0, 0.0, 1.0),
+        colour: <[f32; 3]>::from(Vec3::new(0.0, 0.0, 1.0)),
         ..Default::default()
     };
     let fid1 = world.add_file(&cf1, &settings).unwrap();
@@ -554,13 +554,13 @@ fn test_world_comprehensive_coverage() {
             CommitFile {
                 filename: cf2.filename.clone(),
                 action: FileAction::Modify,
-                colour: Vec3::new(0.5, 0.5, 0.0),
+                colour: <[f32; 3]>::from(Vec3::new(0.5, 0.5, 0.0)),
                 ..Default::default()
             },
             CommitFile {
                 filename: cf3.filename.clone(),
                 action: FileAction::Delete,
-                colour: Vec3::new(1.0, 0.0, 0.0),
+                colour: <[f32; 3]>::from(Vec3::new(1.0, 0.0, 0.0)),
                 ..Default::default()
             },
         ],
@@ -640,19 +640,19 @@ fn test_world_deep_tree_forces_and_reparenting() {
     let cf_a = CommitFile {
         filename: "/a/b/c/d/file1.txt".to_string(),
         action: FileAction::Add,
-        colour: Vec3::new(1.0, 0.0, 0.0),
+        colour: <[f32; 3]>::from(Vec3::new(1.0, 0.0, 0.0)),
         ..Default::default()
     };
     let cf_b = CommitFile {
         filename: "/a/b/c/e/file2.txt".to_string(),
         action: FileAction::Add,
-        colour: Vec3::new(0.0, 1.0, 0.0),
+        colour: <[f32; 3]>::from(Vec3::new(0.0, 1.0, 0.0)),
         ..Default::default()
     };
     let cf_c = CommitFile {
         filename: "/a/b/x/y/file3.txt".to_string(),
         action: FileAction::Add,
-        colour: Vec3::new(0.0, 0.0, 1.0),
+        colour: <[f32; 3]>::from(Vec3::new(0.0, 0.0, 1.0)),
         ..Default::default()
     };
     let f1 = world.add_file(&cf_a, &settings).unwrap();
@@ -715,7 +715,7 @@ fn test_world_common_path_refactoring_and_root_files() {
     let cf_root = CommitFile {
         filename: "/README.md".to_string(),
         action: FileAction::Add,
-        colour: Vec3::ONE,
+        colour: <[f32; 3]>::from(Vec3::ONE),
         ..Default::default()
     };
     let rf = world.add_file(&cf_root, &settings).unwrap();
@@ -725,13 +725,13 @@ fn test_world_common_path_refactoring_and_root_files() {
     let cf1 = CommitFile {
         filename: "/shared/sub1/a.txt".to_string(),
         action: FileAction::Add,
-        colour: Vec3::ONE,
+        colour: <[f32; 3]>::from(Vec3::ONE),
         ..Default::default()
     };
     let cf2 = CommitFile {
         filename: "/shared/sub2/b.txt".to_string(),
         action: FileAction::Add,
-        colour: Vec3::ONE,
+        colour: <[f32; 3]>::from(Vec3::ONE),
         ..Default::default()
     };
     let f1 = world.add_file(&cf1, &settings).unwrap();

@@ -18,7 +18,7 @@ fn test_shadow_file_creation_and_solidification() {
     let cf_shadow = CommitFile {
         filename: "/src/feature.rs".to_string(),
         action: FileAction::Add,
-        colour: Vec3::new(0.2, 0.8, 0.3),
+        colour: <[f32; 3]>::from(Vec3::new(0.2, 0.8, 0.3)),
         is_shadow: true,
         ..Default::default()
     };
@@ -73,7 +73,7 @@ fn test_shadow_file_revert_dissolves_file() {
     let cf_shadow = CommitFile {
         filename: "/src/abandoned.rs".to_string(),
         action: FileAction::Add,
-        colour: Vec3::ONE,
+        colour: <[f32; 3]>::from(Vec3::ONE),
         is_shadow: true,
         ..Default::default()
     };
@@ -106,7 +106,7 @@ fn test_draw_scene_with_shadow_file_and_beam() {
     let cf = CommitFile {
         filename: "/src/mod.rs".to_string(),
         action: FileAction::Add,
-        colour: Vec3::new(0.5, 0.8, 0.2),
+        colour: <[f32; 3]>::from(Vec3::new(0.5, 0.8, 0.2)),
         is_shadow: true,
         ..Default::default()
     };

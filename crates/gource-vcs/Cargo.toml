@@ -13,7 +13,7 @@ gix = ["dep:gix"]
 
 [dependencies]
 gource-core = { workspace = true }
-glam = { workspace = true }
+gource-model = { workspace = true }
 regex = { workspace = true }
 fancy-regex = { workspace = true }
 roxmltree = { workspace = true }

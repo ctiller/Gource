@@ -1,5 +1,6 @@
 [package]
-name = "gource-history"
+name = "gource-model"
+description = "Domain types shared by Gource producers, the data store, the scene and the wire protocol"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,9 +8,3 @@ rust-version.workspace = true
 
 [dependencies]
 gource-core = { workspace = true }
-gource-model = { workspace = true }
-chrono.workspace = true
-thiserror.workspace = true
-
-[dev-dependencies]
-tempfile.workspace = true

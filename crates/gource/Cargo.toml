@@ -15,7 +15,7 @@ wayland = ["bevy/wayland"]
 # Default features are disabled: audio (alsa) and gamepads (udev) are not needed
 # and pull in system libraries that are not always available.
 bevy = { workspace = true }
-gource-core = { workspace = true }
+gource-core = { workspace = true, features = ["glam"] }
 gource-draw = { workspace = true }
 gource-history = { path = "../gource-history" }
 gource-settings = { workspace = true }
