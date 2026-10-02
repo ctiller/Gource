@@ -217,7 +217,7 @@ pub struct BatchPool {
     slots: Vec<Slot>,
     bloom: Handle<BloomMaterial>,
     /// Clear colour last applied to the camera.
-    clear_colour: Option<Vec4>,
+    clear_colour: Option<gource_core::Vec4>,
 }
 
 impl BatchPool {
@@ -577,12 +577,20 @@ mod tests {
         let mut batch = Batch::new(Material::Alpha, TextureId::WHITE);
         batch.vertices = vec![
             Vertex::new(
-                Vec2::new(1.0, 2.0),
-                Vec2::new(0.0, 1.0),
-                Vec4::new(1.0, 0.5, 0.25, 1.0),
+                gource_core::Vec2::new(1.0, 2.0),
+                gource_core::Vec2::new(0.0, 1.0),
+                gource_core::Vec4::new(1.0, 0.5, 0.25, 1.0),
             ),
-            Vertex::new(Vec2::new(3.0, 4.0), Vec2::new(1.0, 0.0), Vec4::ONE),
-            Vertex::new(Vec2::new(5.0, 6.0), Vec2::ONE, Vec4::ONE),
+            Vertex::new(
+                gource_core::Vec2::new(3.0, 4.0),
+                gource_core::Vec2::new(1.0, 0.0),
+                gource_core::Vec4::ONE,
+            ),
+            Vertex::new(
+                gource_core::Vec2::new(5.0, 6.0),
+                gource_core::Vec2::ONE,
+                gource_core::Vec4::ONE,
+            ),
         ];
         batch.indices = vec![0, 1, 2];
         let mut mesh = empty_mesh();

@@ -1,7 +1,7 @@
 //! Shared pawn state and behaviour (port of pawn.cpp).
 
-use glam::{Vec2, Vec3};
 use gource_core::Bounds2D;
+use gource_core::{Vec2, Vec3};
 
 /// Default shadow strength multiplier (`gGourceShadowStrength`).
 pub const DEFAULT_SHADOW_STRENGTH: f32 = 0.5;

@@ -9,11 +9,11 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use glam::UVec2;
 use gource_app::app::{AppOptions, GourceApp};
 use gource_app::input::{InputEvent, Key, Modifiers};
 use gource_app::platform::Viewport;
 use gource_app::scrubber::SeekOutcome;
+use gource_core::UVec2;
 use gource_draw::{DrawList, Gfx};
 use gource_history::PlaybackDirection;
 use gource_settings::{
@@ -311,10 +311,10 @@ fn test_interactive_widget_hit_testing_and_toggles() {
     assert!(gource.tuning_panel.is_visible());
 
     // Mouse move over tuning panel
-    let panel_pos = glam::Vec2::new(50.0, 50.0);
+    let panel_pos = gource_core::Vec2::new(50.0, 50.0);
     gource.input(&InputEvent::MouseMove {
         pos: panel_pos,
-        delta: glam::Vec2::ZERO,
+        delta: gource_core::Vec2::ZERO,
     });
 
     // Mouse click inside tuning panel
@@ -333,7 +333,7 @@ fn test_interactive_widget_hit_testing_and_toggles() {
     assert!(gource.timeline_bar.is_visible());
 
     let (t_min, t_max, t_y, _) = gource.timeline_bar.track_rect();
-    let track_mid = glam::Vec2::new((t_min + t_max) * 0.5, t_y + 5.0);
+    let track_mid = gource_core::Vec2::new((t_min + t_max) * 0.5, t_y + 5.0);
 
     // Mouse click on timeline track to seek
     gource.input(&InputEvent::MouseButton {
@@ -343,7 +343,7 @@ fn test_interactive_widget_hit_testing_and_toggles() {
     });
 
     // Direction button click
-    let dir_btn_pos = glam::Vec2::new(15.0, t_y + 5.0);
+    let dir_btn_pos = gource_core::Vec2::new(15.0, t_y + 5.0);
     gource.input(&InputEvent::MouseButton {
         button: gource_app::input::MouseButton::Left,
         pressed: true,
@@ -642,7 +642,7 @@ fn test_gource_seek_and_reverse_edge_cases() {
 
 #[test]
 fn test_persistent_scrubbing_and_caching_and_drag() {
-    use glam::Vec2;
+    use gource_core::Vec2;
     use gource_widgets::timeline_bar::TimelineHit;
 
     let mut app = load_test_app(&[]);
@@ -791,7 +791,7 @@ fn test_interactive_search_and_caret_positioning() {
     let cf = gource_vcs::commit::CommitFile {
         filename: "/src/search_test.rs".to_string(),
         action: gource_vcs::commit::FileAction::Add,
-        colour: <[f32; 3]>::from(glam::Vec3::ONE),
+        colour: <[f32; 3]>::from(gource_core::Vec3::ONE),
         ..Default::default()
     };
     let fid = gource

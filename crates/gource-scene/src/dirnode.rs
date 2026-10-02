@@ -5,8 +5,8 @@ use crate::dirs::Radii;
 use crate::file::{DirId, File, FileId};
 use crate::spline::SplineEdge;
 use crate::{Fx, IVec2};
-use glam::{Vec2, Vec3, Vec4};
 use gource_core::Bounds2D;
+use gource_core::{Vec2, Vec3, Vec4};
 use slotmap::SlotMap;
 
 /// A directory's simulation state (fixed point; see `gource-scene`).

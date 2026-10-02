@@ -1,7 +1,7 @@
 //! Drawing extension trait for World.
 
-use glam::{Vec2, Vec3, Vec4};
 use gource_core::Bounds2D;
+use gource_core::{Vec2, Vec3, Vec4};
 use gource_draw::font::{FontId, TextStyle};
 use gource_draw::list::{DrawList, Material, TextureId, Vertex};
 use gource_draw::{Gfx, Projection};

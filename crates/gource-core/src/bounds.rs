@@ -1,6 +1,6 @@
 //! Axis aligned 2D bounding boxes (port of `core/bounds.h`).
 
-use glam::Vec2;
+use crate::vec::Vec2;
 
 /// An axis aligned bounding box that grows as points are added.
 ///

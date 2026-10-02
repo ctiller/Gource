@@ -2,8 +2,8 @@
 
 use crate::pawn::Pawn;
 use crate::{Fx, IVec2, ONE};
-use glam::{Vec2, Vec3};
 use gource_core::Bounds2D;
+use gource_core::{Vec2, Vec3};
 use slotmap::new_key_type;
 
 new_key_type! {
@@ -364,16 +364,16 @@ impl File {
     }
 
     /// Compute active pulse ring size and color (if currently pulsing).
-    pub fn pulse_visual(&self) -> Option<(f32, glam::Vec4)> {
+    pub fn pulse_visual(&self) -> Option<(f32, gource_core::Vec4)> {
         if self.pulse_timer > 0.0 && self.pulse_scale > 0.0 {
             let progress = 1.0 - (self.pulse_timer / self.pulse_max_time).clamp(0.0, 1.0);
             let ring_size =
                 self.pawn.size * (1.0 + progress * (0.6 + 0.3 * self.pulse_scale.min(4.0)));
             let alpha = (1.0 - progress) * 0.65 * self.alpha();
             let col = if self.pulse_delta >= 0 {
-                glam::Vec4::new(0.25, 0.95, 0.45, alpha)
+                gource_core::Vec4::new(0.25, 0.95, 0.45, alpha)
             } else {
-                glam::Vec4::new(0.95, 0.3, 0.3, alpha)
+                gource_core::Vec4::new(0.95, 0.3, 0.3, alpha)
             };
             Some((ring_size, col))
         } else {

@@ -16,7 +16,6 @@ use bevy::{
         WindowResolution,
     },
 };
-use glam::{UVec2, Vec2, Vec4};
 use gource::{
     app::{ExitState, install_frame_loop, run_frame},
     capture::Recorder,
@@ -28,6 +27,7 @@ use gource::{
 use gource_app::{
     AppOptions, GourceApp, InputEvent, Key, Modifiers, MouseButton, PlatformRequest, Viewport,
 };
+use gource_core::{UVec2, Vec2, Vec4};
 use gource_draw::{DrawList, Gfx};
 use gource_vcs::VcsError;
 
@@ -309,34 +309,34 @@ fn test_input_convert_event_all_variants() {
     );
 
     // 2. CursorMoved with delta: None (should use pos - state.cursor)
-    state.cursor = Vec2::new(10.0, 10.0);
+    state.cursor = bevy::math::Vec2::new(10.0, 10.0);
     let event = WindowEvent::CursorMoved(CursorMoved {
         window: Entity::PLACEHOLDER,
-        position: Vec2::new(25.0, 35.0),
+        position: bevy::math::Vec2::new(25.0, 35.0),
         delta: None,
     });
     let converted = convert_event(&mut state, &event, 2.0, false);
     assert_eq!(
         converted,
         Some(InputEvent::MouseMove {
-            pos: Vec2::new(50.0, 70.0),
-            delta: Vec2::new(40.0, 60.0),
+            pos: gource_core::Vec2::new(50.0, 70.0),
+            delta: gource_core::Vec2::new(40.0, 60.0),
         })
     );
-    assert_eq!(state.cursor, Vec2::new(50.0, 70.0));
+    assert_eq!(state.cursor, bevy::math::Vec2::new(50.0, 70.0));
 
     // 3. CursorMoved while grabbed (should return None)
     let event = WindowEvent::CursorMoved(CursorMoved {
         window: Entity::PLACEHOLDER,
-        position: Vec2::new(60.0, 80.0),
-        delta: Some(Vec2::new(5.0, 5.0)),
+        position: bevy::math::Vec2::new(60.0, 80.0),
+        delta: Some(bevy::math::Vec2::new(5.0, 5.0)),
     });
     let converted = convert_event(&mut state, &event, 1.0, true);
     assert_eq!(converted, None);
 
     // 4. MouseMotion while NOT grabbed (should return None)
     let event = WindowEvent::MouseMotion(MouseMotion {
-        delta: Vec2::new(1.0, 2.0),
+        delta: bevy::math::Vec2::new(1.0, 2.0),
     });
     let converted = convert_event(&mut state, &event, 1.0, false);
     assert_eq!(converted, None);
@@ -346,8 +346,8 @@ fn test_input_convert_event_all_variants() {
     assert_eq!(
         converted,
         Some(InputEvent::MouseMove {
-            pos: state.cursor,
-            delta: Vec2::new(1.0, 2.0),
+            pos: gource_core::Vec2::new(state.cursor.x, state.cursor.y),
+            delta: gource_core::Vec2::new(1.0, 2.0),
         })
     );
 

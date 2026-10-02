@@ -1,7 +1,7 @@
 //! SplineEdge: curved tree edges (port of spline.cpp).
 
-use glam::{Vec2, Vec4};
 use gource_core::math::CPP_PI;
+use gource_core::{Vec2, Vec4};
 
 /// A curved edge connecting directory nodes.
 /// Port of `SplineEdge` in `spline.h` / `spline.cpp`.

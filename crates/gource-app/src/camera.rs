@@ -26,8 +26,8 @@
 //! | `camera.focus()` | [`ZoomCamera::focus`] (returns [`CameraFocusData`]) |
 //! | (display unproject / project) | [`ZoomCamera::projection`] (CPU projection) |
 
-use glam::{Vec2, Vec3};
 use gource_core::Bounds2D;
+use gource_core::{Vec2, Vec3};
 use gource_draw::Projection;
 use gource_settings::GourceSettings;
 

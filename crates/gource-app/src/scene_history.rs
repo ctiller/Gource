@@ -1,6 +1,6 @@
 //! History materialization extension trait for World.
 
-use glam::{Vec2, Vec3};
+use gource_core::{Vec2, Vec3};
 use gource_history::{History, TreeSnapshot};
 use gource_model::commit::{CommitFile, FileAction};
 use gource_scene::dirnode::DirNode;

@@ -18,7 +18,6 @@ use bevy::{
         WindowEvent, WindowFocused, WindowMode, WindowResolution,
     },
 };
-use glam::{UVec2, Vec2, Vec4};
 use gource::{
     app::{ExitState, install_frame_loop},
     capture::Recorder,
@@ -26,6 +25,7 @@ use gource::{
     sim::Simulation,
 };
 use gource_app::{InputEvent, Key, MouseButton, PlatformRequest, Viewport};
+use gource_core::{UVec2, Vec2, Vec4};
 use gource_draw::{DrawList, Gfx, PpmExporter};
 
 #[derive(Default, Clone)]
@@ -139,8 +139,8 @@ fn test_input_forwarding_ordered() {
     app.world_mut()
         .write_message(WindowEvent::CursorMoved(CursorMoved {
             window: Entity::PLACEHOLDER,
-            position: Vec2::new(10.0, 20.0),
-            delta: Some(Vec2::new(1.0, 2.0)),
+            position: bevy::math::Vec2::new(10.0, 20.0),
+            delta: Some(bevy::math::Vec2::new(1.0, 2.0)),
         }));
 
     // 3. MouseButtonInput
@@ -243,14 +243,14 @@ fn test_grabbed_cursor_motion_only_from_mouse_motion() {
     app.world_mut()
         .write_message(WindowEvent::CursorMoved(CursorMoved {
             window: Entity::PLACEHOLDER,
-            position: Vec2::new(50.0, 50.0),
-            delta: Some(Vec2::new(5.0, 5.0)),
+            position: bevy::math::Vec2::new(50.0, 50.0),
+            delta: Some(bevy::math::Vec2::new(5.0, 5.0)),
         }));
 
     // MouseMotion should be processed
     app.world_mut()
         .write_message(WindowEvent::MouseMotion(MouseMotion {
-            delta: Vec2::new(3.0, 4.0),
+            delta: bevy::math::Vec2::new(3.0, 4.0),
         }));
 
     app.update();
@@ -358,7 +358,7 @@ fn test_handle_requests_execution() {
     // WarpCursor executed
     assert_eq!(
         window.physical_cursor_position(),
-        Some(Vec2::new(100.0, 200.0))
+        Some(bevy::math::Vec2::new(100.0, 200.0))
     );
 
     // Screenshot entity was spawned

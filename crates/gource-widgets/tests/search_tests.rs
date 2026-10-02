@@ -1,4 +1,4 @@
-use glam::UVec2;
+use gource_core::UVec2;
 use gource_draw::{FontId, Gfx};
 use gource_widgets::search::{SearchItemKind, SearchWidget};
 

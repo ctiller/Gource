@@ -4,7 +4,7 @@
 //! Git-of-Theseus cohort survival area chart, and editor leaderboards) directly
 //! into [`DrawList`] using [`Gfx`].
 
-use glam::{Vec2, Vec3, Vec4};
+use gource_core::{Vec2, Vec3, Vec4};
 use gource_draw::font::TextStyle;
 use gource_draw::{DrawList, FontId, Gfx};
 
@@ -922,7 +922,7 @@ impl DashboardStack {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glam::UVec2;
+    use gource_core::UVec2;
 
     #[test]
     fn test_format_compact_u64() {

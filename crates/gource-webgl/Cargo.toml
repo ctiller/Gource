@@ -11,8 +11,8 @@ default = []
 demo = []
 
 [dependencies]
+gource-core = { workspace = true }
 gource-draw = { workspace = true }
-glam = { workspace = true }
 log = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

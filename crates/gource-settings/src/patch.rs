@@ -7,7 +7,7 @@
 //! - Structural: Log filter changes (requires scene rematerialization at playhead).
 
 use crate::gource::{CameraMode, DashboardPeriod, FileColourMode, FileSizeMetric, GourceSettings};
-use glam::{Vec3, Vec4};
+use gource_core::{Vec3, Vec4};
 
 /// Simulation impact classification of a setting change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

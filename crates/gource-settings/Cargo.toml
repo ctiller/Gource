@@ -7,8 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-gource-core = { workspace = true, features = ["glam"] }
-glam = { workspace = true }
+gource-core = { workspace = true }
 fancy-regex = { workspace = true }
 log = { workspace = true }
 thiserror = { workspace = true }

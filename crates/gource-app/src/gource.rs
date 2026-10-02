@@ -4,10 +4,10 @@
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
-use glam::{Vec2, Vec4};
 use gource_core::StringHasher;
 use gource_core::bounds::Bounds2D;
 use gource_core::datetime;
+use gource_core::{Vec2, Vec4};
 use gource_draw::font::{FontId, TextStyle};
 use gource_draw::list::DrawList;
 use gource_draw::{Gfx, Projection, TextureId};
@@ -1344,7 +1344,7 @@ impl Gource {
                             .add_panel(DashboardPanel::StackedDiffBars(p));
                     }
                     SettingsDashboardPanel::Theseus => {
-                        let cohort_colors: Vec<glam::Vec3> =
+                        let cohort_colors: Vec<gource_core::Vec3> =
                             (0..series_data.theseus_cohorts.cohort_labels.len())
                                 .map(DashboardStack::cohort_palette)
                                 .collect();
@@ -1369,7 +1369,9 @@ impl Gource {
                             &series_data
                                 .top_editors
                                 .iter()
-                                .map(|(n, c, a, b)| (n.clone(), glam::Vec3::from(*c), *a, *b))
+                                .map(|(n, c, a, b)| {
+                                    (n.clone(), gource_core::Vec3::from(*c), *a, *b)
+                                })
                                 .collect::<Vec<_>>(),
                         );
                         self.dashboards
@@ -1381,7 +1383,7 @@ impl Gource {
                             format_compact_u64(series_data.commits_in_window as u64),
                         )
                         .with_values(&series_data.commits_per_period)
-                        .with_line_colour(glam::Vec3::new(0.95, 0.65, 0.2));
+                        .with_line_colour(gource_core::Vec3::new(0.95, 0.65, 0.2));
                         self.dashboards.add_panel(DashboardPanel::Sparkline(p));
                     }
                     SettingsDashboardPanel::Churn => {
@@ -1390,7 +1392,7 @@ impl Gource {
                             format_compact_u64(series_data.total_files as u64),
                         )
                         .with_values(&series_data.files_sparkline)
-                        .with_line_colour(glam::Vec3::new(0.85, 0.4, 0.9));
+                        .with_line_colour(gource_core::Vec3::new(0.85, 0.4, 0.9));
                         self.dashboards.add_panel(DashboardPanel::Sparkline(p));
                     }
                 }
@@ -2863,7 +2865,10 @@ impl Gource {
             self.settings.background_colour.z,
             1.0,
         );
-        list.reset(glam::UVec2::new(viewport.width, viewport.height), bg_col);
+        list.reset(
+            gource_core::UVec2::new(viewport.width, viewport.height),
+            bg_col,
+        );
         list.solid_rect(Vec2::ZERO, viewport.size(), bg_col);
 
         if let Some(bg_tex) = self.textures.background {

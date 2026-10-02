@@ -1,8 +1,8 @@
 //! Tests for shadow files and solidification in Gource simulation.
 
-use glam::{Vec2, Vec3};
 use gource_app::WorldDraw;
 use gource_app::world::World;
+use gource_core::{Vec2, Vec3};
 use gource_draw::DrawList;
 use gource_settings::GourceSettings;
 use gource_vcs::commit::{Commit, CommitFile, FileAction};
@@ -123,7 +123,7 @@ fn test_draw_scene_with_shadow_file_and_beam() {
     };
     world.add_file_action(&commit, &cf, fid, 0.0, &settings);
 
-    let mut list = DrawList::new(glam::UVec2::new(1280, 720));
+    let mut list = DrawList::new(gource_core::UVec2::new(1280, 720));
     let proj = gource_draw::Projection::new(Vec3::new(0.0, 0.0, -500.0), Vec2::new(1280.0, 720.0));
 
     let textures = gource_app::world::SceneTextures {

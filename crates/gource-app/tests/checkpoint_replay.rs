@@ -19,7 +19,7 @@ fn repo_root() -> PathBuf {
 
 fn wait_for_app_load(app: &mut GourceApp) {
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     // First frame spawns log loader
     app.frame(1.0 / 60.0, viewport, &mut list);
@@ -170,7 +170,7 @@ fn test_change_colours_determinism() {
     // Advance a few commits to have files and users
     let viewport = Viewport::new(800, 600);
     let mut gfx = Gfx::new();
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     for _ in 0..10 {
         let _ = gource.update(1.0 / 60.0, viewport, &mut gfx, &mut list);
@@ -224,7 +224,7 @@ fn test_snapshot_restore_and_replay_equivalence_120_frames() {
 
     // Step frames 0..120
     for frame in 0..120 {
-        let mut list = DrawList::new(glam::UVec2::new(800, 600));
+        let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
         gource
             .update(dt, viewport, &mut gfx, &mut list)
             .expect("update succeeds");
@@ -262,7 +262,7 @@ fn test_snapshot_restore_and_replay_equivalence_120_frames() {
     let mut replayed_draw_lists = Vec::new();
 
     for frame in 30..120 {
-        let mut list = DrawList::new(glam::UVec2::new(800, 600));
+        let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
         gource
             .update(dt, viewport, &mut gfx, &mut list)
             .expect("update succeeds");
@@ -297,7 +297,7 @@ fn test_snapshot_restore_and_replay_equivalence_120_frames() {
 
     let mut replayed_from_60 = Vec::new();
     for _ in 60..120 {
-        let mut list = DrawList::new(glam::UVec2::new(800, 600));
+        let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
         gource
             .update(dt, viewport, &mut gfx, &mut list)
             .expect("update succeeds");

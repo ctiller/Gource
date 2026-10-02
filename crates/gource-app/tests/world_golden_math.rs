@@ -1,9 +1,9 @@
 //! Golden values are printed from the C++ reference at full precision.
 #![allow(clippy::excessive_precision)]
 
-use glam::{Vec2, Vec4};
 use gource_app::pawn::Pawn;
 use gource_app::spline::SplineEdge;
+use gource_core::{Vec2, Vec4};
 
 #[test]
 fn test_golden_world_math_spline() {

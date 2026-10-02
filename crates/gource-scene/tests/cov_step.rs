@@ -45,7 +45,7 @@ fn test_kernel_fixed_and_files_edge_cases() {
     // fx_to_world
     let iv = IVec2::new(5 * ONE, -3 * ONE);
     let v = fx_to_world(iv);
-    assert_eq!(v, glam::Vec2::new(5.0, -3.0));
+    assert_eq!(v, gource_core::Vec2::new(5.0, -3.0));
 
     // pack with 0, 1, 2, 3 circles
     let p0 = files::pack(&[]);

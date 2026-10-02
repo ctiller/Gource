@@ -9,12 +9,12 @@
 
 use std::path::PathBuf;
 
-use glam::{UVec2, Vec2, Vec4};
 use gource::{
     app::{self, AppConfig},
     sim::Simulation,
 };
 use gource_app::{InputEvent, PlatformRequest, Viewport};
+use gource_core::{UVec2, Vec2, Vec4};
 use gource_draw::{
     DrawList, FontId, Gfx, TextStyle, TextureId, TextureOptions, resources::FILE_PNG,
 };

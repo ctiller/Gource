@@ -1,4 +1,4 @@
-use glam::{Vec2, Vec4};
+use gource_core::{Vec2, Vec4};
 use gource_draw::font::{FontStore, TextStyle};
 use gource_draw::list::{DrawList, Material};
 use gource_draw::texture::TextureStore;
@@ -155,7 +155,7 @@ fn test_font_metrics_parity_with_freetype() {
             // Compare bitmap bounding box by drawing into a list and inspecting quad dims
             if ft_glyph.w > 0 && ft_glyph.rows > 0 {
                 total_visual_glyphs += 1;
-                let mut list = DrawList::new(glam::UVec2::new(100, 100));
+                let mut list = DrawList::new(gource_core::UVec2::new(100, 100));
                 store.draw(
                     &mut textures,
                     &mut list,
@@ -217,7 +217,7 @@ fn test_text_rendering_layout_and_quads() {
     let face = fonts.default_face();
     let font = fonts.font(face, 16);
 
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
     let text = "Hello World!";
     let style = TextStyle::default().with_colour(Vec4::new(1.0, 0.0, 0.0, 1.0));
 
@@ -246,7 +246,7 @@ fn test_shadow_and_alignment() {
     let font = fonts.font(face, 16);
 
     // Test align_right, align_top, round, and shadow
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
     let style = TextStyle::default()
         .with_colour(Vec4::new(1.0, 1.0, 1.0, 1.0))
         .with_align_right(true)
@@ -286,7 +286,7 @@ fn test_tabs_and_empty_string() {
     let face = fonts.default_face();
     let font = fonts.font(face, 16);
 
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
     // Empty string should produce nothing
     fonts.draw(
         &mut textures,
@@ -326,7 +326,7 @@ fn test_atlas_overflow_multiple_pages() {
     let face = fonts.default_face();
     let font = fonts.font(face, 48); // Large glyph size
 
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     // Render many distinct unicode characters to force atlas page overflow
     let mut large_text = String::new();
@@ -412,7 +412,7 @@ fn test_font_store_files_and_errors() {
 
     // Missing glyph behaves without crashing
     let mut textures = TextureStore::new();
-    let mut list = DrawList::new(glam::UVec2::new(100, 100));
+    let mut list = DrawList::new(gource_core::UVec2::new(100, 100));
     // Character from private use area or undefined
     store.draw(
         &mut textures,

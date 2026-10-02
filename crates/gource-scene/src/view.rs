@@ -11,7 +11,7 @@
 
 use crate::kernel::fixed::{FRAC, UNIT};
 use crate::{Fx, IVec2, ONE};
-use glam::Vec2;
+use gource_core::Vec2;
 
 /// Q8 scale as a float.
 const SCALE: f32 = ONE as f32;

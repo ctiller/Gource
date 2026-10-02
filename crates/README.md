@@ -55,7 +55,7 @@ Several people/agents work on different crates at the same time:
 
 * Only edit files inside the crate you own. Never edit another crate, the
   workspace `Cargo.toml` or `Cargo.lock`. Do not add dependencies; if one is
-  truly missing, ask. Available workspace dependencies: `glam`, `log`,
+  truly missing, ask. Available workspace dependencies: `log`,
   `thiserror`, `anyhow`, `regex`, `fancy-regex`, `chrono`, `roxmltree`,
   `tempfile`, `image`, `ab_glyph`, `slotmap`, `fastrand` (only those listed in
   your crate's `Cargo.toml` are usable without asking).

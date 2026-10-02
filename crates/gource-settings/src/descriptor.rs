@@ -95,7 +95,7 @@ pub enum Field<T> {
     /// Standard String property.
     Str(fn(&mut T) -> &mut String),
     /// Standard Glam Vec3 colour property.
-    Colour(fn(&mut T) -> &mut glam::Vec3),
+    Colour(fn(&mut T) -> &mut gource_core::Vec3),
     /// Multi-value entry handler.
     MultiValue(fn(&mut T, &ConfEntry, &ConfFile) -> Result<(), SettingsError>),
     /// Custom validation / assignment function for bespoke options.

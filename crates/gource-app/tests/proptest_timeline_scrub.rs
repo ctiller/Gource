@@ -8,10 +8,10 @@
 
 use std::time::Duration;
 
-use glam::{UVec2, Vec2};
 use gource_app::app::{AppOptions, GourceApp};
 use gource_app::input::{InputEvent, Key, Modifiers, MouseButton};
 use gource_app::platform::Viewport;
+use gource_core::{UVec2, Vec2};
 use gource_draw::{DrawList, Gfx};
 use gource_settings::{CliAction, parse_command_line};
 use proptest::prelude::*;

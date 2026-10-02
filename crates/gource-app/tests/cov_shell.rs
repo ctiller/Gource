@@ -45,7 +45,7 @@ fn test_shell_multi_repo_default_stop_at_time_and_exhaustion() {
     )
     .expect("create app");
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     // First frame initializes gource
     app.frame(0.016, viewport, &mut list);
@@ -99,7 +99,7 @@ fn test_shell_recording_alt_return_ignored() {
     )
     .unwrap();
     let viewport = Viewport::new(640, 480);
-    let mut list = DrawList::new(glam::UVec2::new(640, 480));
+    let mut list = DrawList::new(gource_core::UVec2::new(640, 480));
     app.frame(0.016, viewport, &mut list);
 
     // Alt+Return when recording: line 142 should ignore ToggleFullscreen
@@ -130,7 +130,7 @@ fn test_shell_f5_reset_when_gource_present() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).unwrap();
     let viewport = Viewport::new(640, 480);
-    let mut list = DrawList::new(glam::UVec2::new(640, 480));
+    let mut list = DrawList::new(gource_core::UVec2::new(640, 480));
     app.frame(0.016, viewport, &mut list);
 
     // F5 triggers gource.reset()
@@ -156,7 +156,7 @@ fn test_shell_frame_when_gource_is_none() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).unwrap();
     let viewport = Viewport::new(640, 480);
-    let mut list = DrawList::new(glam::UVec2::new(640, 480));
+    let mut list = DrawList::new(gource_core::UVec2::new(640, 480));
 
     // Clear gource to None (triggers match &self.gource { None => true } on line 169)
     app.shell_mut().gource = None;
@@ -201,7 +201,7 @@ fn test_shell_frame_get_next_error_emits_fatal_and_quit() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).expect("create app");
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     // First frame initializes repo 1
     app.frame(0.016, viewport, &mut list);
@@ -239,7 +239,7 @@ fn test_gource_direct_input_escape_and_fullscreen() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).unwrap();
     let viewport = Viewport::new(640, 480);
-    let mut list = DrawList::new(glam::UVec2::new(640, 480));
+    let mut list = DrawList::new(gource_core::UVec2::new(640, 480));
 
     // Wait for log to load so commitlog is Some
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
@@ -329,7 +329,7 @@ fn test_gource_user_fade_deselection() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).unwrap();
     let viewport = Viewport::new(640, 480);
-    let mut list = DrawList::new(glam::UVec2::new(640, 480));
+    let mut list = DrawList::new(gource_core::UVec2::new(640, 480));
 
     // Run until commit is processed and user is created
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);

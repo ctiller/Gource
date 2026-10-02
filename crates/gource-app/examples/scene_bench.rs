@@ -37,13 +37,13 @@ use std::hash::Hash;
 use std::io::Write;
 use std::time::Instant;
 
-use glam::Vec2;
 use gource_app::app::{AppOptions, GourceApp};
 use gource_app::file::{DirId, FileId};
 use gource_app::platform::Viewport;
 use gource_app::profile::LogicSpan;
 use gource_app::user::UserId;
 use gource_app::world::World;
+use gource_core::Vec2;
 use gource_draw::DrawList;
 use gource_settings::{CliAction, parse_command_line};
 
@@ -287,7 +287,7 @@ fn main() {
         config.display.display_height as u32,
     );
     let viewport = Viewport::new(width, height);
-    let mut list = DrawList::new(glam::UVec2::new(width, height));
+    let mut list = DrawList::new(gource_core::UVec2::new(width, height));
     let mut app = GourceApp::new(config, AppOptions::default()).unwrap_or_else(|e| {
         eprintln!("{e}");
         std::process::exit(1);

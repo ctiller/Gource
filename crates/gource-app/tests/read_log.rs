@@ -42,7 +42,7 @@ impl Run {
     /// stopping early once `done`.
     fn run(&mut self, frames: usize, done: impl Fn(&Gource) -> bool) {
         let viewport = Viewport::new(640, 480);
-        let mut list = DrawList::new(glam::UVec2::new(640, 480));
+        let mut list = DrawList::new(gource_core::UVec2::new(640, 480));
         let mut frame = |run: &mut Run| {
             run.app.frame(1.0 / 60.0, viewport, &mut list);
             run.requests.extend(run.app.take_requests());

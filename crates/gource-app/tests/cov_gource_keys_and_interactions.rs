@@ -2,11 +2,11 @@
 
 use std::time::Duration;
 
-use glam::Vec2;
 use gource_app::app::{AppOptions, GourceApp};
 use gource_app::gource::Gource;
 use gource_app::input::{InputEvent, Key, Modifiers, MouseButton};
 use gource_app::platform::{PlatformRequest, Viewport};
+use gource_core::Vec2;
 use gource_draw::DrawList;
 use gource_settings::{CliAction, parse_command_line};
 
@@ -41,7 +41,7 @@ impl TestApp {
 
     fn wait_for_load(&mut self) {
         let viewport = Viewport::new(800, 600);
-        let mut list = DrawList::new(glam::UVec2::new(800, 600));
+        let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
         // Step first frame so gource spawns background log loader
         self.app.frame(1.0 / 60.0, viewport, &mut list);
@@ -104,7 +104,7 @@ fn test_dpi_ratio_font_scaling() {
         height: 600,
         dpi_ratio: 2.0,
     };
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     // First repo was created inside GourceShell::new with initial_viewport (dpi_ratio 1.0)
     app.frame(0.016, viewport, &mut list);
@@ -418,7 +418,7 @@ fn test_gource_keys_and_time_speed_controls() {
 
     // Advance frame while paused: covers paused branch in update()
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
     test.app.frame(0.016, viewport, &mut list);
 
     // Unpause
@@ -463,7 +463,7 @@ fn test_mouse_interactions_drag_rotate_zoom_slider() {
     test.wait_for_load();
 
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     // Mouse wheel zoom in / out
     test.app.input(&InputEvent::MouseWheel { delta: 1.0 });
@@ -569,7 +569,7 @@ fn test_captions_loading_and_display() {
     test.wait_for_load();
 
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     // Run enough frames to trigger caption processing
     for _ in 0..20 {

@@ -1,8 +1,8 @@
-use glam::{Vec2, Vec3};
 use gource_app::WorldHistory;
 use gource_app::file::File;
 use gource_app::view::{from_fx, to_fx};
 use gource_app::world::World;
+use gource_core::{Vec2, Vec3};
 use gource_history::{
     ChangeOp, ChangeRecord, CohortMode, History, IndexedCommit, LiveFileState, PathTable,
     TreeSnapshot, UserTable,

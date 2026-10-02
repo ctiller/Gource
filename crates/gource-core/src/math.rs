@@ -1,6 +1,6 @@
 //! Small vector helpers (port of `core/vectors.{h,cpp}`).
 
-use glam::{Vec2, Vec3, Vec4};
+use crate::vec::{Vec2, Vec3, Vec4};
 
 /// `PI` from `core/pi.h`: a *double* literal, so C++ expressions such as
 /// `radius * PI` are evaluated in double precision and then rounded to

@@ -1,4 +1,4 @@
-use glam::UVec2;
+use gource_core::UVec2;
 use gource_draw::TextureId;
 use gource_draw::texture::{Filter, TextureOptions, TextureStore, Wrap};
 use image::{ImageBuffer, Rgb, Rgba};

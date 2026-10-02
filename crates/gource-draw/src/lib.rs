@@ -31,7 +31,7 @@ pub use projection::Projection;
 pub use texture::{Filter, Texture, TextureError, TextureOptions, TextureStore, Wrap};
 pub use video::{VideoCodec, VideoConfig, VideoExporter, VideoSink};
 
-use glam::Vec2;
+use gource_core::Vec2;
 
 /// All persistent drawing resources: textures and fonts.
 ///

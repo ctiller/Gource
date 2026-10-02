@@ -1,4 +1,3 @@
-use glam::{Vec2, Vec3, Vec4};
 use gource_app::WorldDraw;
 use gource_app::action::{Action, ActionKind};
 use gource_app::dirnode::DirNode;
@@ -8,6 +7,7 @@ use gource_app::profile::LogicProfile;
 use gource_app::spline::SplineEdge;
 use gource_app::user::User;
 use gource_app::world::{SceneFonts, SceneTextures, World};
+use gource_core::{Vec2, Vec3, Vec4};
 use gource_draw::list::{DrawList, Material, TextureId};
 use gource_draw::{Gfx, Projection};
 use gource_settings::GourceSettings;
@@ -173,7 +173,7 @@ fn test_user_full_coverage() {
     let mut u = User::new("david", Vec2::new(50.0, 50.0), 12, 400.0, 1.5, &hasher);
 
     // A custom image without --colour-images: white, then the C++ blend.
-    u.assign_graphic(&hasher, None, glam::UVec2::new(384, 512), true);
+    u.assign_graphic(&hasher, None, gource_core::UVec2::new(384, 512), true);
     assert_eq!(u.usercol, Vec3::splat(0.9));
     assert!((u.pawn.graphic_ratio - 512.0 / 384.0).abs() < 1e-6);
     assert_eq!(u.pawn.dims, Vec2::new(30.0, 40.0));
@@ -287,7 +287,7 @@ fn test_world_drawing_and_frustum() {
         default_user: TextureId(3),
     };
 
-    let mut list = DrawList::new(glam::UVec2::new(1280, 720));
+    let mut list = DrawList::new(gource_core::UVec2::new(1280, 720));
     world.draw_scene(&mut list, &proj, &settings, &textures);
     assert!(!list.is_empty());
 
@@ -302,7 +302,7 @@ fn test_world_drawing_and_frustum() {
     hide_settings.hide_files = true;
     hide_settings.hide_users = true;
     hide_settings.hide_bloom = true;
-    let mut empty_list = DrawList::new(glam::UVec2::new(1280, 720));
+    let mut empty_list = DrawList::new(gource_core::UVec2::new(1280, 720));
     world.draw_scene(&mut empty_list, &proj, &hide_settings, &textures);
     assert!(empty_list.is_empty());
 
@@ -317,7 +317,7 @@ fn test_world_drawing_and_frustum() {
         dir: gfx.fonts.font(default_face, 14),
     };
 
-    let mut text_list = DrawList::new(glam::UVec2::new(1280, 720));
+    let mut text_list = DrawList::new(gource_core::UVec2::new(1280, 720));
     world.draw_names(
         &mut text_list,
         &mut gfx,
@@ -384,7 +384,7 @@ fn test_world_edge_cases() {
 fn test_platform_viewport_and_requests() {
     use gource_app::platform::{PlatformRequest, Viewport};
     let vp = Viewport::new(1920, 1080);
-    assert_eq!(vp.size(), glam::Vec2::new(1920.0, 1080.0));
+    assert_eq!(vp.size(), gource_core::Vec2::new(1920.0, 1080.0));
     assert_eq!(vp.dpi_ratio, 1.0);
 
     let reqs = [
@@ -600,7 +600,7 @@ fn test_world_comprehensive_coverage() {
         beam: TextureId(2),
         default_user: TextureId(3),
     };
-    let mut list = DrawList::new(glam::UVec2::new(1920, 1080));
+    let mut list = DrawList::new(gource_core::UVec2::new(1920, 1080));
     world.draw_scene(&mut list, &proj, &settings, &textures);
     assert!(!list.is_empty());
 
@@ -614,7 +614,7 @@ fn test_world_comprehensive_coverage() {
         user_selected: gfx.fonts.font(default_face, 18),
         dir: gfx.fonts.font(default_face, 14),
     };
-    let mut text_list = DrawList::new(glam::UVec2::new(1920, 1080));
+    let mut text_list = DrawList::new(gource_core::UVec2::new(1920, 1080));
     world.files[fid1].pawn.show_name();
     world.draw_names(
         &mut text_list,

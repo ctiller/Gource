@@ -17,6 +17,7 @@ use bevy::{
     render::view::screenshot::{Screenshot, ScreenshotCaptured},
     window::PrimaryWindow,
 };
+use gource_core::{UVec2, Vec2, Vec4};
 use gource_draw::DrawList;
 
 use crate::{

@@ -12,14 +12,13 @@ default = ["gix"]
 gix = ["gource-vcs/gix"]
 
 [dependencies]
-gource-core = { workspace = true, features = ["glam"] }
+gource-core = { workspace = true }
 gource-draw = { workspace = true }
 gource-settings = { workspace = true }
 gource-vcs = { workspace = true }
 gource-widgets = { workspace = true }
 gource-history = { path = "../gource-history" }
 gource-model = { workspace = true }
-glam = { workspace = true }
 slotmap = { workspace = true }
 fastrand = { workspace = true }
 log = { workspace = true }

@@ -1,6 +1,6 @@
-use glam::{Vec2, Vec3};
 use gource_app::camera::{CameraCrop, CameraFocusData, ZoomCamera};
 use gource_core::Bounds2D;
+use gource_core::{Vec2, Vec3};
 use gource_settings::GourceSettings;
 
 #[test]

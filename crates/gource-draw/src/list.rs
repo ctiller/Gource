@@ -1,6 +1,6 @@
 //! Draw lists: ordered batches of textured, vertex-coloured triangles.
 
-use glam::{UVec2, Vec2, Vec4};
+use gource_core::{UVec2, Vec2, Vec4};
 
 /// Identifies a texture in a [`crate::TextureStore`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]

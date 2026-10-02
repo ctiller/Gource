@@ -4,8 +4,8 @@
 //! using [`Gfx`]. Supports tabs, numeric sliders, boolean toggles, enum cycle
 //! buttons, per-row reset, and config saving/copying.
 
-use glam::{Vec2, Vec4};
 use gource_core::bounds::Bounds2D;
+use gource_core::{Vec2, Vec4};
 use gource_draw::font::TextStyle;
 use gource_draw::{DrawList, FontId, Gfx};
 
@@ -737,7 +737,7 @@ impl TuningPanelWidget {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glam::UVec2;
+    use gource_core::UVec2;
 
     #[test]
     fn test_tuning_tab_properties() {

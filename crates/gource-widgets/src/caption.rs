@@ -3,7 +3,7 @@
 //! An `RCaption` displays a text caption associated with a timestamp for a given duration.
 //! During its lifetime it fades in and fades out based on elapsed time.
 
-use glam::{Vec2, Vec3, Vec4};
+use gource_core::{Vec2, Vec3, Vec4};
 use gource_draw::font::TextStyle;
 use gource_draw::{DrawList, FontId, Gfx};
 
@@ -200,7 +200,7 @@ mod tests {
         cap.set_pos(Vec2::new(10.0, 20.0));
         cap.logic(1.0); // alpha > 0
 
-        let mut list = DrawList::new(glam::UVec2::new(800, 600));
+        let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
         cap.draw(&mut gfx, &mut list);
         assert!(!list.is_empty());
         // Verify batch and text vertices produced
@@ -217,7 +217,7 @@ mod tests {
         // Alpha <= 0 caption should not draw
         let cap_zero = RCaption::with_duration("ZeroAlpha", 100, font, 10.0);
         assert_eq!(cap_zero.alpha, 0.0);
-        let mut list0 = DrawList::new(glam::UVec2::new(800, 600));
+        let mut list0 = DrawList::new(gource_core::UVec2::new(800, 600));
         cap_zero.draw(&mut gfx, &mut list0);
         assert!(list0.is_empty());
 
@@ -225,7 +225,7 @@ mod tests {
         let mut cap_finished = RCaption::with_duration("Done", 100, font, 1.0);
         cap_finished.logic(2.0); // is_finished() is true
         cap_finished.alpha = 1.0;
-        let mut list2 = DrawList::new(glam::UVec2::new(800, 600));
+        let mut list2 = DrawList::new(gource_core::UVec2::new(800, 600));
         cap_finished.draw(&mut gfx, &mut list2);
         assert!(list2.is_empty());
     }

@@ -5,7 +5,7 @@
 //! it consumes input state/events and exposes query methods and the desired platform cursor
 //! visibility (`system_cursor_visible()`) for the platform layer to fulfill.
 
-use glam::Vec2;
+use gource_core::Vec2;
 use gource_draw::{DrawList, TextureId};
 
 /// Default idle timeout in seconds before hiding the cursor (from C++ `timeout = 3.0f`).
@@ -300,7 +300,7 @@ impl MouseCursor {
         if self.system_cursor || !self.is_visible() {
             return;
         }
-        list.rect(texture, self.mousepos, size, glam::Vec4::ONE);
+        list.rect(texture, self.mousepos, size, gource_core::Vec4::ONE);
     }
 }
 
@@ -315,7 +315,7 @@ pub enum MouseButtonKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glam::UVec2;
+    use gource_core::UVec2;
 
     #[test]
     fn initial_state() {
@@ -466,7 +466,7 @@ mod tests {
         assert_eq!(verts[2].pos, Vec2::new(132.0, 182.0));
 
         // When not visible: should NOT draw
-        list.reset(UVec2::new(800, 600), glam::Vec4::ZERO);
+        list.reset(UVec2::new(800, 600), gource_core::Vec4::ZERO);
         cursor.show_cursor(false);
         cursor.draw(&mut list, TextureId(5), Vec2::new(32.0, 32.0));
         assert!(list.is_empty());
@@ -500,7 +500,7 @@ mod tests {
         // Quad corners: top-left (50, 75), top-right (66, 75), bottom-right (66, 99), bottom-left (50, 99)
         assert_eq!(b.vertices[0].pos, Vec2::new(50.0, 75.0));
         assert_eq!(b.vertices[0].uv, Vec2::new(0.0, 0.0));
-        assert_eq!(b.vertices[0].colour, glam::Vec4::ONE);
+        assert_eq!(b.vertices[0].colour, gource_core::Vec4::ONE);
 
         assert_eq!(b.vertices[1].pos, Vec2::new(66.0, 75.0));
         assert_eq!(b.vertices[1].uv, Vec2::new(1.0, 0.0));

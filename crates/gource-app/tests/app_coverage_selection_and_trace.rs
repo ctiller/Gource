@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use glam::Vec2;
 use gource_app::app::{AppOptions, GourceApp, vcs_options};
 use gource_app::input::{InputEvent, Key, Modifiers, MouseButton};
 use gource_app::platform::{PlatformRequest, Viewport};
+use gource_core::Vec2;
 use gource_draw::DrawList;
 use gource_settings::{CliAction, parse_command_line};
 
@@ -75,7 +75,7 @@ fn test_app_accessors() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).expect("create app");
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     // Test accessors
     assert_eq!(app.display_date(), "");
@@ -104,7 +104,7 @@ fn test_gource_disable_input() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).expect("create app");
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     wait_for_log_load(&mut app, viewport, &mut list);
 
@@ -156,7 +156,7 @@ fn test_gource_selection_and_mousetrace_and_focus() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).expect("create app");
     let viewport = Viewport::new(1024, 768);
-    let mut list = DrawList::new(glam::UVec2::new(1024, 768));
+    let mut list = DrawList::new(gource_core::UVec2::new(1024, 768));
 
     wait_for_log_load(&mut app, viewport, &mut list);
 
@@ -311,7 +311,7 @@ fn test_gource_time_travel_handling() {
 
         let mut app = GourceApp::new(config, AppOptions::default()).expect("create app");
         let viewport = Viewport::new(800, 600);
-        let mut list = DrawList::new(glam::UVec2::new(800, 600));
+        let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
         wait_for_log_load(&mut app, viewport, &mut list);
 

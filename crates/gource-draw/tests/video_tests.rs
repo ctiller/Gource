@@ -377,11 +377,17 @@ fn test_ffmpeg_av1_codec() {
 #[test]
 fn test_gfx_facade_coverage() {
     let mut gfx = gource_draw::Gfx::default();
-    let mut list = gource_draw::DrawList::new(glam::uvec2(800, 600));
+    let mut list = gource_draw::DrawList::new(gource_core::uvec2(800, 600));
     let face_id = gfx.fonts.default_face();
     let font_id = gfx.fonts.font(face_id, 14);
-    let style = gource_draw::TextStyle::new(glam::Vec4::ONE);
-    gfx.draw_text(&mut list, font_id, glam::Vec2::ZERO, "Hello Gfx", &style);
+    let style = gource_draw::TextStyle::new(gource_core::Vec4::ONE);
+    gfx.draw_text(
+        &mut list,
+        font_id,
+        gource_core::Vec2::ZERO,
+        "Hello Gfx",
+        &style,
+    );
     let width = gfx.text_width(font_id, "Hello Gfx");
     assert!(width > 0.0);
 }

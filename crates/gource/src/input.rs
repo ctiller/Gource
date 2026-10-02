@@ -174,17 +174,20 @@ pub fn convert_event(
             state.cursor = pos;
             // While grabbed, motion comes from the raw `MouseMotion` stream
             // only (X11 confines instead of locking, so both would arrive).
-            (!grabbed).then_some(InputEvent::MouseMove { pos, delta })
+            (!grabbed).then_some(InputEvent::MouseMove {
+                pos: gource_core::Vec2::new(pos.x, pos.y),
+                delta: gource_core::Vec2::new(delta.x, delta.y),
+            })
         }
         WindowEvent::MouseMotion(motion) if grabbed => Some(InputEvent::MouseMove {
-            pos: state.cursor,
-            delta: motion.delta,
+            pos: gource_core::Vec2::new(state.cursor.x, state.cursor.y),
+            delta: gource_core::Vec2::new(motion.delta.x, motion.delta.y),
         }),
         WindowEvent::MouseButtonInput(input) => {
             map_mouse_button(input.button).map(|button| InputEvent::MouseButton {
                 button,
                 pressed: input.state == ButtonState::Pressed,
-                pos: state.cursor,
+                pos: gource_core::Vec2::new(state.cursor.x, state.cursor.y),
             })
         }
         WindowEvent::MouseWheel(wheel) => {

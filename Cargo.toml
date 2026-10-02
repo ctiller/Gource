@@ -22,7 +22,6 @@ gource-widgets = { path = "crates/gource-widgets" }
 
 # External crates. Versions are aligned with what Bevy already pulls in to
 # avoid duplicate builds.
-glam = "0.32"
 log = "0.4"
 thiserror = "2"
 anyhow = "1"

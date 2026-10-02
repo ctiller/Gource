@@ -7,8 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-glam = { workspace = true }
-gource-core = { workspace = true, features = ["glam"] }
+gource-core = { workspace = true }
 gource-model = { workspace = true }
 gource-settings = { workspace = true }
 slotmap = { workspace = true }

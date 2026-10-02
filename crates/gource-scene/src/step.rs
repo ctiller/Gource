@@ -18,7 +18,7 @@ use crate::users::{UserIn, UserParams};
 use crate::view::{from_fx, from_ivec, lerp_ivec, to_fx};
 use crate::world::{Tuning, World};
 use crate::{Fx, IVec2, ONE, TICK_HZ, UNIT};
-use glam::Vec2;
+use gource_core::Vec2;
 use gource_core::{Bounds2D, QuadTree};
 use gource_settings::GourceSettings;
 use slotmap::{Key, SecondaryMap};
@@ -353,7 +353,13 @@ impl World {
 
     /// A user's action reaching a file: touch it (C++ `RAction::apply`) and,
     /// in weighted mode, kick it away from the user.
-    fn apply_action(&mut self, uid: UserId, fid: FileId, timestamp: i64, colour: glam::Vec3) {
+    fn apply_action(
+        &mut self,
+        uid: UserId,
+        fid: FileId,
+        timestamp: i64,
+        colour: gource_core::Vec3,
+    ) {
         let user_pos = self.users[uid].sim.pos;
         let weighted = self.weighted_mode;
         let root = self.root;

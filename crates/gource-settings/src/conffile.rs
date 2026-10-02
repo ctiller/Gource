@@ -6,7 +6,7 @@
 //! converted into entries of the appropriate section.
 
 use crate::SettingsError;
-use glam::{Vec2, Vec3, Vec4};
+use gource_core::{Vec2, Vec3, Vec4};
 use std::collections::BTreeMap;
 use std::path::Path;
 

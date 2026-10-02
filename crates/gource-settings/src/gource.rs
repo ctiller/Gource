@@ -2,7 +2,7 @@
 
 use crate::SettingsError;
 use crate::conffile::{ConfEntry, ConfFile, ConfSection};
-use glam::{Vec2, Vec3};
+use gource_core::{Vec2, Vec3};
 use std::collections::BTreeMap;
 use std::path::Path;
 

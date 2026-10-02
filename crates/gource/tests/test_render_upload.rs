@@ -1,9 +1,9 @@
 use bevy::{asset::AssetPlugin, prelude::*, sprite_render::MeshMaterial2d};
-use glam::{UVec2, Vec2, Vec4};
 use gource::render::{
     BatchPool, BloomMaterial, DrawListCamera, FrameDrawList, FrameTextures, GpuTextures,
     SceneMaterial, spawn_camera, upload_batches, upload_textures,
 };
+use gource_core::{UVec2, Vec2, Vec4};
 use gource_draw::{Filter, TextureId, TextureOptions, TextureStore, Wrap};
 
 fn create_render_app() -> App {

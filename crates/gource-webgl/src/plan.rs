@@ -6,7 +6,7 @@
 //! 3. Mapping texture options (Filter, Wrap, Mipmaps) to WebGL constant values.
 //! 4. Packing vertices and indices into flat f32 and u32 buffers for GPU upload.
 
-use glam::Vec2;
+use gource_core::Vec2;
 use gource_draw::{Filter, Material, TextureId, TextureStore, Vertex, Wrap};
 use std::collections::{HashMap, HashSet};
 
@@ -214,7 +214,7 @@ pub fn pixel_to_clip(pos: Vec2, viewport: Vec2) -> Vec2 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glam::Vec4;
+    use gource_core::Vec4;
     use gource_draw::TextureOptions;
 
     #[test]

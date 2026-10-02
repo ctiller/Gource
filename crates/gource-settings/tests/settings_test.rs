@@ -1,4 +1,4 @@
-use glam::{Vec2, Vec3, Vec4};
+use gource_core::{Vec2, Vec3, Vec4};
 use gource_settings::{
     CliAction, DashboardPanel, DashboardPeriod, FileColourMode, FileSizeMetric, GOURCE_VERSION,
     conffile::{ConfEntry, ConfFile, ConfSection},
@@ -1152,7 +1152,7 @@ fn test_additional_gource_settings_and_conffile_coverage() {
     sec.add_entry("path", ".");
     sec.add_entry("background-colour", "vec3(1.0, 0.5, 0.2)");
     let s = GourceSettings::import(&conf, None).unwrap();
-    assert_eq!(s.background_colour, glam::Vec3::new(1.0, 0.5, 0.2));
+    assert_eq!(s.background_colour, gource_core::Vec3::new(1.0, 0.5, 0.2));
 
     // Test background-colour invalid
     let mut conf = ConfFile::new();
@@ -1452,17 +1452,17 @@ live-interval=
     // SettingValue apply
     assert!(!SettingId::BackgroundColour.apply(&SettingValue::Bool(false), &mut s, &mut t));
     let _ = SettingValue::Usize(1);
-    let _ = SettingValue::Vec4(glam::Vec4::ZERO);
+    let _ = SettingValue::Vec4(gource_core::Vec4::ZERO);
     let _ = SettingValue::OptionalString(None);
 }
 
 #[test]
 fn test_to_cli_args_comprehensive() {
     let s = GourceSettings {
-        dir_colour: glam::Vec3::new(0.1, 0.2, 0.3),
-        font_colour: glam::Vec3::new(0.4, 0.5, 0.6),
-        highlight_colour: glam::Vec3::new(0.7, 0.8, 0.9),
-        selection_colour: glam::Vec3::new(0.2, 0.4, 0.6),
+        dir_colour: gource_core::Vec3::new(0.1, 0.2, 0.3),
+        font_colour: gource_core::Vec3::new(0.4, 0.5, 0.6),
+        highlight_colour: gource_core::Vec3::new(0.7, 0.8, 0.9),
+        selection_colour: gource_core::Vec3::new(0.2, 0.4, 0.6),
         hide_date: true,
         hide_users: true,
         hide_tree: true,

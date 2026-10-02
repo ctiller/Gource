@@ -6,7 +6,7 @@
 //! frame, so there is no removal API.
 
 use crate::bounds::Bounds2D;
-use glam::Vec2;
+use crate::vec::Vec2;
 use std::collections::HashSet;
 use std::hash::Hash;
 

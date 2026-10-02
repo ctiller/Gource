@@ -86,7 +86,7 @@ impl FrameDrawData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glam::{UVec2, Vec2, Vec4};
+    use gource_core::{UVec2, Vec2, Vec4};
     use gource_draw::{Batch, Material, TextureId, Vertex};
 
     #[test]

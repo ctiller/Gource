@@ -1,6 +1,6 @@
 //! Platform-independent input events (replacing SDL events).
 
-use glam::Vec2;
+use gource_core::Vec2;
 
 /// Keys Gource reacts to. Printable keys are reported as lowercase
 /// characters of the *logical* key (layout aware, like SDL keysyms), e.g.

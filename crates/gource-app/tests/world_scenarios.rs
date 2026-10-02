@@ -1,7 +1,7 @@
-use glam::{Vec2, Vec3};
 use gource_app::WorldDraw;
 use gource_app::profile::LogicProfile;
 use gource_app::world::{SceneFonts, SceneTextures, World};
+use gource_core::{Vec2, Vec3};
 use gource_draw::list::{DrawList, Material, TextureId};
 use gource_draw::{Gfx, Projection};
 use gource_settings::GourceSettings;
@@ -116,7 +116,7 @@ fn test_world_scenarios_and_harden() {
         default_user: TextureId(30),
     };
 
-    let mut list = DrawList::new(glam::UVec2::new(1920, 1080));
+    let mut list = DrawList::new(gource_core::UVec2::new(1920, 1080));
     world.draw_scene(&mut list, &proj, &settings, &textures);
     assert!(!list.is_empty());
 
@@ -137,7 +137,7 @@ fn test_world_scenarios_and_harden() {
         dir: gfx.fonts.font(default_face, 12),
     };
 
-    let mut name_list = DrawList::new(glam::UVec2::new(1920, 1080));
+    let mut name_list = DrawList::new(gource_core::UVec2::new(1920, 1080));
     world.draw_names(
         &mut name_list,
         &mut gfx,

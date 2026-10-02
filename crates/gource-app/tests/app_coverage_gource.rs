@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
-use glam::Vec2;
 use gource_app::app::{AppOptions, GourceApp};
 use gource_app::input::{InputEvent, Key, Modifiers, MouseButton};
 use gource_app::platform::{PlatformRequest, Viewport};
+use gource_core::Vec2;
 use gource_draw::DrawList;
 use gource_settings::{CliAction, parse_command_line};
 
@@ -58,7 +58,7 @@ fn test_gource_hud_elements_rendering() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).expect("create app");
     let viewport = Viewport::new(1024, 768);
-    let mut list = DrawList::new(glam::UVec2::new(1024, 768));
+    let mut list = DrawList::new(gource_core::UVec2::new(1024, 768));
 
     // Wait until background log is loaded (takes a few frames/ms)
     let mut loaded = false;
@@ -152,7 +152,7 @@ fn test_gource_keys_and_controls() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).expect("create app");
     let viewport = Viewport::new(1024, 768);
-    let mut list = DrawList::new(glam::UVec2::new(1024, 768));
+    let mut list = DrawList::new(gource_core::UVec2::new(1024, 768));
 
     for _ in 0..10 {
         app.frame(0.02, viewport, &mut list);
@@ -306,7 +306,7 @@ fn test_gource_mouse_interactions_drag_rotate_slider() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).expect("create app");
     let viewport = Viewport::new(1024, 768);
-    let mut list = DrawList::new(glam::UVec2::new(1024, 768));
+    let mut list = DrawList::new(gource_core::UVec2::new(1024, 768));
 
     for _ in 0..10 {
         app.frame(0.02, viewport, &mut list);
@@ -429,7 +429,7 @@ fn test_gource_looping_and_idle_skip() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).expect("create app");
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     // Advance frames to process the commit and then loop around
     for _ in 0..50 {

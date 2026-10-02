@@ -10,9 +10,9 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-use glam::UVec2;
 use gource_app::app::{AppOptions, GourceApp};
 use gource_app::platform::Viewport;
+use gource_core::UVec2;
 use gource_draw::DrawList;
 use gource_settings::{CliAction, parse_command_line};
 use gource_widgets::timeline_bar::TimelineHit;

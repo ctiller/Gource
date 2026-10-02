@@ -1,7 +1,7 @@
 //! Demo rendering function for WebGL2.
 
 use crate::gl::WebGlRenderer;
-use glam::{UVec2, Vec2, Vec4};
+use gource_core::{UVec2, Vec2, Vec4};
 use gource_draw::{DrawList, TextureOptions, TextureStore};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;

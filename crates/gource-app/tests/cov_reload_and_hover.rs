@@ -2,16 +2,16 @@
 
 use std::time::Duration;
 
-use glam::Vec2;
 use gource_app::app::{AppOptions, GourceApp};
 use gource_app::input::{InputEvent, Key, Modifiers};
 use gource_app::platform::{PlatformRequest, Viewport};
+use gource_core::Vec2;
 use gource_draw::{DrawList, Gfx, TextureOptions};
 use gource_settings::{CliAction, parse_command_line};
 
 fn wait_for_app_load(app: &mut GourceApp) {
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     // First frame spawns log loader
     app.frame(1.0 / 60.0, viewport, &mut list);
@@ -60,7 +60,7 @@ fn test_shell_reload_file_deleted_io_error() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).unwrap();
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
     app.frame(0.016, viewport, &mut list);
     let _ = app.take_requests();
 
@@ -108,7 +108,7 @@ fn test_shell_reload_file_corrupted_decode_error() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).unwrap();
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
     app.frame(0.016, viewport, &mut list);
     let _ = app.take_requests();
 
@@ -161,7 +161,7 @@ fn test_shell_viewport_resize_triggers_gource_reload() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).unwrap();
     let vp1 = Viewport::new(1024, 768);
-    let mut list = DrawList::new(glam::UVec2::new(1024, 768));
+    let mut list = DrawList::new(gource_core::UVec2::new(1024, 768));
 
     // First frame with initial viewport matches last_viewport (no reload)
     app.frame(0.016, vp1, &mut list);
@@ -169,7 +169,7 @@ fn test_shell_viewport_resize_triggers_gource_reload() {
 
     // Frame with a different viewport triggers resize reload (lines 203-207)
     let vp2 = Viewport::new(800, 600);
-    let mut list2 = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list2 = DrawList::new(gource_core::UVec2::new(800, 600));
     app.frame(0.016, vp2, &mut list2);
 
     assert_eq!(app.shell().last_viewport, Some(vp2));
@@ -218,7 +218,7 @@ fn test_caption_offset_x_and_reloaded_repositioning() {
 
         // Advance frames so captions are triggered
         let viewport = Viewport::new(800, 600);
-        let mut list = DrawList::new(glam::UVec2::new(800, 600));
+        let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
         for _ in 0..10 {
             app.frame(0.05, viewport, &mut list);
             let _ = app.take_requests();
@@ -256,7 +256,7 @@ fn test_caption_offset_x_and_reloaded_repositioning() {
         wait_for_app_load(&mut app);
 
         let viewport = Viewport::new(800, 600);
-        let mut list = DrawList::new(glam::UVec2::new(800, 600));
+        let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
         for _ in 0..10 {
             app.frame(0.05, viewport, &mut list);
             let _ = app.take_requests();
@@ -270,7 +270,7 @@ fn test_caption_offset_x_and_reloaded_repositioning() {
 
         // Trigger resize to test repositioning with new width
         let vp_new = Viewport::new(1200, 900);
-        let mut list2 = DrawList::new(glam::UVec2::new(1200, 900));
+        let mut list2 = DrawList::new(gource_core::UVec2::new(1200, 900));
         app.frame(0.016, vp_new, &mut list2);
         let gource_after = app.shell().gource.as_ref().unwrap();
         let cap_x_after = gource_after.active_captions[0].pos.x;
@@ -297,7 +297,7 @@ fn test_caption_offset_x_and_reloaded_repositioning() {
         wait_for_app_load(&mut app);
 
         let viewport = Viewport::new(800, 600);
-        let mut list = DrawList::new(glam::UVec2::new(800, 600));
+        let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
         for _ in 0..10 {
             app.frame(0.05, viewport, &mut list);
             let _ = app.take_requests();
@@ -330,7 +330,7 @@ fn test_mouseover_hover_file_and_user_transitions() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).unwrap();
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     wait_for_app_load(&mut app);
 
@@ -440,7 +440,7 @@ fn test_gource_logic_logmill_error_non_empty() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).unwrap();
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     // Wait until background logmill thread finishes and reports error
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
@@ -605,7 +605,7 @@ fn test_gource_manual_rotate_and_debug_bounds() {
     wait_for_app_load(&mut app);
 
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     let gource = app.shell_mut().gource.as_mut().unwrap();
 

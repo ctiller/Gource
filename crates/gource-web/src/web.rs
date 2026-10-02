@@ -34,7 +34,7 @@ struct State {
     canvas: HtmlCanvasElement,
     input: Vec<InputEvent>,
     last_ms: Option<f64>,
-    last_mouse: glam::Vec2,
+    last_mouse: gource_core::Vec2,
     frames: u64,
     /// If non-zero, each animation frame advances this many fixed 1/60 s
     /// steps instead of the wall-clock time (deterministic captures).
@@ -78,9 +78,9 @@ impl State {
     }
 
     /// Canvas-relative position in physical pixels.
-    fn mouse_pos(&self, e: &MouseEvent) -> glam::Vec2 {
+    fn mouse_pos(&self, e: &MouseEvent) -> gource_core::Vec2 {
         let dpr = web_sys::window().unwrap().device_pixel_ratio() as f32;
-        glam::Vec2::new(e.offset_x() as f32, e.offset_y() as f32) * dpr
+        gource_core::Vec2::new(e.offset_x() as f32, e.offset_y() as f32) * dpr
     }
 }
 
@@ -149,7 +149,7 @@ pub async fn start(
         canvas: canvas.clone(),
         input: Vec::new(),
         last_ms: None,
-        last_mouse: glam::Vec2::ZERO,
+        last_mouse: gource_core::Vec2::ZERO,
         frames: 0,
         fixed_steps,
     }));

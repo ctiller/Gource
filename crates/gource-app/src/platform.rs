@@ -1,7 +1,7 @@
 //! Requests from the simulation to the platform layer (window, cursor,
 //! capture), and the viewport description the platform provides.
 
-use glam::Vec2;
+use gource_core::Vec2;
 use std::path::PathBuf;
 
 /// The drawable area.

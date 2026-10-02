@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
-use glam::Vec2;
 use gource_app::app::{AppOptions, GourceApp, vcs_options};
 use gource_app::input::{InputEvent, Key, Modifiers, MouseButton};
 use gource_app::platform::{PlatformRequest, Viewport};
+use gource_core::Vec2;
 use gource_draw::DrawList;
 use gource_settings::{
     CliAction, ConfFile, Config, DisplaySettings, GourceSettings, parse_command_line,
@@ -45,7 +45,7 @@ fn test_app_custom_log_full_lifecycle() {
     let _ = app.gfx();
 
     let viewport = Viewport::new(1024, 768);
-    let mut list = DrawList::new(glam::UVec2::new(1024, 768));
+    let mut list = DrawList::new(gource_core::UVec2::new(1024, 768));
 
     // Run simulation loop until finish or max frames
     let mut frames = 0;
@@ -78,7 +78,7 @@ fn test_app_input_events_and_controls() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).expect("new GourceApp");
     let viewport = Viewport::new(1280, 720);
-    let mut list = DrawList::new(glam::UVec2::new(1280, 720));
+    let mut list = DrawList::new(gource_core::UVec2::new(1280, 720));
 
     // Advance 5 frames to load initial log
     for _ in 0..5 {
@@ -256,7 +256,7 @@ fn test_app_multi_repo_sequencing() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).expect("create app");
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     // First repo running
     for _ in 0..10 {
@@ -299,7 +299,7 @@ fn test_app_recording_mode() {
     };
     let mut app = GourceApp::new(config, opts).expect("create recording app");
     let viewport = Viewport::new(640, 480);
-    let mut list = DrawList::new(glam::UVec2::new(640, 480));
+    let mut list = DrawList::new(gource_core::UVec2::new(640, 480));
 
     let mut captured = false;
     for frame_i in 0..300 {
@@ -360,7 +360,7 @@ fn capture_frames(framerate: &str, captures: usize) -> Vec<usize> {
     )
     .expect("create app");
     let viewport = Viewport::new(640, 480);
-    let mut list = DrawList::new(glam::UVec2::new(640, 480));
+    let mut list = DrawList::new(gource_core::UVec2::new(640, 480));
 
     let mut frames = Vec::new();
     for frame in 0..400 {
@@ -432,7 +432,7 @@ fn test_headless_recording_finishes_and_emits_quit_exactly_once() {
     };
     let mut app = GourceApp::new(config, opts).expect("create app");
     let viewport = Viewport::new(1280, 720);
-    let mut list = DrawList::new(glam::UVec2::new(1280, 720));
+    let mut list = DrawList::new(gource_core::UVec2::new(1280, 720));
 
     let mut quit_count = 0;
     let mut frames = 0;

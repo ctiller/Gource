@@ -13,8 +13,8 @@
 //!
 //! (world +x = screen right, world +y = screen down).
 
-use glam::{Vec2, Vec3};
 use gource_core::Bounds2D;
+use gource_core::{Vec2, Vec3};
 
 /// Vertical field of view of the Gource camera, in degrees.
 pub const CAMERA_FOV_DEGREES: f32 = 90.0;

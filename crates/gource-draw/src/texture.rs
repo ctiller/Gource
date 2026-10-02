@@ -5,7 +5,7 @@
 //! *non-sRGB* texture format (values are used as-is, like the GL renderer).
 
 use crate::list::TextureId;
-use glam::UVec2;
+use gource_core::UVec2;
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 

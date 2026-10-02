@@ -1,7 +1,7 @@
 //! Action representation: commit actions affecting files (port of action.cpp).
 
 use crate::file::FileId;
-use glam::Vec3;
+use gource_core::Vec3;
 
 /// Action kind (Create, Modify, Remove).
 /// Port of `RAction` subclasses (`CreateAction`, `ModifyAction`, `RemoveAction`).

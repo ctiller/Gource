@@ -2,11 +2,11 @@
 
 use std::time::Duration;
 
-use glam::Vec2;
 use gource_app::PlatformRequest;
 use gource_app::app::{AppOptions, GourceApp};
 use gource_app::input::{InputEvent, MouseButton};
 use gource_app::platform::Viewport;
+use gource_core::Vec2;
 use gource_draw::DrawList;
 use gource_settings::{CliAction, parse_command_line};
 
@@ -34,7 +34,7 @@ fn test_gource_seek_to_and_slider_hover_date() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).unwrap();
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     // Wait for log to load
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
@@ -120,7 +120,7 @@ fn test_gource_looping_and_idle_skip_to_commit() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).unwrap();
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     // Wait for log load
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
@@ -170,7 +170,7 @@ fn test_gource_stop_position_and_start_position() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).unwrap();
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
@@ -205,7 +205,7 @@ fn test_gource_aborting_text_rendering() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).unwrap();
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     // First frame starts gource
     app.frame(0.016, viewport, &mut list);
@@ -231,7 +231,7 @@ fn test_gource_auto_rotate_and_aspect_ratio() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).unwrap();
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     // Wait for log
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
@@ -292,7 +292,7 @@ fn test_gource_hover_tooltip_rendering() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).unwrap();
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     // Wait for log
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
@@ -358,7 +358,7 @@ fn test_gource_hover_tooltip_rendering() {
         g.mousetrace(&proj);
 
         // Moving mouse away
-        g.mouse_pos = glam::Vec2::new(-9999.0, -9999.0);
+        g.mouse_pos = gource_core::Vec2::new(-9999.0, -9999.0);
         g.mousetrace(&proj);
     }
 }
@@ -392,7 +392,7 @@ fn test_gource_additional_uncovered_paths() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).unwrap();
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {

@@ -8,11 +8,11 @@ use gource_app::WorldDraw;
 use std::fs;
 use std::time::{Duration, Instant};
 
-use glam::UVec2;
 use gource_app::app::{AppOptions, GourceApp};
 use gource_app::gource::Gource;
 use gource_app::input::{InputEvent, Key, Modifiers};
 use gource_app::platform::Viewport;
+use gource_core::UVec2;
 use gource_draw::DrawList;
 use gource_settings::{CliAction, parse_command_line};
 
@@ -213,7 +213,7 @@ fn test_slider_hover_caption_width_metrics() {
     let slider_pos = (bounds.min + bounds.max) * 0.5;
     let event = InputEvent::MouseMove {
         pos: slider_pos,
-        delta: glam::Vec2::ZERO,
+        delta: gource_core::Vec2::ZERO,
     };
     run.app.input(&event);
 

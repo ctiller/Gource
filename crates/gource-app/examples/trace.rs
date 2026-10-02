@@ -30,7 +30,7 @@ fn main() {
         config.display.display_height as u32,
     );
     let viewport = Viewport::new(width, height);
-    let mut list = DrawList::new(glam::UVec2::new(width, height));
+    let mut list = DrawList::new(gource_core::UVec2::new(width, height));
     let mut app = GourceApp::new(
         config,
         AppOptions {

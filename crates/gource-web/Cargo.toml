@@ -16,7 +16,6 @@ gource-draw = { workspace = true }
 gource-model = { workspace = true }
 gource-settings = { workspace = true }
 gource-vcs = { workspace = true }
-glam = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 gource-webgl = { path = "../gource-webgl" }

@@ -42,7 +42,7 @@ fn main() {
         .unwrap_or(3600);
 
     let viewport = Viewport::new(1280, 720);
-    let mut list = DrawList::new(glam::UVec2::new(1280, 720));
+    let mut list = DrawList::new(gource_core::UVec2::new(1280, 720));
     let mut app = GourceApp::new(config, AppOptions::default()).unwrap_or_else(|e| {
         eprintln!("{e}");
         std::process::exit(1);

@@ -1,5 +1,5 @@
-use glam::Vec3;
 use gource_app::world::World;
+use gource_core::Vec3;
 use gource_settings::GourceSettings;
 use gource_vcs::commit::{Commit, CommitFile, FileAction};
 

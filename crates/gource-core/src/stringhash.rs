@@ -5,10 +5,8 @@
 //! XOR with the remaining length, wrapping 32-bit integer arithmetic) so that
 //! file colours and directory layouts match the original program.
 
-#[cfg(feature = "glam")]
 use crate::math::normalise3;
-#[cfg(feature = "glam")]
-use glam::{Vec2, Vec3};
+use crate::vec::{Vec2, Vec3};
 
 /// Default hash seed (`gStringHashSeed` in the C++ code).
 pub const DEFAULT_SEED: i32 = 31;
@@ -47,7 +45,6 @@ impl StringHasher {
     }
 
     /// `vec2Hash`: a unit direction derived from the hash.
-    #[cfg(feature = "glam")]
     pub fn vec2_hash(&self, s: &str) -> Vec2 {
         let hash = self.hash(s);
         let x = (hash / 7) % 255 - 127;
@@ -58,7 +55,6 @@ impl StringHasher {
     }
 
     /// `vec3Hash`.
-    #[cfg(feature = "glam")]
     pub fn vec3_hash(&self, s: &str) -> Vec3 {
         let hash = self.hash(s);
         let x = (hash / 7) % 255 - 127;
@@ -68,7 +64,6 @@ impl StringHasher {
     }
 
     /// `colourHash`: a normalised RGB colour derived from the hash.
-    #[cfg(feature = "glam")]
     pub fn colour_hash(&self, s: &str) -> Vec3 {
         Vec3::from(self.colour_rgb(s))
     }
@@ -94,7 +89,7 @@ impl StringHasher {
     }
 }
 
-#[cfg(all(test, feature = "glam"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

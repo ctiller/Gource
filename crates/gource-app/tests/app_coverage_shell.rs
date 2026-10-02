@@ -62,7 +62,7 @@ fn test_shell_f11_toggle_frameless_and_delay() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).expect("create app");
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     app.frame(0.016, viewport, &mut list);
 
@@ -132,7 +132,7 @@ fn test_shell_multi_repo_loop_cycle_and_stop_time() {
 
     let mut app = GourceApp::new(config, AppOptions::default()).expect("create app");
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     // Run first repo until it stops (0.01s)
     for _ in 0..10 {
@@ -199,7 +199,7 @@ fn test_shell_recording_multi_repo_stops_at_end() {
     };
     let mut app = GourceApp::new(config, opts).expect("create app");
     let viewport = Viewport::new(800, 600);
-    let mut list = DrawList::new(glam::UVec2::new(800, 600));
+    let mut list = DrawList::new(gource_core::UVec2::new(800, 600));
 
     // Run until finish or 1000 frames
     let mut frames = 0;

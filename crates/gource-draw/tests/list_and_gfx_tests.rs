@@ -1,4 +1,4 @@
-use glam::{UVec2, Vec2, Vec4};
+use gource_core::{UVec2, Vec2, Vec4};
 use gource_draw::Gfx;
 use gource_draw::list::{DrawList, Material, TextureId, Vertex};
 
@@ -91,8 +91,10 @@ fn test_drawlist_bloom_faded() {
 
 #[test]
 fn test_projection_to_screen_len() {
-    let p =
-        gource_draw::Projection::new(glam::Vec3::new(0.0, 0.0, -100.0), Vec2::new(800.0, 600.0));
+    let p = gource_draw::Projection::new(
+        gource_core::Vec3::new(0.0, 0.0, -100.0),
+        Vec2::new(800.0, 600.0),
+    );
     let len_screen = p.to_screen_len(10.0);
     assert!((len_screen - 30.0).abs() < 1e-4);
 }

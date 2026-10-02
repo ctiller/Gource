@@ -26,7 +26,7 @@
 
 use crate::list::DrawList;
 use crate::texture::TextureStore;
-use glam::{Vec2, Vec4};
+use gource_core::{Vec2, Vec4};
 use std::path::Path;
 
 /// A loaded font face (outline data).

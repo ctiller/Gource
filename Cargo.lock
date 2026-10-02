@@ -3036,7 +3036,6 @@ name = "gource"
 version = "0.57.0"
 dependencies = [
  "bevy",
- "glam",
  "gource-app",
  "gource-core",
  "gource-draw",
@@ -3053,7 +3052,6 @@ name = "gource-app"
 version = "0.57.0"
 dependencies = [
  "fastrand",
- "glam",
  "gource-core",
  "gource-draw",
  "gource-history",
@@ -3073,7 +3071,6 @@ name = "gource-core"
 version = "0.57.0"
 dependencies = [
  "chrono",
- "glam",
  "log",
  "regex",
 ]
@@ -3083,7 +3080,6 @@ name = "gource-draw"
 version = "0.57.0"
 dependencies = [
  "ab_glyph",
- "glam",
  "gource-core",
  "image",
  "log",
@@ -3113,7 +3109,6 @@ dependencies = [
 name = "gource-scene"
 version = "0.57.0"
 dependencies = [
- "glam",
  "gource-core",
  "gource-model",
  "gource-settings",
@@ -3144,7 +3139,6 @@ name = "gource-settings"
 version = "0.57.0"
 dependencies = [
  "fancy-regex",
- "glam",
  "gource-core",
  "log",
  "tempfile",
@@ -3173,7 +3167,6 @@ dependencies = [
 name = "gource-web"
 version = "0.57.0"
 dependencies = [
- "glam",
  "gource-app",
  "gource-core",
  "gource-draw",
@@ -3192,7 +3185,7 @@ dependencies = [
 name = "gource-webgl"
 version = "0.57.0"
 dependencies = [
- "glam",
+ "gource-core",
  "gource-draw",
  "js-sys",
  "log",
@@ -3204,7 +3197,6 @@ dependencies = [
 name = "gource-widgets"
 version = "0.57.0"
 dependencies = [
- "glam",
  "gource-core",
  "gource-draw",
  "log",

@@ -4,7 +4,7 @@ use crate::action::Action;
 use crate::file::FileId;
 use crate::pawn::Pawn;
 use crate::{Fx, IVec2};
-use glam::{UVec2, Vec2, Vec3};
+use gource_core::{UVec2, Vec2, Vec3};
 use slotmap::new_key_type;
 
 /// Opaque handle to a user texture, decoupled from the rendering backend.

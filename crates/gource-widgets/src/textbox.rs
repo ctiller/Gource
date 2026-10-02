@@ -5,7 +5,7 @@
 //! and text placed within the box. Clamps position so the tooltip does not fall off
 //! the screen edges.
 
-use glam::{Vec2, Vec3, Vec4};
+use gource_core::{Vec2, Vec3, Vec4};
 use gource_draw::font::TextStyle;
 use gource_draw::{DrawList, FontId, Gfx};
 
@@ -262,7 +262,7 @@ impl TextBox {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glam::UVec2;
+    use gource_core::UVec2;
     use gource_draw::TextureId;
 
     #[test]

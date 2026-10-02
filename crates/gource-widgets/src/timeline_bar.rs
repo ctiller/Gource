@@ -4,8 +4,8 @@
 //! with commit-density & churn histogram, playhead, clip-in/clip-out range,
 //! markers, and hover tooltip directly into [`DrawList`] using [`Gfx`].
 
-use glam::{Vec2, Vec4};
 use gource_core::bounds::Bounds2D;
+use gource_core::{Vec2, Vec4};
 use gource_draw::font::TextStyle;
 use gource_draw::{DrawList, FontId, Gfx};
 
@@ -634,7 +634,7 @@ impl TimelineBarWidget {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glam::UVec2;
+    use gource_core::UVec2;
 
     #[test]
     fn test_timeline_bar_widget_resize_and_bounds() {

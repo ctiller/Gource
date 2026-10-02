@@ -1,7 +1,7 @@
 //! Invariant and coverage tests for dirnode, pawn, user, and file components.
 
-use glam::{UVec2, Vec2, Vec3};
 use gource_core::StringHasher;
+use gource_core::{UVec2, Vec2, Vec3};
 use gource_model::commit::{Commit, CommitFile, FileAction};
 use gource_scene::ONE;
 use gource_scene::dirnode::DirNode;

@@ -3,8 +3,8 @@
 //! Maintains a legend of file types with per-extension counts, colours, sorting,
 //! sliding/fade transitions, and interval-based periodic layout updates.
 
-use glam::{Vec2, Vec3, Vec4};
 use gource_core::StringHasher;
+use gource_core::{Vec2, Vec3, Vec4};
 use gource_draw::font::TextStyle;
 use gource_draw::list::QUAD_UVS;
 use gource_draw::{DrawList, FontId, Gfx, TextureId};
@@ -476,7 +476,7 @@ impl FileKey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glam::UVec2;
+    use gource_core::UVec2;
 
     fn mock_text_width(s: &str) -> f32 {
         s.len() as f32 * 8.0

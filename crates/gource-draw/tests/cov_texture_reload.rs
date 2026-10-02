@@ -1,4 +1,4 @@
-use glam::UVec2;
+use gource_core::UVec2;
 use gource_draw::texture::{TextureError, TextureOptions, TextureStore};
 use image::{ImageBuffer, Rgba};
 use tempfile::tempdir;

@@ -278,7 +278,10 @@ pub fn handle_requests(
             }
             PlatformRequest::WarpCursor(pos) => {
                 if let Some((window, _)) = primary.as_mut() {
-                    window.set_physical_cursor_position(Some(pos.as_dvec2()));
+                    window.set_physical_cursor_position(Some(bevy::math::DVec2::new(
+                        pos.x as f64,
+                        pos.y as f64,
+                    )));
                 }
             }
         }

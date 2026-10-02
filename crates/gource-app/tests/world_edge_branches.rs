@@ -1,10 +1,10 @@
-use glam::{Vec2, Vec3};
 use gource_app::WorldDraw;
 use gource_app::action::{Action, ActionKind};
 use gource_app::dirnode::DirNode;
 use gource_app::file::{File, FileId};
 use gource_app::user::User;
 use gource_app::world::{SceneTextures, World};
+use gource_core::{Vec2, Vec3};
 use gource_draw::Projection;
 use gource_draw::list::{DrawList, TextureId};
 use gource_settings::GourceSettings;
@@ -203,7 +203,7 @@ fn test_world_uncovered_branches() {
         beam: TextureId(2),
         default_user: TextureId(3),
     };
-    let mut list = DrawList::new(glam::UVec2::new(1280, 720));
+    let mut list = DrawList::new(gource_core::UVec2::new(1280, 720));
     world.draw_scene(&mut list, &proj, &settings, &textures);
 
     // 11. world.rs:339 - add_file_action with unknown username creates user
