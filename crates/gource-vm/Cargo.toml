@@ -1,0 +1,11 @@
+[package]
+name = "gource-vm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Display view-models (TimelineVM, DashboardVM, LegendVM, SettingsVM, SceneFrame, ...) for Gource"
+
+[dependencies]
+gource-core = { path = "../gource-core" }
+gource-model = { path = "../gource-model" }
+serde = { version = "1.0", features = ["derive"] }

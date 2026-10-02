@@ -1,0 +1,23 @@
+[package]
+name = "gource-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Bevy-free headless Gource CLI for log export, stats, and offscreen PPM/video rendering"
+
+[[bin]]
+name = "gource-cli"
+path = "src/main.rs"
+
+[dependencies]
+gource-app = { path = "../gource-app" }
+gource-core = { path = "../gource-core" }
+gource-draw = { path = "../gource-draw" }
+gource-history = { path = "../gource-history" }
+gource-render = { path = "../gource-render" }
+gource-settings = { path = "../gource-settings" }
+gource-vcs = { path = "../gource-vcs" }
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[dev-dependencies]
+tempfile = "3"

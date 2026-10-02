@@ -1,0 +1,13 @@
+[package]
+name = "gource-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Plain-wgpu DrawList renderer for Gource (offscreen and surface)"
+
+[dependencies]
+bytemuck = { version = "1.25", features = ["derive"] }
+futures-lite = "2.6"
+gource-core = { path = "../gource-core" }
+gource-draw = { path = "../gource-draw" }
+wgpu = { version = "29.0", default-features = false, features = ["wgsl", "vulkan", "metal", "dx12"] }

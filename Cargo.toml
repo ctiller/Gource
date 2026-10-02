@@ -18,7 +18,10 @@ gource-vcs = { path = "crates/gource-vcs", default-features = false }
 gource-settings = { path = "crates/gource-settings" }
 gource-app = { path = "crates/gource-app" }
 gource-scene = { path = "crates/gource-scene" }
+gource-vm = { path = "crates/gource-vm" }
 gource-widgets = { path = "crates/gource-widgets" }
+gource-render = { path = "crates/gource-render" }
+gource-cli = { path = "crates/gource-cli" }
 
 # External crates. Versions are aligned with what Bevy already pulls in to
 # avoid duplicate builds.

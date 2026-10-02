@@ -3067,6 +3067,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "gource-cli"
+version = "0.57.0"
+dependencies = [
+ "gource-app",
+ "gource-core",
+ "gource-draw",
+ "gource-history",
+ "gource-render",
+ "gource-settings",
+ "gource-vcs",
+ "image",
+ "tempfile",
+]
+
+[[package]]
 name = "gource-core"
 version = "0.57.0"
 dependencies = [
@@ -3103,6 +3118,17 @@ name = "gource-model"
 version = "0.57.0"
 dependencies = [
  "gource-core",
+]
+
+[[package]]
+name = "gource-render"
+version = "0.57.0"
+dependencies = [
+ "bytemuck",
+ "futures-lite",
+ "gource-core",
+ "gource-draw",
+ "wgpu",
 ]
 
 [[package]]
@@ -3161,6 +3187,15 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "gource-vm"
+version = "0.57.0"
+dependencies = [
+ "gource-core",
+ "gource-model",
+ "serde",
 ]
 
 [[package]]
