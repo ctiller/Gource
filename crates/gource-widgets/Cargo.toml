@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 gource-core = { workspace = true }
 gource-draw = { workspace = true, default-features = false }
+gource-vm = { workspace = true }
 log = { workspace = true }
 
 [dev-dependencies]

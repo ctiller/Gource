@@ -15,18 +15,15 @@ use gource_history::{
     ChangeOp, ChurnDecayModel, CohortMode, CommitInput, FileChangeInput, History, HistoryBuilder,
 };
 use gource_settings::{
-    CameraMode, DashboardPanel as SettingsDashboardPanel, FileColourMode, FileSizeMetric,
-    GourceSettings, SettingClass, SettingId, SettingValue, SettingsPatch, TuningSettings,
+    CameraMode, FileColourMode, FileSizeMetric, GourceSettings, SettingClass, SettingId,
+    SettingValue, SettingsPatch, TuningSettings,
 };
 use gource_vcs::CommitLog;
 use gource_vcs::commit::{Commit, FileAction};
 use gource_vcs::logmill::LogMill;
 use gource_widgets::caption::RCaption;
 use gource_widgets::cursor::{MouseButtonKind, MouseCursor};
-use gource_widgets::dashboard::{
-    DashboardPanel, DashboardStack, EditorsLeaderboardPanel, SparklinePanel, StackedDiffBarsPanel,
-    TheseusCohortAreaPanel, format_compact_u64,
-};
+use gource_widgets::dashboard::DashboardStack;
 use gource_widgets::key::FileKey;
 use gource_widgets::search::{SearchItemKind, SearchWidget};
 use gource_widgets::slider::PositionSlider;
@@ -1253,151 +1250,9 @@ impl Gource {
 
     /// Renders the analytics dashboard stack if enabled.
     pub fn draw_dashboards(&mut self, gfx: &mut Gfx, list: &mut DrawList, viewport: Viewport) {
-        if !self.settings.hide_dashboards && !self.settings.dashboards.is_empty() {
-            self.dashboards.clear();
-            let hist = self.ensure_history();
-            let playhead_commit_idx = if hist.is_empty() {
-                0
-            } else {
-                match hist
-                    .commits
-                    .binary_search_by_key(&self.currtime, |c| c.timestamp)
-                {
-                    Ok(idx) => idx,
-                    Err(idx) => {
-                        if idx == 0 {
-                            0
-                        } else {
-                            idx - 1
-                        }
-                    }
-                }
-            };
-
-            let period_secs = match self.settings.dashboard_period {
-                gource_settings::DashboardPeriod::Day => 86400,
-                gource_settings::DashboardPeriod::Week => 7 * 86400,
-                gource_settings::DashboardPeriod::Month => 30 * 86400,
-                gource_settings::DashboardPeriod::Year => 365 * 86400,
-            };
-            let window_secs = (self.settings.dashboard_window_days as i64) * 86400;
-            let series_data = if let (Some(cached_idx), Some(cached_data)) =
-                (self.cached_dashboard_commit, &self.cached_dashboard_data)
-            {
-                if cached_idx == playhead_commit_idx {
-                    cached_data.clone()
-                } else {
-                    let data = gource_history::DashboardSeriesData::extract(
-                        &hist,
-                        playhead_commit_idx,
-                        period_secs,
-                        window_secs,
-                        20,
-                    );
-                    self.cached_dashboard_commit = Some(playhead_commit_idx);
-                    self.cached_dashboard_data = Some(data.clone());
-                    data
-                }
-            } else {
-                let data = gource_history::DashboardSeriesData::extract(
-                    &hist,
-                    playhead_commit_idx,
-                    period_secs,
-                    window_secs,
-                    20,
-                );
-                self.cached_dashboard_commit = Some(playhead_commit_idx);
-                self.cached_dashboard_data = Some(data.clone());
-                data
-            };
-
-            for panel_kind in &self.settings.dashboards {
-                match panel_kind {
-                    SettingsDashboardPanel::Lines => {
-                        let p = SparklinePanel::new(
-                            "Lines of Code",
-                            format_compact_u64(series_data.total_lines),
-                        )
-                        .with_values(&series_data.lines_sparkline)
-                        .with_delta(
-                            format!("{:+}", series_data.lines_delta_in_window),
-                            series_data.lines_delta_in_window >= 0,
-                        );
-                        self.dashboards.add_panel(DashboardPanel::Sparkline(p));
-                    }
-                    SettingsDashboardPanel::Diff => {
-                        let diffs: Vec<(u64, u64)> = series_data
-                            .diff_bars
-                            .iter()
-                            .map(|&(a, r)| (a as u64, r as u64))
-                            .collect();
-                        let p = StackedDiffBarsPanel::new(
-                            "Code Churn",
-                            format!(
-                                "+{} -{}",
-                                format_compact_u64(diffs.iter().map(|d| d.0).sum()),
-                                format_compact_u64(diffs.iter().map(|d| d.1).sum())
-                            ),
-                        )
-                        .with_diffs(&diffs);
-                        self.dashboards
-                            .add_panel(DashboardPanel::StackedDiffBars(p));
-                    }
-                    SettingsDashboardPanel::Theseus => {
-                        let cohort_colors: Vec<gource_core::Vec3> =
-                            (0..series_data.theseus_cohorts.cohort_labels.len())
-                                .map(DashboardStack::cohort_palette)
-                                .collect();
-                        let p = TheseusCohortAreaPanel::new("Git-of-Theseus")
-                            .with_cohorts(
-                                &series_data.theseus_cohorts.cohort_labels,
-                                &cohort_colors,
-                                &series_data.theseus_cohorts.samples,
-                            )
-                            .with_analytics(
-                                series_data.theseus_cohorts.half_life_days,
-                                Some(series_data.theseus_cohorts.churn_rate),
-                            );
-                        self.dashboards.add_panel(DashboardPanel::TheseusCohort(p));
-                    }
-                    SettingsDashboardPanel::Editors => {
-                        let p = EditorsLeaderboardPanel::new(
-                            "Top Contributors",
-                            series_data.active_editors_count,
-                        )
-                        .with_rows(
-                            &series_data
-                                .top_editors
-                                .iter()
-                                .map(|(n, c, a, b)| {
-                                    (n.clone(), gource_core::Vec3::from(*c), *a, *b)
-                                })
-                                .collect::<Vec<_>>(),
-                        );
-                        self.dashboards
-                            .add_panel(DashboardPanel::EditorsLeaderboard(p));
-                    }
-                    SettingsDashboardPanel::Commits => {
-                        let p = SparklinePanel::new(
-                            "Commits",
-                            format_compact_u64(series_data.commits_in_window as u64),
-                        )
-                        .with_values(&series_data.commits_per_period)
-                        .with_line_colour(gource_core::Vec3::new(0.95, 0.65, 0.2));
-                        self.dashboards.add_panel(DashboardPanel::Sparkline(p));
-                    }
-                    SettingsDashboardPanel::Churn => {
-                        let p = SparklinePanel::new(
-                            "Files",
-                            format_compact_u64(series_data.total_files as u64),
-                        )
-                        .with_values(&series_data.files_sparkline)
-                        .with_line_colour(gource_core::Vec3::new(0.85, 0.4, 0.9));
-                        self.dashboards.add_panel(DashboardPanel::Sparkline(p));
-                    }
-                }
-            }
-
+        let vm = crate::present::present_dashboard(self);
+        if vm.visible {
+            self.dashboards.sync_from_vm(&vm);
             self.dashboards.draw(
                 gfx,
                 list,

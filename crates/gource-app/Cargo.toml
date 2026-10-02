@@ -17,6 +17,7 @@ gource-core = { workspace = true }
 gource-draw = { path = "../gource-draw", default-features = false }
 gource-settings = { workspace = true }
 gource-vcs = { workspace = true }
+gource-vm = { workspace = true }
 gource-widgets = { workspace = true }
 gource-history = { path = "../gource-history" }
 gource-model = { workspace = true }

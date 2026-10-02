@@ -26,6 +26,7 @@ pub mod checkpoint;
 pub mod gource;
 pub mod input;
 pub mod platform;
+pub mod present;
 pub mod scene_draw;
 pub mod scene_history;
 pub mod scrubber;

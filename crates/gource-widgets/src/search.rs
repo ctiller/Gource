@@ -24,71 +24,7 @@ pub const MAX_DISPLAY_RESULTS: usize = 8;
 /// Fade in/out duration in seconds.
 pub const SEARCH_FADE_TIME: f32 = 0.15;
 
-/// Category of item found in search.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SearchItemKind {
-    File,
-    Directory,
-    User,
-}
-
-impl SearchItemKind {
-    pub fn badge_label(&self) -> &'static str {
-        match self {
-            Self::File => "FILE",
-            Self::Directory => "DIR",
-            Self::User => "USER",
-        }
-    }
-
-    pub fn badge_colour(&self) -> Vec4 {
-        match self {
-            Self::File => Vec4::new(0.25, 0.65, 0.95, 1.0), // Blue/Cyan
-            Self::Directory => Vec4::new(0.95, 0.75, 0.25, 1.0), // Amber/Yellow
-            Self::User => Vec4::new(0.35, 0.85, 0.45, 1.0), // Green
-        }
-    }
-}
-
-/// A matched search candidate.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SearchItem {
-    pub kind: SearchItemKind,
-    pub name: String,
-    pub detail: String,
-    pub id: u64,
-}
-
-impl SearchItem {
-    pub fn new_file(id: u64, name: impl Into<String>, path: impl Into<String>) -> Self {
-        Self {
-            kind: SearchItemKind::File,
-            name: name.into(),
-            detail: path.into(),
-            id,
-        }
-    }
-
-    pub fn new_dir(id: u64, path: impl Into<String>) -> Self {
-        let p = path.into();
-        Self {
-            kind: SearchItemKind::Directory,
-            name: p.clone(),
-            detail: p,
-            id,
-        }
-    }
-
-    pub fn new_user(id: u64, name: impl Into<String>) -> Self {
-        let n = name.into();
-        Self {
-            kind: SearchItemKind::User,
-            name: n.clone(),
-            detail: n,
-            id,
-        }
-    }
-}
+pub use gource_vm::search::{SearchItem, SearchItemKind};
 
 /// Interactive Search Widget.
 #[derive(Debug, Clone, PartialEq)]

@@ -8,39 +8,7 @@ use gource_core::{Vec2, Vec3, Vec4};
 use gource_draw::font::TextStyle;
 use gource_draw::{DrawList, FontId, Gfx};
 
-/// Format an integer into compact human-readable representation:
-/// e.g. `950 -> "950"`, `12_400 -> "12.4k"`, `1_500_000 -> "1.5M"`.
-pub fn format_compact_u64(n: u64) -> String {
-    if n >= 1_000_000_000 {
-        let v = n as f64 / 1_000_000_000.0;
-        if v >= 100.0 {
-            format!("{:.0}B", v)
-        } else if v >= 10.0 {
-            format!("{:.1}B", v)
-        } else {
-            format!("{:.2}B", v)
-        }
-    } else if n >= 1_000_000 {
-        let v = n as f64 / 1_000_000.0;
-        if v >= 100.0 {
-            format!("{:.0}M", v)
-        } else {
-            format!("{:.1}M", v)
-        }
-    } else if n >= 10_000 {
-        let v = n as f64 / 1_000.0;
-        if v >= 100.0 {
-            format!("{:.0}k", v)
-        } else {
-            format!("{:.1}k", v)
-        }
-    } else if n >= 1_000 {
-        let v = n as f64 / 1_000.0;
-        format!("{:.1}k", v)
-    } else {
-        format!("{n}")
-    }
-}
+pub use gource_vm::dashboard::format_compact_u64;
 
 /// Helper to render the shared card background, drop shadow, and 1px border.
 pub fn draw_card_base(list: &mut DrawList, pos: Vec2, size: Vec2, alpha: f32) {
@@ -866,6 +834,42 @@ impl DashboardStack {
 
     pub fn clear(&mut self) {
         self.panels.clear();
+    }
+
+    pub fn sync_from_vm(&mut self, vm: &gource_vm::dashboard::DashboardVM) {
+        self.clear();
+        if !vm.visible {
+            return;
+        }
+        for panel in &vm.panels {
+            match panel {
+                gource_vm::dashboard::DashboardPanelVM::Sparkline(s) => {
+                    let mut p = SparklinePanel::new(&s.title, &s.value_str)
+                        .with_values(&s.values)
+                        .with_line_colour(s.line_colour);
+                    if let Some(ref d) = s.delta_str {
+                        p = p.with_delta(d.clone(), s.delta_positive);
+                    }
+                    self.add_panel(DashboardPanel::Sparkline(p));
+                }
+                gource_vm::dashboard::DashboardPanelVM::StackedDiffBars(d) => {
+                    let p =
+                        StackedDiffBarsPanel::new(&d.title, &d.summary_str).with_diffs(&d.diffs);
+                    self.add_panel(DashboardPanel::StackedDiffBars(p));
+                }
+                gource_vm::dashboard::DashboardPanelVM::TheseusCohort(t) => {
+                    let p = TheseusCohortAreaPanel::new(&t.title)
+                        .with_cohorts(&t.cohort_labels, &t.cohort_colours, &t.samples)
+                        .with_analytics(t.half_life_days, t.churn_rate);
+                    self.add_panel(DashboardPanel::TheseusCohort(p));
+                }
+                gource_vm::dashboard::DashboardPanelVM::EditorsLeaderboard(e) => {
+                    let p = EditorsLeaderboardPanel::new(&e.title, e.active_editors_count)
+                        .with_rows(&e.rows);
+                    self.add_panel(DashboardPanel::EditorsLeaderboard(p));
+                }
+            }
+        }
     }
 
     /// Palette of 12 distinct, pleasant colours for Git-of-Theseus cohorts.

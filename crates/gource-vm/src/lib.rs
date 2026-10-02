@@ -21,7 +21,7 @@ pub use dashboard::{
 };
 pub use legend::{LegendRowVM, LegendVM};
 pub use scene::{
-    ActionBeamDrawItem, DirDrawItem, EdgeDrawItem, FileDrawItem, SceneFrame, UserDrawItem,
+    ActionBeamDrawItem, DirDrawItem, EdgeDrawItem, FileDrawItem, SceneFrame, SceneVM, UserDrawItem,
 };
 pub use search::{SearchItem, SearchItemKind, SearchVM};
 pub use settings::{SettingsVM, TuningRowView, TuningTab};

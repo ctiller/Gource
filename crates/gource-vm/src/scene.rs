@@ -62,6 +62,9 @@ pub struct ActionBeamDrawItem {
 }
 
 /// Complete projected scene view for one frame.
+pub type SceneVM = SceneFrame;
+
+/// Complete projected scene view for one frame.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct SceneFrame {
     pub dirs: Vec<DirDrawItem>,

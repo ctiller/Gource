@@ -3059,6 +3059,7 @@ dependencies = [
  "gource-scene",
  "gource-settings",
  "gource-vcs",
+ "gource-vm",
  "gource-widgets",
  "log",
  "proptest",
@@ -3234,6 +3235,7 @@ version = "0.57.0"
 dependencies = [
  "gource-core",
  "gource-draw",
+ "gource-vm",
  "log",
  "tempfile",
 ]
