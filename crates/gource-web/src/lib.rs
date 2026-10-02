@@ -8,6 +8,7 @@
 //! [`remote`] and [`input`] are platform-independent (and tested natively);
 //! the browser glue in `web` only exists on wasm32.
 
+pub mod glyph;
 pub mod input;
 pub mod remote;
 

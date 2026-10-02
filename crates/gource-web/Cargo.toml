@@ -12,7 +12,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 gource-app = { path = "../gource-app", default-features = false }
 gource-core = { workspace = true }
-gource-draw = { workspace = true }
+gource-draw = { path = "../gource-draw", default-features = false }
 gource-model = { workspace = true }
 gource-settings = { workspace = true }
 gource-vcs = { workspace = true }
@@ -23,12 +23,14 @@ wasm-bindgen = "0.2.129"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3.106"
 web-sys = { version = "0.3.106", features = [
+    "CanvasRenderingContext2d",
     "console",
     "Document",
     "Element",
     "Event",
     "EventTarget",
     "HtmlElement",
+    "ImageData",
     "Location",
     "HtmlCanvasElement",
     "KeyboardEvent",
@@ -38,6 +40,7 @@ web-sys = { version = "0.3.106", features = [
     "ReadableStream",
     "ReadableStreamDefaultReader",
     "Response",
+    "TextMetrics",
     "WebGl2RenderingContext",
     "Window",
 ] }

@@ -13,7 +13,7 @@ repository = "https://github.com/acaudwell/Gource"
 # Internal crates
 gource-core = { path = "crates/gource-core", default-features = false }
 gource-model = { path = "crates/gource-model" }
-gource-draw = { path = "crates/gource-draw" }
+gource-draw = { path = "crates/gource-draw", default-features = false }
 gource-vcs = { path = "crates/gource-vcs", default-features = false }
 gource-settings = { path = "crates/gource-settings" }
 gource-app = { path = "crates/gource-app" }

@@ -7,13 +7,14 @@ license.workspace = true
 rust-version.workspace = true
 
 [features]
-default = ["gix"]
+default = ["gix", "ab-glyph"]
 # In-process git reading via gource-vcs. Disable for wasm builds.
 gix = ["gource-vcs/gix"]
+ab-glyph = ["gource-draw/ab-glyph"]
 
 [dependencies]
 gource-core = { workspace = true }
-gource-draw = { workspace = true }
+gource-draw = { path = "../gource-draw", default-features = false }
 gource-settings = { workspace = true }
 gource-vcs = { workspace = true }
 gource-widgets = { workspace = true }

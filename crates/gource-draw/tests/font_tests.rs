@@ -25,6 +25,7 @@ struct FreeTypeSize {
     glyphs: HashMap<char, FreeTypeGlyph>,
 }
 
+#[allow(dead_code)]
 fn load_goldens() -> Vec<FreeTypeSize> {
     let content = include_str!("data/freesans_metrics.txt");
     let mut sizes: Vec<FreeTypeSize> = Vec::new();
@@ -100,6 +101,7 @@ fn load_goldens() -> Vec<FreeTypeSize> {
     sizes
 }
 
+#[cfg(feature = "ab-glyph")]
 #[test]
 fn test_font_metrics_parity_with_freetype() {
     let goldens = load_goldens();

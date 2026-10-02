@@ -127,7 +127,10 @@ pub async fn start(
         feed: Some(feed.clone()),
         ..Default::default()
     };
-    let app = GourceApp::new(config, options).map_err(|e| e.to_string())?;
+    let mut app = GourceApp::new(config, options).map_err(|e| e.to_string())?;
+    app.gfx_mut()
+        .fonts
+        .set_rasterizer(Box::new(crate::glyph::Canvas2dGlyphRasterizer::new()));
 
     let filter = FilterSpec::from_query(&filter).map_err(|e| e.to_string())?;
     let server = if server.is_empty() {

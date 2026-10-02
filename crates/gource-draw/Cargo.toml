@@ -6,10 +6,14 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+default = ["ab-glyph"]
+ab-glyph = ["dep:ab_glyph"]
+
 [dependencies]
 gource-core = { workspace = true }
 image = { workspace = true }
-ab_glyph = { workspace = true }
+ab_glyph = { workspace = true, optional = true }
 log = { workspace = true }
 thiserror = { workspace = true }
 

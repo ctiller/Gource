@@ -1,8 +1,9 @@
 //! Fonts and text rendering (replaces `core/fxfont.cpp`, which used FreeType).
 //!
-//! Glyphs are rasterised with `ab_glyph` into shared atlas pages registered in
-//! the [`TextureStore`] (RGBA8 with white RGB and coverage in alpha), and text
-//! is emitted as textured quads into a [`DrawList`] with [`Material::Alpha`].
+//! Glyphs are rasterised with pluggable [`GlyphRasterizer`] backends (e.g. `ab_glyph` or
+//! browser Canvas2D) into shared atlas pages registered in the [`TextureStore`]
+//! (RGBA8 with white RGB and coverage in alpha), and text is emitted as textured quads
+//! into a [`DrawList`] with [`Material::Alpha`].
 //!
 //! Layout must follow FXFont so HUD elements line up like the original:
 //! * a font instance is a face at an integer pixel size, meaning the em size in
@@ -24,9 +25,10 @@
 //!
 //! [`Material::Alpha`]: crate::Material::Alpha
 
-use crate::list::DrawList;
+use crate::list::{DrawList, TextureId};
 use crate::texture::TextureStore;
 use gource_core::{Vec2, Vec4};
+use std::collections::HashMap;
 use std::path::Path;
 
 /// A loaded font face (outline data).
@@ -46,6 +48,193 @@ pub enum FontError {
     },
     #[error("invalid font data in '{0}'")]
     Invalid(String),
+}
+
+/// Metrics for a font face at a specific pixel size.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FontMetrics {
+    pub ascender: f32,
+    pub descender: f32,
+    pub max_advance: f32,
+}
+
+/// Rasterized glyph coverage bitmap and bounding box relative to pen baseline.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RasterizedGlyph {
+    pub width: u32,
+    pub height: u32,
+    /// Horizontal offset from pen position (`bounds.min.x`).
+    pub min_x: f32,
+    /// Vertical offset from baseline (`bounds.min.y`, negative above baseline).
+    pub min_y: f32,
+    /// Alpha coverage bytes (`width * height`, each `0..=255`).
+    pub coverage: Vec<u8>,
+}
+
+/// Pluggable backend that measures and rasterises glyphs for [`FontStore`].
+pub trait GlyphRasterizer: Send + Sync {
+    /// Load and validate a font face from `data` (may be empty for system/Canvas2D fonts).
+    fn load_face(&mut self, name: &str, data: &[u8]) -> Result<FaceId, FontError>;
+    /// Return vertical and horizontal metrics for `face` at pixel `size`.
+    fn metrics(&self, face: FaceId, size: u32) -> FontMetrics;
+    /// Return rounded horizontal advance in pixels for `ch` at `(face, size)`.
+    fn advance(&self, face: FaceId, size: u32, ch: char) -> f32;
+    /// Return the tight pixel height of `ch` at `(face, size)` for `max_height` precaching.
+    fn glyph_height(&self, face: FaceId, size: u32, ch: char) -> f32;
+    /// Rasterise `ch` at `(face, size)` into a tight coverage buffer, or `None` if invisible.
+    fn rasterize(&self, face: FaceId, size: u32, ch: char) -> Option<RasterizedGlyph>;
+}
+
+/// Glyph rasterizer backed by `ab_glyph`.
+#[cfg(feature = "ab-glyph")]
+#[derive(Default)]
+pub struct AbGlyphRasterizer {
+    faces: Vec<ab_glyph::FontArc>,
+}
+
+#[cfg(feature = "ab-glyph")]
+impl GlyphRasterizer for AbGlyphRasterizer {
+    fn load_face(&mut self, name: &str, data: &[u8]) -> Result<FaceId, FontError> {
+        let font = ab_glyph::FontArc::try_from_vec(data.to_vec())
+            .map_err(|_| FontError::Invalid(name.to_string()))?;
+        let id = FaceId(self.faces.len() as u32);
+        self.faces.push(font);
+        Ok(id)
+    }
+
+    fn metrics(&self, face: FaceId, size: u32) -> FontMetrics {
+        use ab_glyph::{Font, ScaleFont};
+        let arc = &self.faces[face.0 as usize];
+        let em_size = arc.units_per_em().unwrap_or(1000.0);
+        let unit_scale_y = size as f32 / em_size;
+        let ascender = arc.ascent_unscaled() * unit_scale_y;
+        let descender = arc.descent_unscaled() * unit_scale_y;
+        let scale = ab_glyph::PxScale::from(size as f32 * arc.height_unscaled() / em_size);
+        let scaled_font = arc.as_scaled(scale);
+        let max_advance = scaled_font.h_advance(scaled_font.glyph_id('M')).ceil();
+        FontMetrics {
+            ascender,
+            descender,
+            max_advance,
+        }
+    }
+
+    fn advance(&self, face: FaceId, size: u32, ch: char) -> f32 {
+        use ab_glyph::{Font, ScaleFont};
+        let arc = &self.faces[face.0 as usize];
+        let em_size = arc.units_per_em().unwrap_or(1000.0);
+        let scale = ab_glyph::PxScale::from(size as f32 * arc.height_unscaled() / em_size);
+        let scaled_font = arc.as_scaled(scale);
+        let glyph_id = scaled_font.glyph_id(ch);
+        let unhinted_adv = scaled_font.h_advance(glyph_id);
+        unhinted_adv.round()
+    }
+
+    fn glyph_height(&self, face: FaceId, size: u32, ch: char) -> f32 {
+        use ab_glyph::{Font, ScaleFont};
+        let arc = &self.faces[face.0 as usize];
+        let em_size = arc.units_per_em().unwrap_or(1000.0);
+        let scale = ab_glyph::PxScale::from(size as f32 * arc.height_unscaled() / em_size);
+        let scaled_font = arc.as_scaled(scale);
+        if let Some(outlined) = scaled_font.outline_glyph(scaled_font.scaled_glyph(ch)) {
+            let bounds = outlined.px_bounds();
+            bounds.height().ceil()
+        } else {
+            0.0
+        }
+    }
+
+    fn rasterize(&self, face: FaceId, size: u32, ch: char) -> Option<RasterizedGlyph> {
+        use ab_glyph::{Font, ScaleFont};
+        let arc = &self.faces[face.0 as usize];
+        let em_size = arc.units_per_em().unwrap_or(1000.0);
+        let scale = ab_glyph::PxScale::from(size as f32 * arc.height_unscaled() / em_size);
+        let scaled_font = arc.as_scaled(scale);
+        let scaled_glyph = scaled_font.scaled_glyph(ch);
+        let outlined = scaled_font.outline_glyph(scaled_glyph)?;
+        let bounds = outlined.px_bounds();
+        let b_w = bounds.width().round() as u32;
+        let b_h = bounds.height().round() as u32;
+
+        if b_w == 0 || b_h == 0 {
+            return None;
+        }
+
+        let mut coverage = vec![0u8; (b_w * b_h) as usize];
+        outlined.draw(|x, y, c| {
+            if x < b_w && y < b_h {
+                coverage[(y * b_w + x) as usize] = (c * 255.0).round().clamp(0.0, 255.0) as u8;
+            }
+        });
+
+        Some(RasterizedGlyph {
+            width: b_w,
+            height: b_h,
+            min_x: bounds.min.x,
+            min_y: bounds.min.y,
+            coverage,
+        })
+    }
+}
+
+/// A fallback glyph rasterizer that accepts valid TTF/OTF or empty font data,
+/// computes proportional metrics, and rasterises non-whitespace characters as simple filled boxes.
+#[derive(Default)]
+pub struct FallbackGlyphRasterizer {
+    face_count: u32,
+}
+
+impl GlyphRasterizer for FallbackGlyphRasterizer {
+    fn load_face(&mut self, name: &str, data: &[u8]) -> Result<FaceId, FontError> {
+        if !data.is_empty() {
+            let valid = data.len() >= 4
+                && (data[0..4] == [0x00, 0x01, 0x00, 0x00]
+                    || &data[0..4] == b"OTTO"
+                    || &data[0..4] == b"true"
+                    || &data[0..4] == b"ttcf");
+            if !valid {
+                return Err(FontError::Invalid(name.to_string()));
+            }
+        }
+        let id = FaceId(self.face_count);
+        self.face_count += 1;
+        Ok(id)
+    }
+
+    fn metrics(&self, _face: FaceId, size: u32) -> FontMetrics {
+        FontMetrics {
+            ascender: size as f32 * 0.8,
+            descender: -(size as f32 * 0.2),
+            max_advance: (size as f32 * 0.6).ceil(),
+        }
+    }
+
+    fn advance(&self, _face: FaceId, size: u32, _ch: char) -> f32 {
+        (size as f32 * 0.5).round()
+    }
+
+    fn glyph_height(&self, _face: FaceId, size: u32, ch: char) -> f32 {
+        if ch.is_whitespace() {
+            0.0
+        } else {
+            (size as f32 * 0.7).round().max(1.0)
+        }
+    }
+
+    fn rasterize(&self, _face: FaceId, size: u32, ch: char) -> Option<RasterizedGlyph> {
+        if ch.is_whitespace() {
+            return None;
+        }
+        let w = ((size as f32 * 0.4).round() as u32).max(1);
+        let h = ((size as f32 * 0.7).round() as u32).max(1);
+        Some(RasterizedGlyph {
+            width: w,
+            height: h,
+            min_x: 0.0,
+            min_y: -(h as f32),
+            coverage: vec![255u8; (w * h) as usize],
+        })
+    }
 }
 
 /// Per-draw text settings (the mutable state of a C++ `FXFont`).
@@ -119,10 +308,6 @@ impl TextStyle {
         self
     }
 }
-
-use crate::list::TextureId;
-use ab_glyph::{Font, FontArc, PxScale, ScaleFont};
-use std::collections::HashMap;
 
 /// Cached data for a single glyph in an instance.
 #[derive(Debug, Clone)]
@@ -208,7 +393,6 @@ impl AtlasPage {
 struct FontInstance {
     face_id: FaceId,
     size: u32,
-    scale: PxScale,
     ascender: f32,
     descender: f32,
     max_advance: f32,
@@ -217,9 +401,9 @@ struct FontInstance {
 }
 
 /// Owns font faces, sized instances, glyph caches and atlas pages.
-#[derive(Default)]
 pub struct FontStore {
-    faces: Vec<FontArc>,
+    rasterizer: Box<dyn GlyphRasterizer>,
+    loaded_faces: Vec<(String, Vec<u8>)>,
     face_names: HashMap<String, FaceId>,
     default_face_id: Option<FaceId>,
     instances: Vec<FontInstance>,
@@ -227,9 +411,67 @@ pub struct FontStore {
     pages: Vec<AtlasPage>,
 }
 
+impl Default for FontStore {
+    fn default() -> Self {
+        #[cfg(feature = "ab-glyph")]
+        let rasterizer: Box<dyn GlyphRasterizer> = Box::new(AbGlyphRasterizer::default());
+        #[cfg(not(feature = "ab-glyph"))]
+        let rasterizer: Box<dyn GlyphRasterizer> = Box::new(FallbackGlyphRasterizer::default());
+
+        Self {
+            rasterizer,
+            loaded_faces: Vec::new(),
+            face_names: HashMap::new(),
+            default_face_id: None,
+            instances: Vec::new(),
+            instance_map: HashMap::new(),
+            pages: Vec::new(),
+        }
+    }
+}
+
 impl FontStore {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_rasterizer(rasterizer: Box<dyn GlyphRasterizer>) -> Self {
+        Self {
+            rasterizer,
+            ..Self::default()
+        }
+    }
+
+    pub fn set_rasterizer(&mut self, mut rasterizer: Box<dyn GlyphRasterizer>) {
+        for (name, data) in &self.loaded_faces {
+            let _ = rasterizer.load_face(name, data);
+        }
+        self.rasterizer = rasterizer;
+        for inst in &mut self.instances {
+            let metrics = self.rasterizer.metrics(inst.face_id, inst.size);
+            inst.ascender = metrics.ascender;
+            inst.descender = metrics.descender;
+            inst.max_advance = metrics.max_advance;
+            inst.max_height = 0.0;
+            inst.glyphs.clear();
+
+            for ch in 32u8..=126u8 {
+                let chr = ch as char;
+                let adv = self.rasterizer.advance(inst.face_id, inst.size, chr);
+                let glyph_h = self.rasterizer.glyph_height(inst.face_id, inst.size, chr);
+                if glyph_h > inst.max_height {
+                    inst.max_height = glyph_h;
+                }
+                inst.glyphs.insert(
+                    chr,
+                    CachedGlyph {
+                        advance: adv,
+                        quad: None,
+                    },
+                );
+            }
+        }
+        self.pages.clear();
     }
 
     /// Load a face from memory. `name` is used in error messages and for
@@ -239,9 +481,8 @@ impl FontStore {
             return Ok(id);
         }
 
-        let font = FontArc::try_from_vec(data).map_err(|_| FontError::Invalid(name.to_string()))?;
-        let id = FaceId(self.faces.len() as u32);
-        self.faces.push(font);
+        let id = self.rasterizer.load_face(name, &data)?;
+        self.loaded_faces.push((name.to_string(), data));
         self.face_names.insert(name.to_string(), id);
         Ok(id)
     }
@@ -286,26 +527,14 @@ impl FontStore {
             return id;
         }
 
-        let arc = self.faces.get(face.0 as usize).expect("valid FaceId");
-        let em_size = arc.units_per_em().unwrap_or(1000.0);
-        let scale = PxScale::from(size as f32 * arc.height_unscaled() / em_size);
-        let scaled_font = arc.as_scaled(scale);
-
-        let unit_scale_y = size as f32 / em_size;
-        let ascender = arc.ascent_unscaled() * unit_scale_y;
-        let descender = arc.descent_unscaled() * unit_scale_y;
-
-        // FreeType max_advance / 64.0
-        let max_advance = (scaled_font.h_advance(scaled_font.glyph_id('M'))).ceil();
-
+        let metrics = self.rasterizer.metrics(face, size);
         let id = FontId(self.instances.len() as u32);
         let mut inst = FontInstance {
             face_id: face,
             size,
-            scale,
-            ascender,
-            descender,
-            max_advance,
+            ascender: metrics.ascender,
+            descender: metrics.descender,
+            max_advance: metrics.max_advance,
             max_height: 0.0,
             glyphs: HashMap::new(),
         };
@@ -315,15 +544,10 @@ impl FontStore {
         // Note: precache populates metrics (max_height) even without textures
         for ch in 32u8..=126u8 {
             let chr = ch as char;
-            let glyph_id = scaled_font.glyph_id(chr);
-            let unhinted_adv = scaled_font.h_advance(glyph_id);
-            let adv = unhinted_adv.round();
-            if let Some(outlined) = scaled_font.outline_glyph(scaled_font.scaled_glyph(chr)) {
-                let bounds = outlined.px_bounds();
-                let glyph_h = (bounds.height()).ceil();
-                if glyph_h > inst.max_height {
-                    inst.max_height = glyph_h;
-                }
+            let adv = self.rasterizer.advance(face, size, chr);
+            let glyph_h = self.rasterizer.glyph_height(face, size, chr);
+            if glyph_h > inst.max_height {
+                inst.max_height = glyph_h;
             }
             inst.glyphs.insert(
                 chr,
@@ -368,14 +592,10 @@ impl FontStore {
         }
 
         let face_id = inst.face_id;
-        let scale = inst.scale;
-        let arc = &self.faces[face_id.0 as usize];
-        let scaled_font = arc.as_scaled(scale);
+        let size = inst.size;
+        let adv = self.rasterizer.advance(face_id, size, ch);
 
-        let glyph_id = scaled_font.glyph_id(ch);
-        let unhinted_adv = scaled_font.h_advance(glyph_id);
-        let adv = unhinted_adv.round();
-
+        let inst = self.instances.get_mut(font.0 as usize).unwrap();
         inst.glyphs.insert(
             ch,
             CachedGlyph {
@@ -440,22 +660,13 @@ impl FontStore {
         }
 
         let face_id = inst.face_id;
-        let scale = inst.scale;
-        let arc = self.faces.get(face_id.0 as usize)?.clone();
-        let scaled_font = arc.as_scaled(scale);
+        let size = inst.size;
+        let advance = self.rasterizer.advance(face_id, size, ch);
+        let rasterized = self.rasterizer.rasterize(face_id, size, ch);
 
-        let glyph_id = scaled_font.glyph_id(ch);
-        let unhinted_adv = scaled_font.h_advance(glyph_id);
-        let advance = unhinted_adv.round();
-
-        // Outline glyph
-        let scaled_glyph = scaled_font.scaled_glyph(ch);
-        let outlined = scaled_font.outline_glyph(scaled_glyph);
-
-        let quad = if let Some(outlined) = outlined {
-            let bounds = outlined.px_bounds();
-            let b_w = bounds.width().round() as u32;
-            let b_h = bounds.height().round() as u32;
+        let quad = if let Some(glyph) = rasterized {
+            let b_w = glyph.width;
+            let b_h = glyph.height;
 
             if b_w == 0
                 || b_h == 0
@@ -464,20 +675,12 @@ impl FontStore {
             {
                 None
             } else {
-                let glyph_h = (bounds.height()).ceil();
+                let glyph_h =
+                    (glyph.height as f32).max(self.rasterizer.glyph_height(face_id, size, ch));
                 let inst = self.instances.get_mut(font.0 as usize).unwrap();
                 if glyph_h > inst.max_height {
                     inst.max_height = glyph_h;
                 }
-
-                // Rasterise glyph into coverage buffer
-                let mut coverage = vec![0u8; (b_w * b_h) as usize];
-                outlined.draw(|x, y, c| {
-                    if x < b_w && y < b_h {
-                        coverage[(y * b_w + x) as usize] =
-                            (c * 255.0).round().clamp(0.0, 255.0) as u8;
-                    }
-                });
 
                 // Convert coverage to RGBA8 (RGB = 255, A = coverage)
                 let mut rgba = vec![0u8; (b_w * b_h * 4) as usize];
@@ -485,7 +688,7 @@ impl FontStore {
                     rgba[i * 4] = 255;
                     rgba[i * 4 + 1] = 255;
                     rgba[i * 4 + 2] = 255;
-                    rgba[i * 4 + 3] = coverage[i];
+                    rgba[i * 4 + 3] = glyph.coverage[i];
                 }
 
                 // Allocate in atlas page
@@ -516,7 +719,7 @@ impl FontStore {
 
                 let dims = Vec2::new(b_w as f32 + 2.0, b_h as f32 + 2.0);
                 // bounds.min.x corresponds to bitmap_left, bounds.min.y corresponds to -bitmap_top
-                let corner = Vec2::new(bounds.min.x + 0.5, bounds.min.y - 0.5);
+                let corner = Vec2::new(glyph.min_x + 0.5, glyph.min_y - 0.5);
 
                 Some(GlyphQuad {
                     page_texture: page_tex_id,
@@ -614,5 +817,90 @@ impl FontStore {
         }
 
         emit_string(list, Vec2::ZERO, style.colour);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fallback_rasterizer_magic_bytes() {
+        let mut r = FallbackGlyphRasterizer::default();
+        // Empty data succeeds
+        assert!(r.load_face("empty", &[]).is_ok());
+        // Valid magic bytes succeed
+        assert!(r.load_face("ttf", &[0x00, 0x01, 0x00, 0x00, 0, 0]).is_ok());
+        assert!(r.load_face("otto", b"OTTO extra data").is_ok());
+        assert!(r.load_face("true", b"true extra").is_ok());
+        assert!(r.load_face("ttcf", b"ttcf extra").is_ok());
+        // Invalid data fails
+        assert!(r.load_face("bad1", &[1, 2, 3]).is_err());
+        assert!(r.load_face("bad2", b"NOPE").is_err());
+    }
+
+    #[test]
+    fn test_fallback_rasterizer_metrics_and_rasterize() {
+        let mut r = FallbackGlyphRasterizer::default();
+        let face = r.load_face("test", &[]).unwrap();
+        let m = r.metrics(face, 20);
+        assert_eq!(m.ascender, 16.0);
+        assert_eq!(m.descender, -4.0);
+        assert_eq!(m.max_advance, 12.0);
+
+        assert_eq!(r.advance(face, 20, 'A'), 10.0);
+        assert_eq!(r.glyph_height(face, 20, ' '), 0.0);
+        assert!(r.glyph_height(face, 20, 'A') > 0.0);
+
+        assert!(r.rasterize(face, 20, ' ').is_none());
+        let glyph = r.rasterize(face, 20, 'A').unwrap();
+        assert!(glyph.width > 0);
+        assert!(glyph.height > 0);
+        assert_eq!(glyph.coverage.len(), (glyph.width * glyph.height) as usize);
+        assert!(glyph.coverage.iter().all(|&c| c == 255));
+    }
+
+    #[test]
+    fn test_set_rasterizer() {
+        let mut store = FontStore::with_rasterizer(Box::new(FallbackGlyphRasterizer::default()));
+        let face = store.load_face("f1", vec![]).unwrap();
+        let font = store.font(face, 20);
+        assert_eq!(store.ascender(font), 16.0);
+        assert_eq!(store.descender(font), -4.0);
+        assert_eq!(store.width(font, "A"), 10.0);
+
+        // Define a custom test rasterizer with different metrics
+        struct CustomRasterizer {
+            faces: u32,
+        }
+        impl GlyphRasterizer for CustomRasterizer {
+            fn load_face(&mut self, _name: &str, _data: &[u8]) -> Result<FaceId, FontError> {
+                let id = FaceId(self.faces);
+                self.faces += 1;
+                Ok(id)
+            }
+            fn metrics(&self, _face: FaceId, size: u32) -> FontMetrics {
+                FontMetrics {
+                    ascender: size as f32,
+                    descender: 0.0,
+                    max_advance: size as f32,
+                }
+            }
+            fn advance(&self, _face: FaceId, size: u32, _ch: char) -> f32 {
+                size as f32 * 2.0
+            }
+            fn glyph_height(&self, _face: FaceId, size: u32, _ch: char) -> f32 {
+                size as f32
+            }
+            fn rasterize(&self, _face: FaceId, _size: u32, _ch: char) -> Option<RasterizedGlyph> {
+                None
+            }
+        }
+
+        store.set_rasterizer(Box::new(CustomRasterizer { faces: 0 }));
+        // Instances should be recomputed
+        assert_eq!(store.ascender(font), 20.0);
+        assert_eq!(store.descender(font), 0.0);
+        assert_eq!(store.width(font, "A"), 40.0);
     }
 }

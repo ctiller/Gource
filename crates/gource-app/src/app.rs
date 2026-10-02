@@ -93,6 +93,11 @@ impl GourceApp {
         &self.shell.gfx
     }
 
+    /// Mutable access to textures and fonts (e.g. to install custom font rasterizers).
+    pub fn gfx_mut(&mut self) -> &mut Gfx {
+        &mut self.shell.gfx
+    }
+
     /// True once the app has finished (`appFinished`); a
     /// [`PlatformRequest::Quit`] has been emitted at that point.
     pub fn is_finished(&self) -> bool {

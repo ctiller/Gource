@@ -24,7 +24,12 @@ pub mod resources;
 pub mod texture;
 pub mod video;
 
-pub use font::{FaceId, FontError, FontId, FontStore, TextStyle};
+#[cfg(feature = "ab-glyph")]
+pub use font::AbGlyphRasterizer;
+pub use font::{
+    FaceId, FallbackGlyphRasterizer, FontError, FontId, FontMetrics, FontStore, GlyphRasterizer,
+    RasterizedGlyph, TextStyle,
+};
 pub use list::{Batch, DrawList, Material, TextureId, Vertex};
 pub use ppm::PpmExporter;
 pub use projection::Projection;
