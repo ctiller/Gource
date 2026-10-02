@@ -6,18 +6,24 @@ remain the behavioural reference until the port is complete.
 ## Architecture
 
 ```
-gource (bin, Bevy)        window, input, GPU upload of draw lists, PPM/PNG capture
-  └─ gource-app           the simulation: tree, files, users, actions, camera,
-     │                    Gource state machine, multi-repo shell. Tessellates
-     │                    each frame into a DrawList.
-     ├─ gource-scene      integer-only layout kernels (Q24.8 fixed point):
-     │                    directory forces, file rings/packing, user
-     │                    movement; deterministic across threads and targets
-     ├─ gource-widgets    HUD widgets: file key, captions, slider, tooltip, cursor
-     ├─ gource-vcs        commit model, log parsers, repository detection
-     ├─ gource-settings   command line, config files, defaults, help text
-     ├─ gource-draw       DrawList, Projection, TextureStore, FontStore, PPM writer
-     └─ gource-core       Bounds2D, QuadTree, StringHasher, datetime, utf8, math
+gource (bin, Bevy)        windowed desktop frontend (Bevy + winit)
+gource-cli (bin, wgpu)    Bevy-free headless CLI & offscreen exporter (--output-video / -o)
+  └─ gource-render        plain-wgpu DrawList renderer (offscreen & surface, 4x MSAA)
+gource-web (cdylib, wasm) browser client streaming from gource-serve, Canvas2D glyph rasteriser
+  └─ gource-webgl         WebGL2 DrawList renderer over web-sys
+gource-serve (bin, axum)  HTTP server streaming L1 binary wire format (/v1/stream, /v1/repos)
+  └─ gource-app           the simulation & presenters: tree, files, users, actions, camera,
+     │                    Gource state machine, multi-repo shell, MVC presenters.
+     ├─ gource-scene      integer-only simulation (Q24.8 fixed point, World, step, view):
+     │                    directory forces, file rings/packing, user movement
+     ├─ gource-widgets    HUD widgets consuming gource-vm ViewModels into DrawList
+     ├─ gource-vm         serialisable ViewModel structs for HUD & scene presenters
+     ├─ gource-history    analytics, Git-of-Theseus cohorts, timeline scrubber
+     ├─ gource-vcs        log parsers, repository detection, CommitFeed
+     ├─ gource-model      canonical Commit / FileChange model & L1 binary wire codec
+     ├─ gource-settings   single-descriptor-table CLI, config files, help text, man page
+     ├─ gource-draw       DrawList, Projection, TextureStore, pluggable FontStore, PPM/Video
+     └─ gource-core       Vec2/Vec3/Vec4/IVec2/UVec2, Bounds2D, QuadTree, StringHasher, utf8
 ```
 
 Design rules:
