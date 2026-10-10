@@ -230,3 +230,40 @@ async fn served_commits_carry_line_counts() {
     assert_eq!(commits[0].files[0].byte_size, Some(6));
     assert_eq!(commits[1].files[0].byte_size, Some(10));
 }
+
+#[test]
+fn switching_head_between_branches_never_reserves_a_commit() {
+    use gource_serve::repo::Served;
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    git(d, None, &["init", "-q", "-b", "trunk"]);
+    commit(d, "base", 100);
+    git(d, None, &["checkout", "-q", "-b", "side"]);
+    commit(d, "s1", 200);
+    commit(d, "s2", 300);
+    git(d, None, &["checkout", "-q", "trunk"]);
+    commit(d, "t1", 400);
+    // 4 commits in all. Start on side (base, s1, s2).
+    git(d, None, &["checkout", "-q", "side"]);
+    let source = GitSource::new(d.to_str().unwrap(), false, VcsOptions::default());
+    let (commits, tips) = source.load().unwrap();
+    assert_eq!(stamps(&commits), [100, 200, 300]);
+    let mut served = Served::new(&tips);
+    let mut total = commits.len();
+    assert!(served.poll(&source).unwrap().is_empty());
+    // Trunk adds exactly t1.
+    git(d, None, &["checkout", "-q", "trunk"]);
+    let new = served.poll(&source).unwrap();
+    assert_eq!(stamps(&new), [400]);
+    total += new.len();
+    // Back and forth: nothing is served again.
+    for branch in ["side", "trunk", "side"] {
+        git(d, None, &["checkout", "-q", branch]);
+        assert!(served.poll(&source).unwrap().is_empty(), "{branch}");
+    }
+    assert_eq!(total, 4);
+    // A genuinely new commit still arrives, once.
+    commit(d, "s3", 500);
+    assert_eq!(stamps(&served.poll(&source).unwrap()), [500]);
+    assert!(served.poll(&source).unwrap().is_empty());
+}

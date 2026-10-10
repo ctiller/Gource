@@ -3,12 +3,14 @@
 //!
 //! The history is the commits reachable from a set of *tips*: just `HEAD`,
 //! or every local branch. Each poll resolves the tips again; if they moved,
-//! `git log <tips> ^<old tips>` yields exactly the commits that are new, each
-//! once, however many branches reach them.
+//! `git log <tips> ^<every tip served so far>` yields exactly the commits not
+//! served before, each once, however many branches reach them and however
+//! `HEAD` moves between them.
 
 use crate::store::History;
 use gource_vcs::blobs::blob_sizes;
 use gource_vcs::{Commit, CommitLog, VcsOptions};
+use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::Path;
 use std::process::Command;
@@ -154,34 +156,55 @@ impl GitSource {
     }
 }
 
+/// Every tip whose history has been served. A new poll excludes all of them,
+/// not just the latest tips, so switching `HEAD` between branches (or a
+/// branch moving back) never serves a commit twice.
+#[derive(Debug, Clone, Default)]
+pub struct Served(BTreeSet<String>);
+
+impl Served {
+    /// The history is complete up to these tips.
+    pub fn new(tips: &[String]) -> Self {
+        Self(tips.iter().cloned().collect())
+    }
+
+    /// The commits made visible by the current tips that were not served
+    /// before, oldest first; remembers the tips.
+    pub fn poll(&mut self, source: &GitSource) -> Result<Vec<Commit>, String> {
+        let tips = source.tips()?;
+        if tips.iter().all(|t| self.0.contains(t)) {
+            return Ok(Vec::new());
+        }
+        let seen: Vec<String> = self.0.iter().cloned().collect();
+        let commits = source.commits(&tips, &seen)?;
+        self.0.extend(tips);
+        Ok(commits)
+    }
+}
+
 /// Poll `source` every `interval` and append new commits to `history`.
 /// `seen` are the tips `history` is already complete up to. Errors (a
 /// repository mid-update) are logged and retried at the next poll.
 pub async fn follow(
     history: Arc<History>,
     source: GitSource,
-    mut seen: Vec<String>,
+    seen: Vec<String>,
     interval: Duration,
 ) {
     let source = Arc::new(source);
+    let mut served = Served::new(&seen);
     loop {
         tokio::time::sleep(interval).await;
-        let (s, old) = (source.clone(), seen.clone());
-        let polled = tokio::task::spawn_blocking(move || {
-            let tips = s.tips()?;
-            if tips == old {
-                return Ok(None);
-            }
-            Ok::<_, String>(Some((s.commits(&tips, &old)?, tips)))
-        })
-        .await;
+        let (s, mut st) = (source.clone(), served.clone());
+        let polled = tokio::task::spawn_blocking(move || st.poll(&s).map(|c| (c, st))).await;
         match polled {
-            Ok(Ok(Some((commits, tips)))) => {
-                log::info!("{} new commits", commits.len());
-                history.append(commits);
-                seen = tips;
+            Ok(Ok((commits, st))) => {
+                if !commits.is_empty() {
+                    log::info!("{} new commits", commits.len());
+                    history.append(commits);
+                }
+                served = st;
             }
-            Ok(Ok(None)) => {}
             Ok(Err(e)) => log::warn!("polling failed: {e}"),
             Err(e) => log::warn!("polling failed: {e}"),
         }
