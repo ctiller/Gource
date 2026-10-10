@@ -70,7 +70,10 @@ Routes:
   `from` is a unix timestamp (default: everything); `ff`/`fs`/`uf`/`us` are
   the file-hide, file-show, user-hide and user-show regular expressions
   (repeatable). Bad values answer 400.
-* `GET /info` is JSON: `version`, `commits` (the current count, growing while
+* Wire version 2 (added file sizes). A client and server of different
+  versions fail with `unsupported version N` instead of misreading frames, so
+  deploy the server and the web client together.
+* `GET /info` is JSON: `version` (the wire version), `commits` (the current count, growing while
   live), `first_timestamp`, `last_timestamp`, `live`.
 * Anything else is served from `--web-root DIR` when given (the web client
   built by `crates/gource-web/build.sh`), otherwise 404.
@@ -96,7 +99,7 @@ first. Remote-tracking branches are not followed.
 
 The stream carries, for git, per-file `lines_added`/`lines_removed`
 (`--numstat`) and the size in bytes of the file after the commit (`byte_size`,
-from the blob; a later wire extension, fflags bit 5), which is what the web
+from the blob; `fflags` bit 5, wire version 2), which is what the web
 client's `--file-size-metric` and `--file-colour-mode churn` use.
 
 ## Working on a crate (parallel development rules)
