@@ -172,3 +172,58 @@ async fn a_commit_pushed_to_a_bare_repository_reaches_an_open_stream() {
     assert_eq!(history.len(), 4);
     follower.abort();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn served_commits_carry_line_counts() {
+    let work = tempfile::tempdir().unwrap();
+    git(work.path(), None, &["init", "-q", "-b", "main"]);
+    std::fs::write(work.path().join("f.txt"), "1\n2\n3\n").unwrap();
+    git(work.path(), None, &["add", "f.txt"]);
+    git(work.path(), Some(1_000), &["commit", "-q", "-m", "x"]);
+    std::fs::write(work.path().join("f.txt"), "1\n2\n3\n4\n5\n").unwrap();
+    git(work.path(), Some(2_000), &["commit", "-qam", "y"]);
+
+    let args = gource_serve::cli::parse_args(
+        ["--port", "0", work.path().to_str().unwrap()]
+            .iter()
+            .map(|s| s.to_string()),
+    )
+    .unwrap();
+    let (addr_tx, addr_rx) = tokio::sync::oneshot::channel();
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(gource_serve::cli::run(
+        args,
+        move |a| addr_tx.send(a).unwrap(),
+        async move {
+            stop_rx.await.ok();
+        },
+    ));
+    let addr = addr_rx.await.unwrap();
+    let bytes = tokio::task::spawn_blocking(move || {
+        use std::io::{Read, Write};
+        let mut s = std::net::TcpStream::connect(addr).unwrap();
+        s.write_all(b"GET /stream HTTP/1.0\r\n\r\n").unwrap();
+        let mut out = Vec::new();
+        s.read_to_end(&mut out).unwrap();
+        out
+    })
+    .await
+    .unwrap();
+    stop_tx.send(()).unwrap();
+    server.await.unwrap().unwrap();
+    // Skip the HTTP headers.
+    let at = bytes.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+    let hasher = StringHasher::default();
+    let mut d = Decoder::new(move |p: &str| file_colour(p, &hasher));
+    d.push(&bytes[at..]);
+    let commits: Vec<_> = std::iter::from_fn(|| d.next_event().map(|e| e.unwrap()))
+        .filter_map(|e| match e {
+            Event::Commit(c) => Some(c),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(commits.len(), 2);
+    assert_eq!(commits[0].files[0].lines_added, Some(3));
+    assert_eq!(commits[1].files[0].lines_added, Some(2));
+    assert_eq!(commits[1].files[0].lines_removed, Some(0));
+}

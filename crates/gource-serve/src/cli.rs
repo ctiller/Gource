@@ -10,12 +10,14 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 pub const USAGE: &str = "usage: gource-serve [--bind ADDR] [--port N] [--web-root DIR] \
-[--log-format FORMAT] [--live|--follow] [--poll-interval SECS] [--all-branches] PATH
+[--log-format FORMAT] [--live|--follow] [--poll-interval SECS] [--all-branches] [--no-stats] PATH
 
   --live, --follow     keep running: poll the git repository PATH (working tree or
                        bare) and stream new commits to connected clients
   --poll-interval SECS seconds between polls with --live (default 5)
-  --all-branches       history is the union of all local branches, not just HEAD";
+  --all-branches       history is the union of all local branches, not just HEAD
+  --no-stats           do not read per-file line counts (git --numstat); clients then
+                       have no data for --file-size-metric lines/diff/churn";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Args {
@@ -29,6 +31,8 @@ pub struct Args {
     pub poll_interval: f64,
     /// Include every local branch, not just `HEAD`.
     pub all_branches: bool,
+    /// Skip line counts (`--no-stats`); they are read by default.
+    pub no_stats: bool,
     /// Log file or repository directory.
     pub path: String,
 }
@@ -44,6 +48,7 @@ pub fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> 
         live: false,
         poll_interval: 5.0,
         all_branches: false,
+        no_stats: false,
         path: String::new(),
     };
     while let Some(a) = it.next() {
@@ -55,6 +60,7 @@ pub fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> 
             "--log-format" => args.log_format = value()?,
             "--live" | "--follow" => args.live = true,
             "--all-branches" => args.all_branches = true,
+            "--no-stats" => args.no_stats = true,
             "--poll-interval" => {
                 args.poll_interval = value()?
                     .parse()
@@ -83,6 +89,8 @@ pub async fn run(
 ) -> Result<(), String> {
     let options = VcsOptions {
         log_format: args.log_format.clone(),
+        // The clients choose --file-size-metric, so the data must be there.
+        include_numstat: !args.no_stats,
         ..Default::default()
     };
     let git = matches!(args.log_format.as_str(), "" | "git") && is_git_dir(&args.path);
@@ -170,6 +178,7 @@ mod tests {
                 live: false,
                 poll_interval: 5.0,
                 all_branches: false,
+                no_stats: false,
                 path: "repo".into(),
             }
         );
@@ -182,6 +191,7 @@ mod tests {
         assert!(a.live && a.all_branches);
         assert_eq!(a.poll_interval, 0.5);
         assert!(parse(&["--live", "p"]).unwrap().live);
+        assert!(parse(&["--no-stats", "p"]).unwrap().no_stats);
         for bad in ["0", "-1", "x", "nan"] {
             assert!(parse(&["--poll-interval", bad, "p"]).is_err(), "{bad}");
         }
