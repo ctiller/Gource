@@ -51,6 +51,9 @@ pub struct CommitFile {
     pub colour: [f32; 3],
     pub lines_added: Option<u32>,
     pub lines_removed: Option<u32>,
+    /// Size in bytes of the file after the commit, when the log source can
+    /// tell (git: the blob size). `None` for deletions and unknown sizes.
+    pub byte_size: Option<u64>,
     pub is_binary: bool,
     /// Whether this file represents uncommitted in-flight worktree state.
     pub is_shadow: bool,

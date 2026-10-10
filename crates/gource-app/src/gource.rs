@@ -789,7 +789,7 @@ impl Gource {
                     op,
                     lines_added: cf.lines_added.unwrap_or(0),
                     lines_removed: cf.lines_removed.unwrap_or(0),
-                    byte_size: None,
+                    byte_size: cf.byte_size,
                     is_binary: false,
                 }
             })

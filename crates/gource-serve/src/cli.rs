@@ -16,8 +16,8 @@ pub const USAGE: &str = "usage: gource-serve [--bind ADDR] [--port N] [--web-roo
                        bare) and stream new commits to connected clients
   --poll-interval SECS seconds between polls with --live (default 5)
   --all-branches       history is the union of all local branches, not just HEAD
-  --no-stats           do not read per-file line counts (git --numstat); clients then
-                       have no data for --file-size-metric lines/diff/churn";
+  --no-stats           do not read per-file line counts (git --numstat) and file sizes; clients then
+                       have no data for --file-size-metric lines/diff/churn/size";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Args {
@@ -31,7 +31,7 @@ pub struct Args {
     pub poll_interval: f64,
     /// Include every local branch, not just `HEAD`.
     pub all_branches: bool,
-    /// Skip line counts (`--no-stats`); they are read by default.
+    /// Skip line counts and file sizes (`--no-stats`); they are read by default.
     pub no_stats: bool,
     /// Log file or repository directory.
     pub path: String,
@@ -91,6 +91,7 @@ pub async fn run(
         log_format: args.log_format.clone(),
         // The clients choose --file-size-metric, so the data must be there.
         include_numstat: !args.no_stats,
+        include_blob_sizes: !args.no_stats,
         ..Default::default()
     };
     let git = matches!(args.log_format.as_str(), "" | "git") && is_git_dir(&args.path);

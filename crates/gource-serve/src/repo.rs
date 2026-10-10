@@ -7,6 +7,7 @@
 //! once, however many branches reach them.
 
 use crate::store::History;
+use gource_vcs::blobs::blob_sizes;
 use gource_vcs::{Commit, CommitLog, VcsOptions};
 use std::io::Write;
 use std::path::Path;
@@ -100,6 +101,8 @@ impl GitSource {
             "--encoding=UTF-8",
             "--no-renames",
             "--no-show-signature",
+            // Full names, so the size lookup is never ambiguous.
+            "--no-abbrev",
         ]);
         if self.options.include_numstat {
             cmd.arg("--numstat");
@@ -120,12 +123,20 @@ impl GitSource {
         }
         // Parse with the same reader (filters, colours, validation) as a
         // log file.
+        let mut options = self.options.clone();
+        if options.include_blob_sizes {
+            // One `git cat-file` for the blobs this log names.
+            match blob_sizes(Path::new(&self.dir), &out.stdout[..]) {
+                Ok(sizes) => options.blob_sizes = Some(Arc::new(sizes)),
+                Err(e) => log::warn!("file sizes unavailable: {e}"),
+            }
+        }
         let mut file = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
         file.write_all(&out.stdout).map_err(|e| e.to_string())?;
         file.flush().map_err(|e| e.to_string())?;
         let path = file.path().to_str().ok_or("non-UTF-8 temp path")?;
         let mut log =
-            CommitLog::open_file(path, "git", &self.options).ok_or("unreadable git log output")?;
+            CommitLog::open_file(path, "git", &options).ok_or("unreadable git log output")?;
         let mut commits = Vec::new();
         while let Some(c) = log.next_commit() {
             commits.push(c);

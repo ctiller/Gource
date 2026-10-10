@@ -226,4 +226,7 @@ async fn served_commits_carry_line_counts() {
     assert_eq!(commits[0].files[0].lines_added, Some(3));
     assert_eq!(commits[1].files[0].lines_added, Some(2));
     assert_eq!(commits[1].files[0].lines_removed, Some(0));
+    // Blob sizes after each commit: "1\n2\n3\n" and "1\n2\n3\n4\n5\n".
+    assert_eq!(commits[0].files[0].byte_size, Some(6));
+    assert_eq!(commits[1].files[0].byte_size, Some(10));
 }

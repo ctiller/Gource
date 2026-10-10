@@ -394,6 +394,7 @@ impl WorktreeWatcher {
                         colour: file_colour(&file.path, &self.options.hasher),
                         lines_added: Some(file.lines_added),
                         lines_removed: Some(file.lines_removed),
+                        byte_size: None,
                         is_binary: file.is_binary,
                         is_shadow: true,
                     };
@@ -467,6 +468,7 @@ impl WorktreeWatcher {
                             colour: file_colour(&key.1, &self.options.hasher),
                             lines_added: None,
                             lines_removed: None,
+                            byte_size: None,
                             is_binary: prev.is_binary,
                             is_shadow: true,
                         }],

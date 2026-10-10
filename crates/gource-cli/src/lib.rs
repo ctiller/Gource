@@ -91,7 +91,7 @@ pub fn write_stats_csv(
                     op,
                     lines_added,
                     lines_removed,
-                    byte_size: None,
+                    byte_size: cf.byte_size,
                     is_binary: cf.is_binary,
                 }
             })

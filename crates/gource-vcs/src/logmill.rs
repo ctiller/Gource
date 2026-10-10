@@ -462,6 +462,16 @@ fn try_fetch_format(
         let (temp_file, command_str) =
             generate_log(format, path, options, abort_flag, child_process).ok()?;
         let file = File::open(temp_file.path()).ok()?;
+        // One `git cat-file` over the distinct blobs the log names.
+        let mut options = options.clone();
+        if format == "git" && options.include_blob_sizes && options.blob_sizes.is_none() {
+            let log = std::io::BufReader::new(File::open(temp_file.path()).ok()?);
+            match crate::blobs::blob_sizes(path, log) {
+                Ok(sizes) => options.blob_sizes = Some(Arc::new(sizes)),
+                Err(e) => log::warn!("file sizes unavailable: {e}"),
+            }
+        }
+        let options = &options;
         let seekable = SeekableLog::new(file, Some(temp_file)).ok()?;
         let mut clog =
             CommitLog::from_seekable(format, Some(command_str), seekable, options.clone());

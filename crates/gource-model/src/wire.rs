@@ -22,11 +22,14 @@
 //! the id only.
 //!
 //! ```text
-//! file := path:v action:u8 [other:str] fflags:u8 [added:v] [removed:v] [rgb:3*f32le]
+//! file := path:v action:u8 [other:str] fflags:u8 [added:v] [removed:v] [size:v] [rgb:3*f32le]
 //! ```
 //! `action`: 0 add, 1 modify, 2 delete, 3 other (followed by the code).
 //! `fflags`: bit 0 lines added present, bit 1 lines removed present, bit 2
-//! binary, bit 3 shadow, bit 4 explicit colour. Without bit 4 the colour is
+//! binary, bit 3 shadow, bit 4 explicit colour, bit 5 byte size present (the
+//! file's size after the commit; a later extension: streams without it
+//! decode as before, but an older decoder cannot read a stream that has it).
+//! Without bit 4 the colour is
 //! whatever the client derives from the path (the extension colour), so
 //! ordinary logs never ship colours.
 
@@ -49,6 +52,7 @@ const F_REMOVED: u8 = 2;
 const F_BINARY: u8 = 4;
 const F_SHADOW: u8 = 8;
 const F_COLOUR: u8 = 16;
+const F_SIZE: u8 = 32;
 
 /// Commit flag: the commit is in-flight worktree state.
 const C_SHADOW: u8 = 1;
@@ -309,12 +313,18 @@ impl<D: Fn(&str) -> [f32; 3]> Encoder<D> {
             if explicit {
                 flags |= F_COLOUR;
             }
+            if f.byte_size.is_some() {
+                flags |= F_SIZE;
+            }
             p.push(flags);
             if let Some(a) = f.lines_added {
                 put_v(&mut p, u64::from(a));
             }
             if let Some(r) = f.lines_removed {
                 put_v(&mut p, u64::from(r));
+            }
+            if let Some(s) = f.byte_size {
+                put_v(&mut p, s);
             }
             if explicit {
                 for c in f.colour {
@@ -491,6 +501,11 @@ impl<D: Fn(&str) -> [f32; 3]> Decoder<D> {
             } else {
                 None
             };
+            let byte_size = if flags & F_SIZE != 0 {
+                Some(r.v()?)
+            } else {
+                None
+            };
             let colour = if flags & F_COLOUR != 0 {
                 [r.f32()?, r.f32()?, r.f32()?]
             } else {
@@ -502,6 +517,7 @@ impl<D: Fn(&str) -> [f32; 3]> Decoder<D> {
                 colour,
                 lines_added,
                 lines_removed,
+                byte_size,
                 is_binary: flags & F_BINARY != 0,
                 is_shadow: flags & F_SHADOW != 0,
             });
@@ -649,6 +665,7 @@ mod tests {
                     CommitFile {
                         lines_added: Some(10),
                         lines_removed: Some(0),
+                        byte_size: Some(1 << 40),
                         is_binary: true,
                         ..file("/README", FileAction::Modify)
                     },

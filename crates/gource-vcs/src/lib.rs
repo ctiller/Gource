@@ -12,6 +12,7 @@
 #![allow(clippy::result_unit_err)]
 #![allow(clippy::field_reassign_with_default)]
 
+pub mod blobs;
 pub mod commit;
 pub mod formats;
 pub mod github;

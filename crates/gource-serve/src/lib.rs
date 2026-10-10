@@ -7,7 +7,12 @@
 //! answers with a chunked body of length-prefixed wire frames
 //! ([`gource_model::wire`]): `Hello`, the matching commits, `EndOfHistory`,
 //! then (live repositories only) new commits as they arrive. Seeking to an
-//! earlier point or changing a filter is a new request.
+//! earlier point or changing a filter is a new request. `GET /info` reports
+//! the commit count and whether the history is live.
+//!
+//! [`repo`] reads git repositories (bare or not; HEAD or all branches) and
+//! follows them for new commits. The routes and options are documented in
+//! `crates/README.md`.
 
 pub mod cli;
 pub mod filter;
