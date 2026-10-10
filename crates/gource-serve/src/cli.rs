@@ -37,6 +37,41 @@ pub struct Args {
     pub path: String,
 }
 
+/// Prints log records to stderr as `gource-serve: LEVEL message`.
+struct StderrLogger(log::LevelFilter);
+
+impl log::Log for StderrLogger {
+    fn enabled(&self, m: &log::Metadata) -> bool {
+        m.level() <= self.0
+    }
+    fn log(&self, r: &log::Record) {
+        if self.enabled(r.metadata()) {
+            eprintln!(
+                "gource-serve: {}: {}",
+                r.level().as_str().to_lowercase(),
+                r.args()
+            );
+        }
+    }
+    fn flush(&self) {}
+}
+
+/// The log level named by `GOURCE_SERVE_LOG` (`error`, `warn`, `info`,
+/// `debug`, `off`); anything else, or unset, is `info`.
+pub fn log_level(env: Option<&str>) -> log::LevelFilter {
+    env.and_then(|v| v.parse().ok())
+        .unwrap_or(log::LevelFilter::Info)
+}
+
+/// Send `log` records (polling failures, new commits) to stderr.
+pub fn init_logging(level: log::LevelFilter) {
+    static LOGGER: std::sync::OnceLock<StderrLogger> = std::sync::OnceLock::new();
+    let logger = LOGGER.get_or_init(|| StderrLogger(level));
+    if log::set_logger(logger).is_ok() {
+        log::set_max_level(level);
+    }
+}
+
 /// Parse the arguments (without the program name). `Err` holds the message
 /// to print, including for `--help`.
 pub fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> {
@@ -184,6 +219,17 @@ mod tests {
             }
         );
         assert_eq!(parse(&["p"]).unwrap().port, 8080);
+    }
+
+    #[test]
+    fn log_level_from_environment() {
+        use log::LevelFilter::*;
+        assert_eq!(log_level(None), Info);
+        assert_eq!(log_level(Some("warn")), Warn);
+        assert_eq!(log_level(Some("OFF")), Off);
+        assert_eq!(log_level(Some("loud")), Info);
+        init_logging(Info);
+        init_logging(Info);
     }
 
     #[test]

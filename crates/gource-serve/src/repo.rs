@@ -148,6 +148,56 @@ impl GitSource {
         Ok(commits)
     }
 
+    /// The names in `shas` that are commits present in the repository.
+    pub fn existing_commits(&self, shas: &[String]) -> Result<Vec<String>, String> {
+        if shas.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut child = self
+            .git()
+            .args(["cat-file", "--batch-check"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("cannot run git: {e}"))?;
+        let mut stdin = child.stdin.take().ok_or("no stdin")?;
+        let input: String = shas.iter().map(|s| format!("{s}\n")).collect();
+        let writer = std::thread::spawn(move || stdin.write_all(input.as_bytes()));
+        let mut out = String::new();
+        std::io::Read::read_to_string(&mut child.stdout.take().ok_or("no stdout")?, &mut out)
+            .map_err(|e| e.to_string())?;
+        let _ = writer.join();
+        let _ = child.wait();
+        // "<oid> commit <size>" for present commits, "<name> missing" otherwise.
+        Ok(shas
+            .iter()
+            .zip(out.lines())
+            .filter(|(_, l)| l.split(' ').nth(1) == Some("commit"))
+            .map(|(s, _)| s.clone())
+            .collect())
+    }
+
+    /// The members of `shas` not reachable from another member.
+    pub fn independent(&self, shas: &[String]) -> Result<Vec<String>, String> {
+        if shas.len() < 2 {
+            return Ok(shas.to_vec());
+        }
+        let out = self
+            .git()
+            .args(["merge-base", "--independent"])
+            .args(shas)
+            .output()
+            .map_err(|e| format!("cannot run git: {e}"))?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::to_string)
+            .collect())
+    }
+
     /// All the history now, and the tips it is complete up to.
     pub fn load(&self) -> Result<(Vec<Commit>, Vec<String>), String> {
         let tips = self.tips()?;
@@ -156,9 +206,22 @@ impl GitSource {
     }
 }
 
-/// Every tip whose history has been served. A new poll excludes all of them,
-/// not just the latest tips, so switching `HEAD` between branches (or a
-/// branch moving back) never serves a commit twice.
+/// The tips whose history has been served, as a bounded set.
+///
+/// A poll excludes them (`^tip`) so that switching `HEAD` between branches, or
+/// a branch moving back, never serves a commit twice. Two rules keep the set
+/// safe and small for a server that runs for months:
+///
+/// * Only tips git can still resolve are passed on. A force-push followed by
+///   `gc --prune=now` deletes old tips; `^<missing sha>` would make every
+///   later `git log` fail ("bad object").
+/// * After each poll the set is reduced to its independent tips
+///   (`git merge-base --independent`): a tip reachable from another adds
+///   nothing to the exclusion. The set is then at most the number of
+///   unrelated heads, not the number of tips ever seen.
+///
+/// Alternative considered: a set of every served commit id, which needs the
+/// whole history listed on each change and grows with the history.
 #[derive(Debug, Clone, Default)]
 pub struct Served(BTreeSet<String>);
 
@@ -168,6 +231,15 @@ impl Served {
         Self(tips.iter().cloned().collect())
     }
 
+    /// Number of tips remembered.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     /// The commits made visible by the current tips that were not served
     /// before, oldest first; remembers the tips.
     pub fn poll(&mut self, source: &GitSource) -> Result<Vec<Commit>, String> {
@@ -175,16 +247,22 @@ impl Served {
         if tips.iter().all(|t| self.0.contains(t)) {
             return Ok(Vec::new());
         }
-        let seen: Vec<String> = self.0.iter().cloned().collect();
+        let known: Vec<String> = self.0.iter().cloned().collect();
+        let seen = source.existing_commits(&known)?;
         let commits = source.commits(&tips, &seen)?;
-        self.0.extend(tips);
+        let mut all = seen;
+        all.extend(tips);
+        all.sort();
+        all.dedup();
+        self.0 = source.independent(&all)?.into_iter().collect();
         Ok(commits)
     }
 }
 
 /// Poll `source` every `interval` and append new commits to `history`.
-/// `seen` are the tips `history` is already complete up to. Errors (a
-/// repository mid-update) are logged and retried at the next poll.
+/// `seen` are the tips `history` is already complete up to. A failed poll
+/// (a repository mid-update) is logged as a warning, which `gource-serve`
+/// prints to stderr, and retried at the next poll.
 pub async fn follow(
     history: Arc<History>,
     source: GitSource,

@@ -90,9 +90,14 @@ Options (`--help` prints them):
 | `--all-branches` | git repositories only. The history is the union of the commits reachable from every local branch (`refs/heads`), each once, in time order. The default is `HEAD` only |
 | `--no-stats` | skip the per-file line counts and sizes (faster on huge histories); without them clients have no data for `--file-size-metric lines/diff/churn/size` |
 
+Polling failures are logged to stderr and retried at the next poll; the log
+level is `GOURCE_SERVE_LOG=error|warn|info|debug|off` (default `info`).
+
 With `--live` the server compares the branch tips (`HEAD`, or all local
 branches with `--all-branches`) on every poll and appends exactly the commits
-not reachable from the previous tips, so a bare repository works (push to it)
+not reachable from the tips already served (a bounded set: tips git can no
+longer find, e.g. after a force-push and `gc --prune=now`, are dropped, and
+tips reachable from others are folded away), so a bare repository works (push to it)
 and so does a clone that is `git fetch`ed by something else. Appended commits
 are not re-sorted into earlier history; they arrive in the order found, oldest
 first. Remote-tracking branches are not followed.

@@ -262,8 +262,78 @@ fn switching_head_between_branches_never_reserves_a_commit() {
         assert!(served.poll(&source).unwrap().is_empty(), "{branch}");
     }
     assert_eq!(total, 4);
+    assert!(served.len() <= 2, "bounded: {}", served.len());
     // A genuinely new commit still arrives, once.
     commit(d, "s3", 500);
     assert_eq!(stamps(&served.poll(&source).unwrap()), [500]);
     assert!(served.poll(&source).unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn live_follow_survives_a_force_push_and_gc() {
+    let work = tempfile::tempdir().unwrap();
+    fixture(work.path());
+    let bare = tempfile::tempdir().unwrap();
+    let bare_path = bare.path().join("r.git");
+    let bp = bare_path.to_str().unwrap();
+    git(work.path(), None, &["clone", "-q", "--bare", ".", bp]);
+    git(work.path(), None, &["remote", "add", "bare", bp]);
+
+    let source = GitSource::new(bp, true, VcsOptions::default());
+    let (commits, tips) = source.load().unwrap();
+    assert_eq!(commits.len(), 3);
+    let old_main = tips.clone();
+    let history = History::new(commits, true, StringHasher::default());
+    let follower = tokio::spawn(follow(
+        history.clone(),
+        source,
+        tips,
+        Duration::from_millis(50),
+    ));
+    let app = router(history.clone(), &ServeOptions::default());
+    let resp = app
+        .oneshot(Request::get("/stream").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let mut body = resp.into_body();
+    let hasher = StringHasher::default();
+    let mut d = Decoder::new(move |p: &str| file_colour(p, &hasher));
+    read_until(&mut body, &mut d, |e| *e == Event::EndOfHistory).await;
+
+    // Rewrite main (drop c, add c2), force-push, and let gc delete c.
+    let wd = work.path();
+    git(wd, None, &["reset", "-q", "--hard", "HEAD~1"]);
+    commit(wd, "c2", 350);
+    git(wd, None, &["push", "-q", "-f", "bare", "main"]);
+    let events = read_until(&mut body, &mut d, |e| matches!(e, Event::Commit(_))).await;
+    assert!(matches!(events.last(), Some(Event::Commit(c)) if c.timestamp == 350));
+    git(
+        &bare_path,
+        None,
+        &["reflog", "expire", "--expire=now", "--all"],
+    );
+    git(&bare_path, None, &["gc", "-q", "--prune=now"]);
+    // The old main tip (commit "c", ts 300) is gone from the repository.
+    let gone = old_main
+        .iter()
+        .filter(|t| !git_ok(&bare_path, &["cat-file", "-e", t]))
+        .count();
+    assert_eq!(gone, 1, "gc must have pruned the old main tip");
+
+    // New commits still reach the open stream.
+    commit(wd, "c3", 600);
+    git(wd, None, &["push", "-q", "bare", "main"]);
+    let events = read_until(&mut body, &mut d, |e| matches!(e, Event::Commit(_))).await;
+    assert!(matches!(events.last(), Some(Event::Commit(c)) if c.timestamp == 600));
+    follower.abort();
+}
+
+fn git_ok(dir: &Path, args: &[&str]) -> bool {
+    Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .unwrap()
+        .status
+        .success()
 }
