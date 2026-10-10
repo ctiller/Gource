@@ -1,4 +1,4 @@
-//! `gource-serve [--bind ADDR] [--port N] [--web-root DIR] [--log-format F] PATH`
+//! `gource-serve` (see [`gource_serve::cli::USAGE`]).
 
 use gource_serve::cli;
 

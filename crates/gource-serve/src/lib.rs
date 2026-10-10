@@ -12,6 +12,7 @@
 pub mod cli;
 pub mod filter;
 pub mod http;
+pub mod repo;
 pub mod store;
 pub mod stream;
 
