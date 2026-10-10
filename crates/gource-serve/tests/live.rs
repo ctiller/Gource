@@ -94,7 +94,7 @@ fn empty_repository_has_no_tips() {
 async fn read_until(
     body: &mut Body,
     d: &mut Decoder<impl Fn(&str) -> [f32; 3]>,
-    want: impl Fn(&Event) -> bool,
+    mut want: impl FnMut(&Event) -> bool,
 ) -> Vec<Event> {
     let mut seen = Vec::new();
     loop {
@@ -248,7 +248,7 @@ fn switching_head_between_branches_never_reserves_a_commit() {
     let source = GitSource::new(d.to_str().unwrap(), false, VcsOptions::default());
     let (commits, tips) = source.load().unwrap();
     assert_eq!(stamps(&commits), [100, 200, 300]);
-    let mut served = Served::new(&tips);
+    let mut served = Served::new(&source, &tips).unwrap();
     let mut total = commits.len();
     assert!(served.poll(&source).unwrap().is_empty());
     // Trunk adds exactly t1.
@@ -262,7 +262,7 @@ fn switching_head_between_branches_never_reserves_a_commit() {
         assert!(served.poll(&source).unwrap().is_empty(), "{branch}");
     }
     assert_eq!(total, 4);
-    assert!(served.len() <= 2, "bounded: {}", served.len());
+    assert_eq!(served.len(), 4, "one id per commit of the repository");
     // A genuinely new commit still arrives, once.
     commit(d, "s3", 500);
     assert_eq!(stamps(&served.poll(&source).unwrap()), [500]);
@@ -336,4 +336,91 @@ fn git_ok(dir: &Path, args: &[&str]) -> bool {
         .unwrap()
         .status
         .success()
+}
+
+/// Rewrite main, force-push, and prune the old objects, all before the next
+/// poll; then new commits. Each commit must reach the open stream once.
+async fn prune_between_polls(all_branches: bool) {
+    use gource_serve::repo::Served;
+    let work = tempfile::tempdir().unwrap();
+    fixture(work.path());
+    let bare = tempfile::tempdir().unwrap();
+    let bare_path = bare.path().join("r.git");
+    let bp = bare_path.to_str().unwrap();
+    git(work.path(), None, &["clone", "-q", "--bare", ".", bp]);
+    git(work.path(), None, &["remote", "add", "bare", bp]);
+
+    let source = GitSource::new(bp, all_branches, VcsOptions::default());
+    let (commits, tips) = source.load().unwrap();
+    let mut expected: Vec<i64> = stamps(&commits);
+    assert_eq!(
+        expected,
+        if all_branches {
+            vec![100, 200, 300]
+        } else {
+            vec![100, 300]
+        }
+    );
+    let mut served = Served::new(&source, &tips).unwrap();
+    let history = History::new(commits, true, StringHasher::default());
+    let app = router(history.clone(), &ServeOptions::default());
+    let resp = app
+        .oneshot(Request::get("/stream").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let mut body = resp.into_body();
+    let hasher = StringHasher::default();
+    let mut d = Decoder::new(move |p: &str| file_colour(p, &hasher));
+    read_until(&mut body, &mut d, |e| *e == Event::EndOfHistory).await;
+
+    // The follower is "paused": nothing polls until we say so.
+    let wd = work.path();
+    git(wd, None, &["reset", "-q", "--hard", "HEAD~1"]);
+    commit(wd, "c2", 350);
+    git(wd, None, &["push", "-q", "-f", "bare", "main"]);
+    git(
+        &bare_path,
+        None,
+        &["reflog", "expire", "--expire=now", "--all"],
+    );
+    git(&bare_path, None, &["gc", "-q", "--prune=now"]);
+    assert!(
+        tips.iter()
+            .any(|t| !git_ok(&bare_path, &["cat-file", "-e", t])),
+        "the old main tip must be gone"
+    );
+
+    let new = served.poll(&source).unwrap();
+    assert_eq!(stamps(&new), [350], "only the rewritten commit is new");
+    history.append(new);
+    expected.push(350);
+    commit(wd, "c3", 600);
+    git(wd, None, &["push", "-q", "bare", "main"]);
+    let new = served.poll(&source).unwrap();
+    assert_eq!(stamps(&new), [600]);
+    history.append(new);
+    expected.push(600);
+    assert!(served.poll(&source).unwrap().is_empty());
+
+    // The open stream got each of them once, in order.
+    let mut got = Vec::new();
+    read_until(&mut body, &mut d, |e| {
+        if let Event::Commit(c) = e {
+            got.push(c.timestamp);
+        }
+        matches!(e, Event::Commit(c) if c.timestamp == 600)
+    })
+    .await;
+    assert_eq!(got, [350, 600]);
+    assert_eq!(history.len(), expected.len());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn prune_before_the_next_poll_head_only() {
+    prune_between_polls(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn prune_before_the_next_poll_all_branches() {
+    prune_between_polls(true).await;
 }

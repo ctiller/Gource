@@ -95,9 +95,11 @@ level is `GOURCE_SERVE_LOG=error|warn|info|debug|off` (default `info`).
 
 With `--live` the server compares the branch tips (`HEAD`, or all local
 branches with `--all-branches`) on every poll and appends exactly the commits
-not reachable from the tips already served (a bounded set: tips git can no
-longer find, e.g. after a force-push and `gc --prune=now`, are dropped, and
-tips reachable from others are folded away), so a bare repository works (push to it)
+not served before. The server remembers the id of every commit it has served
+(bounded by the repository's size), lists the commits reachable from the
+current tips and appends only unknown ids, so a force-push, a force-push plus
+`gc --prune=now` between two polls, or switching `HEAD` between branches
+never serves a commit twice, so a bare repository works (push to it)
 and so does a clone that is `git fetch`ed by something else. Appended commits
 are not re-sorted into earlier history; they arrive in the order found, oldest
 first. Remote-tracking branches are not followed.

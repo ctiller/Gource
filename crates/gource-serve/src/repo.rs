@@ -10,7 +10,7 @@
 use crate::store::History;
 use gource_vcs::blobs::blob_sizes;
 use gource_vcs::{Commit, CommitLog, VcsOptions};
-use std::collections::BTreeSet;
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::Path;
 use std::process::Command;
@@ -90,11 +90,8 @@ impl GitSource {
         Ok(tips)
     }
 
-    /// The commits reachable from `tips` but not from `seen`, oldest first.
-    pub fn commits(&self, tips: &[String], seen: &[String]) -> Result<Vec<Commit>, String> {
-        if tips.is_empty() {
-            return Ok(Vec::new());
-        }
+    /// `git log` with the arguments every read uses (oldest first).
+    fn log_cmd(&self) -> Command {
         let mut cmd = self.git();
         cmd.args([
             "log",
@@ -114,27 +111,86 @@ impl GitSource {
         } else {
             "--pretty=format:user:%aN%n%ct"
         });
+        cmd
+    }
+
+    /// The commits reachable from `tips` but not from `seen`, oldest first.
+    pub fn commits(&self, tips: &[String], seen: &[String]) -> Result<Vec<Commit>, String> {
+        if tips.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut cmd = self.log_cmd();
         cmd.args(tips);
         cmd.args(seen.iter().map(|s| format!("^{s}")));
         let out = cmd.output().map_err(|e| format!("cannot run git: {e}"))?;
         if !out.status.success() {
             return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
         }
-        if out.stdout.iter().all(u8::is_ascii_whitespace) {
+        self.parse(&out.stdout)
+    }
+
+    /// Exactly the commits named by `ids` (no ancestors), oldest first.
+    pub fn commits_of(&self, ids: &[String]) -> Result<Vec<Commit>, String> {
+        if ids.is_empty() {
             return Ok(Vec::new());
         }
-        // Parse with the same reader (filters, colours, validation) as a
-        // log file.
+        let mut child = self
+            .log_cmd()
+            .args(["--stdin", "--no-walk=unsorted"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("cannot run git: {e}"))?;
+        let mut stdin = child.stdin.take().ok_or("no stdin")?;
+        let input: String = ids.iter().map(|s| format!("{s}\n")).collect();
+        let writer = std::thread::spawn(move || stdin.write_all(input.as_bytes()));
+        let out = child.wait_with_output().map_err(|e| e.to_string())?;
+        let _ = writer.join();
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        self.parse(&out.stdout)
+    }
+
+    /// The names of the commits reachable from `tips` but not from `seen`
+    /// (merges and empty commits included), in no particular order.
+    pub fn list(&self, tips: &[String], seen: &[String]) -> Result<Vec<String>, String> {
+        if tips.is_empty() {
+            return Ok(Vec::new());
+        }
+        let out = self
+            .git()
+            .arg("rev-list")
+            .args(tips)
+            .args(seen.iter().map(|s| format!("^{s}")))
+            .output()
+            .map_err(|e| format!("cannot run git: {e}"))?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::to_string)
+            .collect())
+    }
+
+    /// Parse `git log` output like a log file (filters, colours, sizes),
+    /// sorted by time: branches interleave, the history is in time order.
+    fn parse(&self, stdout: &[u8]) -> Result<Vec<Commit>, String> {
+        if stdout.iter().all(u8::is_ascii_whitespace) {
+            return Ok(Vec::new());
+        }
         let mut options = self.options.clone();
         if options.include_blob_sizes {
             // One `git cat-file` for the blobs this log names.
-            match blob_sizes(Path::new(&self.dir), &out.stdout[..]) {
+            match blob_sizes(Path::new(&self.dir), stdout) {
                 Ok(sizes) => options.blob_sizes = Some(Arc::new(sizes)),
                 Err(e) => log::warn!("file sizes unavailable: {e}"),
             }
         }
         let mut file = tempfile::NamedTempFile::new().map_err(|e| e.to_string())?;
-        file.write_all(&out.stdout).map_err(|e| e.to_string())?;
+        file.write_all(stdout).map_err(|e| e.to_string())?;
         file.flush().map_err(|e| e.to_string())?;
         let path = file.path().to_str().ok_or("non-UTF-8 temp path")?;
         let mut log =
@@ -143,7 +199,6 @@ impl GitSource {
         while let Some(c) = log.next_commit() {
             commits.push(c);
         }
-        // Branches interleave in time; the history is in time order.
         commits.sort_by_key(|c| c.timestamp);
         Ok(commits)
     }
@@ -178,26 +233,6 @@ impl GitSource {
             .collect())
     }
 
-    /// The members of `shas` not reachable from another member.
-    pub fn independent(&self, shas: &[String]) -> Result<Vec<String>, String> {
-        if shas.len() < 2 {
-            return Ok(shas.to_vec());
-        }
-        let out = self
-            .git()
-            .args(["merge-base", "--independent"])
-            .args(shas)
-            .output()
-            .map_err(|e| format!("cannot run git: {e}"))?;
-        if !out.status.success() {
-            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-        }
-        Ok(String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .map(str::to_string)
-            .collect())
-    }
-
     /// All the history now, and the tips it is complete up to.
     pub fn load(&self) -> Result<(Vec<Commit>, Vec<String>), String> {
         let tips = self.tips()?;
@@ -206,55 +241,68 @@ impl GitSource {
     }
 }
 
-/// The tips whose history has been served, as a bounded set.
+/// Which commits have been served: a set of their ids, bounded by the size
+/// of the repository.
 ///
-/// A poll excludes them (`^tip`) so that switching `HEAD` between branches, or
-/// a branch moving back, never serves a commit twice. Two rules keep the set
-/// safe and small for a server that runs for months:
-///
-/// * Only tips git can still resolve are passed on. A force-push followed by
-///   `gc --prune=now` deletes old tips; `^<missing sha>` would make every
-///   later `git log` fail ("bad object").
-/// * After each poll the set is reduced to its independent tips
-///   (`git merge-base --independent`): a tip reachable from another adds
-///   nothing to the exclusion. The set is then at most the number of
-///   unrelated heads, not the number of tips ever seen.
-///
-/// Alternative considered: a set of every served commit id, which needs the
-/// whole history listed on each change and grows with the history.
+/// Each poll lists the commits reachable from the current tips and serves
+/// only those whose id is not in the set, so nothing is served twice however
+/// `HEAD` or the branches move: switching branches, force-pushes, and even a
+/// force-push plus `gc --prune=now` between two polls (the old tips are gone
+/// but their commits are remembered by id). To keep the listing cheap it
+/// excludes (`^tip`) the previous poll's tips when git can still find them;
+/// that is only an optimisation, never needed for correctness, and a missing
+/// object can't break it because it is checked first.
 #[derive(Debug, Clone, Default)]
-pub struct Served(BTreeSet<String>);
+pub struct Served {
+    /// The first 128 bits of each commit's object name.
+    ids: HashSet<u128>,
+    /// The tips of the previous poll.
+    tips: Vec<String>,
+}
+
+fn id_key(sha: &str) -> u128 {
+    u128::from_str_radix(sha.get(..32).unwrap_or(sha), 16).unwrap_or_else(|_| {
+        // Not hex (cannot happen with git): hash the text instead.
+        sha.bytes()
+            .fold(0u128, |h, b| h.wrapping_mul(31).wrapping_add(b as u128))
+    })
+}
 
 impl Served {
-    /// The history is complete up to these tips.
-    pub fn new(tips: &[String]) -> Self {
-        Self(tips.iter().cloned().collect())
+    /// The history is complete up to `tips`.
+    pub fn new(source: &GitSource, tips: &[String]) -> Result<Self, String> {
+        let ids = source.list(tips, &[])?.iter().map(|s| id_key(s)).collect();
+        Ok(Self {
+            ids,
+            tips: tips.to_vec(),
+        })
     }
 
-    /// Number of tips remembered.
+    /// Number of commits remembered.
     pub fn len(&self) -> usize {
-        self.0.len()
+        self.ids.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.ids.is_empty()
     }
 
     /// The commits made visible by the current tips that were not served
-    /// before, oldest first; remembers the tips.
+    /// before, oldest first; remembers them.
     pub fn poll(&mut self, source: &GitSource) -> Result<Vec<Commit>, String> {
         let tips = source.tips()?;
-        if tips.iter().all(|t| self.0.contains(t)) {
+        if tips == self.tips {
             return Ok(Vec::new());
         }
-        let known: Vec<String> = self.0.iter().cloned().collect();
-        let seen = source.existing_commits(&known)?;
-        let commits = source.commits(&tips, &seen)?;
-        let mut all = seen;
-        all.extend(tips);
-        all.sort();
-        all.dedup();
-        self.0 = source.independent(&all)?.into_iter().collect();
+        let known = source.existing_commits(&self.tips)?;
+        let new: Vec<String> = source
+            .list(&tips, &known)?
+            .into_iter()
+            .filter(|s| !self.ids.contains(&id_key(s)))
+            .collect();
+        let commits = source.commits_of(&new)?;
+        self.ids.extend(new.iter().map(|s| id_key(s)));
+        self.tips = tips;
         Ok(commits)
     }
 }
@@ -270,18 +318,39 @@ pub async fn follow(
     interval: Duration,
 ) {
     let source = Arc::new(source);
-    let mut served = Served::new(&seen);
+    // The ids already served are listed at once, before any tip can vanish.
+    let first = {
+        let (s, tips) = (source.clone(), seen.clone());
+        tokio::task::spawn_blocking(move || Served::new(&s, &tips))
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|r| r)
+    };
+    let mut served = match first {
+        Ok(st) => Some(st),
+        Err(e) => {
+            log::warn!("polling failed: {e}");
+            None
+        }
+    };
     loop {
         tokio::time::sleep(interval).await;
-        let (s, mut st) = (source.clone(), served.clone());
-        let polled = tokio::task::spawn_blocking(move || st.poll(&s).map(|c| (c, st))).await;
+        let (s, st, tips) = (source.clone(), served.take(), seen.clone());
+        let polled = tokio::task::spawn_blocking(move || {
+            let mut st = match st {
+                Some(st) => st,
+                None => Served::new(&s, &tips)?,
+            };
+            st.poll(&s).map(|c| (c, st))
+        })
+        .await;
         match polled {
             Ok(Ok((commits, st))) => {
                 if !commits.is_empty() {
                     log::info!("{} new commits", commits.len());
                     history.append(commits);
                 }
-                served = st;
+                served = Some(st);
             }
             Ok(Err(e)) => log::warn!("polling failed: {e}"),
             Err(e) => log::warn!("polling failed: {e}"),
