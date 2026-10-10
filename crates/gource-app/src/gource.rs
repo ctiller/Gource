@@ -2000,6 +2000,11 @@ impl Gource {
         }
 
         if self.first_read && self.commitqueue.is_empty() {
+            // A stream (a live server, stdin) that has not delivered its first
+            // commit yet is not an empty log: wait for it.
+            if !log.is_finished() {
+                return Ok(());
+            }
             return Err(AppError("no commits found".to_string()));
         }
         self.first_read = false;

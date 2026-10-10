@@ -11,6 +11,7 @@
 pub mod glyph;
 pub mod input;
 pub mod remote;
+pub mod surface;
 
 #[cfg(target_arch = "wasm32")]
 mod web;
