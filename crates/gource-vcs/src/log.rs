@@ -615,7 +615,7 @@ impl CommitLog {
     }
 
     /// Everything has been read: the end of the file, or of a stream's input.
-    pub(crate) fn at_end(&self) -> bool {
+    pub fn at_end(&self) -> bool {
         self.buffered_commit.is_none()
             && match &self.source {
                 LogSource::Seekable(s) => s.is_finished(),

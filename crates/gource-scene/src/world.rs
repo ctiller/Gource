@@ -390,6 +390,10 @@ impl World {
                 file.apply_line_delta(cf.lines_added, cf.lines_removed, settings.file_pulse);
                 file.byte_size = (file.lines as u64) * 35;
             }
+            // A size from the log is the real one.
+            if let Some(size) = cf.byte_size {
+                file.byte_size = size;
+            }
             if settings.file_size_metric != gource_settings::FileSizeMetric::None {
                 let (weight, ref_weight) = match settings.file_size_metric {
                     gource_settings::FileSizeMetric::Lines => (file.lines.max(1) as u64, 100),

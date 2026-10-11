@@ -5,12 +5,17 @@
 //! runs the ordinary [`gource_app::app::GourceApp`] on it, drawing each
 //! frame's [`gource_draw::DrawList`] with the WebGL2 backend.
 //!
-//! [`remote`] and [`input`] are platform-independent (and tested natively);
+//! Until the first commit arrives the app waits (a live server may start
+//! empty); a fatal error, such as an ended stream with no commits, is
+//! shown on the page and in the console ([`surface`]).
+//!
+//! [`remote`], [`surface`] and [`input`] are platform-independent (and tested natively);
 //! the browser glue in `web` only exists on wasm32.
 
 pub mod glyph;
 pub mod input;
 pub mod remote;
+pub mod surface;
 
 #[cfg(target_arch = "wasm32")]
 mod web;

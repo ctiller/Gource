@@ -188,7 +188,16 @@ where
             continue;
         }
 
+        let before = commit.files.len();
         commit.add_file(&resolved_file, status, options);
+        // A filtered file adds nothing; otherwise it is the last one.
+        if commit.files.len() > before
+            && let Some(sizes) = &options.blob_sizes
+            && let Some(blob) = crate::blobs::raw_new_blob(&line)
+            && let Some(file) = commit.files.last_mut()
+        {
+            file.byte_size = sizes.get(blob).copied();
+        }
     }
 
     !commit.username.is_empty()

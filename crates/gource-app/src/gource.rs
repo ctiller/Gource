@@ -789,7 +789,7 @@ impl Gource {
                     op,
                     lines_added: cf.lines_added.unwrap_or(0),
                     lines_removed: cf.lines_removed.unwrap_or(0),
-                    byte_size: None,
+                    byte_size: cf.byte_size,
                     is_binary: false,
                 }
             })
@@ -2000,6 +2000,12 @@ impl Gource {
         }
 
         if self.first_read && self.commitqueue.is_empty() {
+            // A stream (a live server, stdin) that is still open and has not
+            // delivered its first commit is not an empty log: wait for it.
+            // One that has ended with no usable commit is.
+            if !log.at_end() {
+                return Ok(());
+            }
             return Err(AppError("no commits found".to_string()));
         }
         self.first_read = false;

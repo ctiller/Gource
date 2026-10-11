@@ -119,6 +119,7 @@ impl CommitExt for Commit {
             colour,
             lines_added,
             lines_removed,
+            byte_size: None,
             is_binary,
             is_shadow,
         });

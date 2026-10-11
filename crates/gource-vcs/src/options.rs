@@ -54,6 +54,12 @@ pub struct VcsOptions {
     pub hasher: StringHasher,
     /// Whether to include numstat when reading git logs.
     pub include_numstat: bool,
+    /// Whether to look up each git file's size in bytes after the commit
+    /// (needed by `--file-size-metric size`; one extra `git cat-file`).
+    pub include_blob_sizes: bool,
+    /// Sizes by object name, filled in by the log reader when
+    /// `include_blob_sizes` is set; the git parser reads file sizes from it.
+    pub blob_sizes: Option<std::sync::Arc<crate::blobs::BlobSizes>>,
     /// Live streaming mode.
     pub live: bool,
     /// Polling interval for live mode (seconds). <= 0.0 defaults to 5.0 in watchers.

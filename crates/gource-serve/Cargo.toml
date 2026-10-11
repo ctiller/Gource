@@ -20,12 +20,12 @@ gource-vcs = { workspace = true }
 fancy-regex = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "signal", "time"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tower-http = { version = "0.6", features = ["fs"] }
+tempfile = { workspace = true }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
-tempfile = { workspace = true }

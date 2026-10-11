@@ -11,7 +11,7 @@ gource-cli (bin, wgpu)    Bevy-free headless CLI & offscreen exporter (--output-
   └─ gource-render        plain-wgpu DrawList renderer (offscreen & surface, 4x MSAA)
 gource-web (cdylib, wasm) browser client streaming from gource-serve, Canvas2D glyph rasteriser
   └─ gource-webgl         WebGL2 DrawList renderer over web-sys
-gource-serve (bin, axum)  HTTP server streaming L1 binary wire format (/v1/stream, /v1/repos)
+gource-serve (bin, axum)  HTTP server streaming the L1 binary wire format (GET /stream, GET /info)
   └─ gource-app           the simulation & presenters: tree, files, users, actions, camera,
      │                    Gource state machine, multi-repo shell, MVC presenters.
      ├─ gource-scene      integer-only simulation (Q24.8 fixed point, World, step, view):
@@ -54,6 +54,60 @@ Design rules:
 * **Rendering in gamma space.** Colours and texels are used as-is, and
   blending happens on gamma-encoded values like the original OpenGL renderer
   (Bevy's `CompositingSpace::Srgb`, non-sRGB textures).
+
+## gource-serve
+
+`gource-serve [OPTIONS] PATH` serves the commit history of one log file or
+git repository (a working tree or a bare repository). PATH is read once at
+start-up; with `--live` it is polled afterwards.
+
+Routes:
+
+* `GET /stream?from=<ts>&ff=..&fs=..&uf=..&us=..` is the commit stream: a
+  chunked `application/x-gource-stream` body of L1 wire frames
+  (`gource_model::wire`): `Hello`, the matching commits, `EndOfHistory`, and
+  on a live server new commits as they arrive (the response then stays open).
+  `from` is a unix timestamp (default: everything); `ff`/`fs`/`uf`/`us` are
+  the file-hide, file-show, user-hide and user-show regular expressions
+  (repeatable). Bad values answer 400.
+* Wire version 2 (added file sizes). A client and server of different
+  versions fail with `unsupported version N` instead of misreading frames, so
+  deploy the server and the web client together.
+* `GET /info` is JSON: `version` (the wire version), `commits` (the current count, growing while
+  live), `first_timestamp`, `last_timestamp`, `live`.
+* Anything else is served from `--web-root DIR` when given (the web client
+  built by `crates/gource-web/build.sh`), otherwise 404.
+
+Options (`--help` prints them):
+
+| option | meaning |
+|---|---|
+| `--bind ADDR`, `--port N` | listen address (default `127.0.0.1:8080`) |
+| `--web-root DIR` | directory served at `/` |
+| `--log-format FORMAT` | force a log format instead of auto-detecting |
+| `--live`, `--follow` | git repositories only. The history is marked live and polled; commits made later are appended and reach open streams without a restart |
+| `--poll-interval SECS` | seconds between polls with `--live` (default 5) |
+| `--all-branches` | git repositories only. The history is the union of the commits reachable from every local branch (`refs/heads`), each once, in time order. The default is `HEAD` only |
+| `--no-stats` | skip the per-file line counts and sizes (faster on huge histories); without them clients have no data for `--file-size-metric lines/diff/churn/size` |
+
+Polling failures are logged to stderr and retried at the next poll; the log
+level is `GOURCE_SERVE_LOG=error|warn|info|debug|off` (default `info`).
+
+With `--live` the server compares the branch tips (`HEAD`, or all local
+branches with `--all-branches`) on every poll and appends exactly the commits
+not served before. The server remembers the id of every commit it has served
+(bounded by the repository's size), lists the commits reachable from the
+current tips and appends only unknown ids, so a force-push, a force-push plus
+`gc --prune=now` between two polls, or switching `HEAD` between branches
+never serves a commit twice. A bare repository works (push to it),
+and so does a clone that is `git fetch`ed by something else. Appended commits
+are not re-sorted into earlier history; they arrive in the order found, oldest
+first. Remote-tracking branches are not followed.
+
+The stream carries, for git, per-file `lines_added`/`lines_removed`
+(`--numstat`) and the size in bytes of the file after the commit (`byte_size`,
+from the blob; `fflags` bit 5, wire version 2), which is what the web
+client's `--file-size-metric` and `--file-colour-mode churn` use.
 
 ## Working on a crate (parallel development rules)
 

@@ -517,6 +517,7 @@ mod tests {
             action: gource_model::commit::FileAction::Modify,
             colour: [1.0, 1.0, 1.0],
             lines_added: Some(5),
+            byte_size: None,
             lines_removed: Some(2),
             is_binary: false,
             is_shadow: false,

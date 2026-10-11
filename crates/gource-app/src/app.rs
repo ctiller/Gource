@@ -149,6 +149,8 @@ pub fn vcs_options(settings: &GourceSettings) -> VcsOptions {
             || settings.file_colour_mode != gource_settings::FileColourMode::Extension
             || !settings.dashboards.is_empty()
             || !settings.output_stats_filename.is_empty(),
+        include_blob_sizes: settings.file_size_metric == gource_settings::FileSizeMetric::Size,
+        blob_sizes: None,
         live: settings.live,
         live_interval_secs: settings.live_interval,
         live_fetch: settings.live_fetch,

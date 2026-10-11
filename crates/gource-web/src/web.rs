@@ -2,6 +2,7 @@
 //! DOM input.
 
 use crate::remote::{RemoteStream, stream_url};
+use crate::surface::fatal_messages;
 use gource_app::{AppOptions, GourceApp, InputEvent, Viewport};
 use gource_core::StringHasher;
 use gource_draw::DrawList;
@@ -27,6 +28,29 @@ fn error(msg: &str) {
     web_sys::console::error_1(&msg.into());
 }
 
+/// Show `msg` on the page (the element `#status`, created if the page has
+/// none) as well as in the console, so a failure is never silent.
+fn surface(msg: &str) {
+    error(msg);
+    let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+        return;
+    };
+    let element = document.get_element_by_id("status").or_else(|| {
+        let e = document.create_element("div").ok()?;
+        e.set_id("status");
+        document.body()?.append_child(&e).ok()?;
+        Some(e)
+    });
+    if let Some(e) = element {
+        e.set_text_content(Some(&format!("gource: {msg}")));
+        if let Ok(e) = e.dyn_into::<web_sys::HtmlElement>() {
+            let style = e.style();
+            let _ = style.set_property("color", "#f66");
+            let _ = style.set_property("font", "16px sans-serif");
+        }
+    }
+}
+
 struct State {
     app: GourceApp,
     renderer: WebGlRenderer,
@@ -36,6 +60,8 @@ struct State {
     last_ms: Option<f64>,
     last_mouse: gource_core::Vec2,
     frames: u64,
+    /// A fatal error was shown; the frame loop stops.
+    failed: bool,
     /// If non-zero, each animation frame advances this many fixed 1/60 s
     /// steps instead of the wall-clock time (deterministic captures).
     fixed_steps: u32,
@@ -71,7 +97,11 @@ impl State {
                 self.app.frame(1.0 / 60.0, viewport, &mut self.list);
             }
         }
-        let _ = self.app.take_requests();
+        let fatal = fatal_messages(&self.app.take_requests());
+        for msg in &fatal {
+            surface(msg);
+        }
+        self.failed |= !fatal.is_empty();
         self.renderer.sync_textures(&self.app.gfx().textures);
         self.renderer.render(&self.list);
         self.frames += 1;
@@ -141,7 +171,7 @@ pub async fn start(
     let url = stream_url(&server, None, &filter);
     wasm_bindgen_futures::spawn_local(async move {
         if let Err(e) = pump(&url, feed).await {
-            error(&format!("stream {url}: {e}"));
+            surface(&format!("stream {url}: {e}"));
         }
     });
 
@@ -154,6 +184,7 @@ pub async fn start(
         last_ms: None,
         last_mouse: gource_core::Vec2::ZERO,
         frames: 0,
+        failed: false,
         fixed_steps,
     }));
     install_input(&canvas, &state)?;
@@ -206,7 +237,12 @@ fn run_frames(state: Rc<RefCell<State>>) {
     let tick: Tick = Rc::new(RefCell::new(None));
     let again = tick.clone();
     *tick.borrow_mut() = Some(Closure::new(move |now: f64| {
-        state.borrow_mut().frame(now);
+        let mut st = state.borrow_mut();
+        if st.failed {
+            return;
+        }
+        st.frame(now);
+        drop(st);
         request_frame(again.borrow().as_ref().unwrap());
     }));
     request_frame(tick.borrow().as_ref().unwrap());

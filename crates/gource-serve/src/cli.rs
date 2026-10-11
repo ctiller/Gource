@@ -1,14 +1,23 @@
 //! The `gource-serve` command line.
 
 use crate::http::{ServeOptions, router};
+use crate::repo::{GitSource, follow, is_git_dir};
 use crate::store::{History, load_history};
 use gource_vcs::VcsOptions;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::time::Duration;
 
-pub const USAGE: &str =
-    "usage: gource-serve [--bind ADDR] [--port N] [--web-root DIR] [--log-format FORMAT] PATH";
+pub const USAGE: &str = "usage: gource-serve [--bind ADDR] [--port N] [--web-root DIR] \
+[--log-format FORMAT] [--live|--follow] [--poll-interval SECS] [--all-branches] [--no-stats] PATH
+
+  --live, --follow     keep running: poll the git repository PATH (working tree or
+                       bare) and stream new commits to connected clients
+  --poll-interval SECS seconds between polls with --live (default 5)
+  --all-branches       history is the union of all local branches, not just HEAD
+  --no-stats           do not read per-file line counts (git --numstat) and file sizes; clients then
+                       have no data for --file-size-metric lines/diff/churn/size";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Args {
@@ -16,8 +25,51 @@ pub struct Args {
     pub port: u16,
     pub web_root: Option<PathBuf>,
     pub log_format: String,
+    /// Follow the repository for new commits (`--live`).
+    pub live: bool,
+    /// Seconds between polls when `live`.
+    pub poll_interval: f64,
+    /// Include every local branch, not just `HEAD`.
+    pub all_branches: bool,
+    /// Skip line counts and file sizes (`--no-stats`); they are read by default.
+    pub no_stats: bool,
     /// Log file or repository directory.
     pub path: String,
+}
+
+/// Prints log records to stderr as `gource-serve: LEVEL message`.
+struct StderrLogger(log::LevelFilter);
+
+impl log::Log for StderrLogger {
+    fn enabled(&self, m: &log::Metadata) -> bool {
+        m.level() <= self.0
+    }
+    fn log(&self, r: &log::Record) {
+        if self.enabled(r.metadata()) {
+            eprintln!(
+                "gource-serve: {}: {}",
+                r.level().as_str().to_lowercase(),
+                r.args()
+            );
+        }
+    }
+    fn flush(&self) {}
+}
+
+/// The log level named by `GOURCE_SERVE_LOG` (`error`, `warn`, `info`,
+/// `debug`, `off`); anything else, or unset, is `info`.
+pub fn log_level(env: Option<&str>) -> log::LevelFilter {
+    env.and_then(|v| v.parse().ok())
+        .unwrap_or(log::LevelFilter::Info)
+}
+
+/// Send `log` records (polling failures, new commits) to stderr.
+pub fn init_logging(level: log::LevelFilter) {
+    static LOGGER: std::sync::OnceLock<StderrLogger> = std::sync::OnceLock::new();
+    let logger = LOGGER.get_or_init(|| StderrLogger(level));
+    if log::set_logger(logger).is_ok() {
+        log::set_max_level(level);
+    }
 }
 
 /// Parse the arguments (without the program name). `Err` holds the message
@@ -28,6 +80,10 @@ pub fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> 
         port: 8080,
         web_root: None,
         log_format: String::new(),
+        live: false,
+        poll_interval: 5.0,
+        all_branches: false,
+        no_stats: false,
         path: String::new(),
     };
     while let Some(a) = it.next() {
@@ -37,6 +93,16 @@ pub fn parse_args(mut it: impl Iterator<Item = String>) -> Result<Args, String> 
             "--port" => args.port = value()?.parse().map_err(|e| format!("--port: {e}"))?,
             "--web-root" => args.web_root = Some(value()?.into()),
             "--log-format" => args.log_format = value()?,
+            "--live" | "--follow" => args.live = true,
+            "--all-branches" => args.all_branches = true,
+            "--no-stats" => args.no_stats = true,
+            "--poll-interval" => {
+                args.poll_interval = value()?
+                    .parse()
+                    .ok()
+                    .filter(|s: &f64| s.is_finite() && *s > 0.0 && *s <= 86_400.0)
+                    .ok_or("--poll-interval needs a number of seconds above 0")?;
+            }
             "-h" | "--help" => return Err(USAGE.into()),
             _ if a.starts_with('-') => return Err(format!("unknown option {a}\n{USAGE}")),
             _ if args.path.is_empty() => args.path = a,
@@ -57,26 +123,62 @@ pub async fn run(
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(), String> {
     let options = VcsOptions {
-        log_format: args.log_format,
+        log_format: args.log_format.clone(),
+        // The clients choose --file-size-metric, so the data must be there.
+        include_numstat: !args.no_stats,
+        include_blob_sizes: !args.no_stats,
         ..Default::default()
     };
-    let commits = load_history(&args.path, &options)?;
+    let git = matches!(args.log_format.as_str(), "" | "git") && is_git_dir(&args.path);
+    if (args.live || args.all_branches) && !git {
+        return Err(format!(
+            "--live and --all-branches need a git repository, not {}",
+            args.path
+        ));
+    }
+    let (commits, source) = if git {
+        let source = GitSource::new(&args.path, args.all_branches, options.clone());
+        let (commits, tips) = source.load()?;
+        (commits, Some((source, tips)))
+    } else {
+        (load_history(&args.path, &options)?, None)
+    };
     log::info!("{} commits from {}", commits.len(), args.path);
+    let history = History::new(commits, args.live, options.hasher);
+    let follower = match source {
+        Some((source, tips)) if args.live => Some(tokio::spawn(follow(
+            history.clone(),
+            source,
+            tips,
+            Duration::from_secs_f64(args.poll_interval),
+        ))),
+        _ => None,
+    };
     let app = router(
-        History::new(commits, false, options.hasher),
+        history,
         &ServeOptions {
             web_root: args.web_root,
         },
     );
     let addr = format!("{}:{}", args.bind, args.port);
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .map_err(|e| format!("cannot listen on {addr}: {e}"))?;
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            if let Some(f) = follower {
+                f.abort();
+            }
+            return Err(format!("cannot listen on {addr}: {e}"));
+        }
+    };
     listening(listener.local_addr().map_err(|e| e.to_string())?);
-    axum::serve(listener, app)
+    let served = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string());
+    if let Some(f) = follower {
+        f.abort();
+    }
+    served
 }
 
 #[cfg(test)]
@@ -109,10 +211,49 @@ mod tests {
                 port: 9000,
                 web_root: Some("w".into()),
                 log_format: "git".into(),
+                live: false,
+                poll_interval: 5.0,
+                all_branches: false,
+                no_stats: false,
                 path: "repo".into(),
             }
         );
         assert_eq!(parse(&["p"]).unwrap().port, 8080);
+    }
+
+    #[test]
+    fn log_level_from_environment() {
+        use log::LevelFilter::*;
+        assert_eq!(log_level(None), Info);
+        assert_eq!(log_level(Some("warn")), Warn);
+        assert_eq!(log_level(Some("OFF")), Off);
+        assert_eq!(log_level(Some("loud")), Info);
+        init_logging(Info);
+        init_logging(Info);
+    }
+
+    #[test]
+    fn parses_live_options() {
+        let a = parse(&["--follow", "--all-branches", "--poll-interval", "0.5", "p"]).unwrap();
+        assert!(a.live && a.all_branches);
+        assert_eq!(a.poll_interval, 0.5);
+        assert!(parse(&["--live", "p"]).unwrap().live);
+        assert!(parse(&["--no-stats", "p"]).unwrap().no_stats);
+        for bad in ["0", "-1", "x", "nan"] {
+            assert!(parse(&["--poll-interval", bad, "p"]).is_err(), "{bad}");
+        }
+    }
+
+    #[tokio::test]
+    async fn live_needs_a_git_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("x.log");
+        std::fs::write(&log, "1|alice|A|/a.rs\n").unwrap();
+        for flag in ["--live", "--all-branches"] {
+            let args = parse(&[flag, "--port", "0", log.to_str().unwrap()]).unwrap();
+            let err = run(args, |_| {}, async {}).await.unwrap_err();
+            assert!(err.contains("need a git repository"), "{err}");
+        }
     }
 
     #[test]

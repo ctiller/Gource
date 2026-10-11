@@ -1,9 +1,12 @@
-//! `gource-serve [--bind ADDR] [--port N] [--web-root DIR] [--log-format F] PATH`
+//! `gource-serve` (see [`gource_serve::cli::USAGE`]).
 
 use gource_serve::cli;
 
 #[tokio::main]
 async fn main() {
+    cli::init_logging(cli::log_level(
+        std::env::var("GOURCE_SERVE_LOG").ok().as_deref(),
+    ));
     let args = cli::parse_args(std::env::args().skip(1)).unwrap_or_else(|e| {
         eprintln!("{e}");
         std::process::exit(2)
