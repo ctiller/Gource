@@ -14,7 +14,7 @@ use std::collections::HashSet;
 use std::io::Write;
 use std::path::Path;
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 /// A git repository to read commits from.
@@ -307,10 +307,29 @@ impl Served {
     }
 }
 
+/// One poll of the live follower on shared state: builds the [`Served`] set
+/// from `startup_tips` on first use, then polls it in place. A failed poll
+/// leaves the state exactly as it was (`Served::poll` changes nothing on
+/// error), so the next poll carries on instead of rebuilding from start-up.
+pub fn poll_step(
+    state: &Mutex<Option<Served>>,
+    source: &GitSource,
+    startup_tips: &[String],
+) -> Result<Vec<Commit>, String> {
+    let mut guard = state.lock().unwrap_or_else(PoisonError::into_inner);
+    if guard.is_none() {
+        *guard = Some(Served::new(source, startup_tips)?);
+    }
+    match guard.as_mut() {
+        Some(served) => served.poll(source),
+        None => Ok(Vec::new()),
+    }
+}
+
 /// Poll `source` every `interval` and append new commits to `history`.
 /// `seen` are the tips `history` is already complete up to. A failed poll
 /// (a repository mid-update) is logged as a warning, which `gource-serve`
-/// prints to stderr, and retried at the next poll.
+/// prints to stderr, keeps all state, and is retried at the next poll.
 pub async fn follow(
     history: Arc<History>,
     source: GitSource,
@@ -318,39 +337,21 @@ pub async fn follow(
     interval: Duration,
 ) {
     let source = Arc::new(source);
-    // The ids already served are listed at once, before any tip can vanish.
-    let first = {
-        let (s, tips) = (source.clone(), seen.clone());
-        tokio::task::spawn_blocking(move || Served::new(&s, &tips))
-            .await
-            .map_err(|e| e.to_string())
-            .and_then(|r| r)
-    };
-    let mut served = match first {
-        Ok(st) => Some(st),
-        Err(e) => {
-            log::warn!("polling failed: {e}");
-            None
-        }
-    };
+    let state = Arc::new(Mutex::new(None));
+    let mut first = true;
     loop {
-        tokio::time::sleep(interval).await;
-        let (s, st, tips) = (source.clone(), served.take(), seen.clone());
-        let polled = tokio::task::spawn_blocking(move || {
-            let mut st = match st {
-                Some(st) => st,
-                None => Served::new(&s, &tips)?,
-            };
-            st.poll(&s).map(|c| (c, st))
-        })
-        .await;
-        match polled {
-            Ok(Ok((commits, st))) => {
+        // The first poll is at once: the ids already served are listed before
+        // any start-up tip can vanish.
+        if !std::mem::take(&mut first) {
+            tokio::time::sleep(interval).await;
+        }
+        let (s, st, tips) = (source.clone(), state.clone(), seen.clone());
+        match tokio::task::spawn_blocking(move || poll_step(&st, &s, &tips)).await {
+            Ok(Ok(commits)) => {
                 if !commits.is_empty() {
                     log::info!("{} new commits", commits.len());
                     history.append(commits);
                 }
-                served = Some(st);
             }
             Ok(Err(e)) => log::warn!("polling failed: {e}"),
             Err(e) => log::warn!("polling failed: {e}"),

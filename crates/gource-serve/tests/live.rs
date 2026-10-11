@@ -5,7 +5,7 @@ use axum::body::Body;
 use axum::http::Request;
 use gource_core::StringHasher;
 use gource_model::wire::{Decoder, Event};
-use gource_serve::repo::{GitSource, follow, is_git_dir};
+use gource_serve::repo::{GitSource, Served, follow, is_git_dir, poll_step};
 use gource_serve::{History, ServeOptions, router};
 use gource_vcs::VcsOptions;
 use gource_vcs::commit::file_colour;
@@ -117,6 +117,69 @@ async fn read_until(
     }
 }
 
+type Derive = Box<dyn Fn(&str) -> [f32; 3]>;
+
+/// An open `/stream` and every event received on it so far.
+struct Tap {
+    body: Body,
+    d: Decoder<Derive>,
+    all: Vec<Event>,
+}
+
+impl Tap {
+    async fn open(history: &std::sync::Arc<History>) -> Tap {
+        let resp = router(history.clone(), &ServeOptions::default())
+            .oneshot(Request::get("/stream").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let hasher = StringHasher::default();
+        Tap {
+            body: resp.into_body(),
+            d: Decoder::new(Box::new(move |p: &str| file_colour(p, &hasher)) as Derive),
+            all: Vec::new(),
+        }
+    }
+
+    async fn until(&mut self, want: impl FnMut(&Event) -> bool) {
+        let events = read_until(&mut self.body, &mut self.d, want).await;
+        self.all.extend(events);
+    }
+
+    /// Wait for a commit with this timestamp.
+    async fn until_commit(&mut self, ts: i64) {
+        self.until(|e| matches!(e, Event::Commit(c) if c.timestamp == ts))
+            .await;
+    }
+
+    /// The whole sequence so far: "hello", commit timestamps, "end".
+    fn shape(&self) -> Vec<String> {
+        self.all
+            .iter()
+            .map(|e| match e {
+                Event::Hello(_) => "hello".into(),
+                Event::Commit(c) => c.timestamp.to_string(),
+                Event::EndOfHistory => "end".into(),
+                Event::Error(m) => format!("error {m}"),
+            })
+            .collect()
+    }
+
+    /// Nothing more arrives for a while.
+    async fn quiet(&mut self) {
+        if let Ok(Some(frame)) =
+            tokio::time::timeout(Duration::from_millis(600), self.body.frame()).await
+        {
+            if let Ok(data) = frame.unwrap().into_data() {
+                self.d.push(&data);
+                while let Some(e) = self.d.next_event() {
+                    self.all.push(e.unwrap());
+                }
+            }
+            panic!("unexpected extra data: {:?}", self.shape());
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_commit_pushed_to_a_bare_repository_reaches_an_open_stream() {
     let work = tempfile::tempdir().unwrap();
@@ -146,29 +209,16 @@ async fn a_commit_pushed_to_a_bare_repository_reaches_an_open_stream() {
         tips,
         Duration::from_millis(50),
     ));
-    let app = router(history.clone(), &ServeOptions::default());
-    let resp = app
-        .oneshot(Request::get("/stream").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    let mut body = resp.into_body();
-    let hasher = StringHasher::default();
-    let mut d = Decoder::new(move |p: &str| file_colour(p, &hasher));
-    let events = read_until(&mut body, &mut d, |e| *e == Event::EndOfHistory).await;
-    assert_eq!(
-        events
-            .iter()
-            .filter(|e| matches!(e, Event::Commit(_)))
-            .count(),
-        3
-    );
+    let mut tap = Tap::open(&history).await;
+    tap.until(|e| *e == Event::EndOfHistory).await;
 
     // New work on a branch other than HEAD, pushed to the bare repository.
     git(work.path(), None, &["checkout", "-q", "feat"]);
     commit(work.path(), "e", 500);
     git(work.path(), None, &["push", "-q", "bare", "feat"]);
-    let events = read_until(&mut body, &mut d, |e| matches!(e, Event::Commit(_))).await;
-    assert!(matches!(events.last(), Some(Event::Commit(c)) if c.timestamp == 500));
+    tap.until_commit(500).await;
+    tap.quiet().await;
+    assert_eq!(tap.shape(), ["hello", "100", "200", "300", "end", "500"]);
     assert_eq!(history.len(), 4);
     follower.abort();
 }
@@ -233,7 +283,6 @@ async fn served_commits_carry_line_counts() {
 
 #[test]
 fn switching_head_between_branches_never_reserves_a_commit() {
-    use gource_serve::repo::Served;
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();
     git(d, None, &["init", "-q", "-b", "trunk"]);
@@ -290,23 +339,15 @@ async fn live_follow_survives_a_force_push_and_gc() {
         tips,
         Duration::from_millis(50),
     ));
-    let app = router(history.clone(), &ServeOptions::default());
-    let resp = app
-        .oneshot(Request::get("/stream").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    let mut body = resp.into_body();
-    let hasher = StringHasher::default();
-    let mut d = Decoder::new(move |p: &str| file_colour(p, &hasher));
-    read_until(&mut body, &mut d, |e| *e == Event::EndOfHistory).await;
+    let mut tap = Tap::open(&history).await;
+    tap.until(|e| *e == Event::EndOfHistory).await;
 
     // Rewrite main (drop c, add c2), force-push, and let gc delete c.
     let wd = work.path();
     git(wd, None, &["reset", "-q", "--hard", "HEAD~1"]);
     commit(wd, "c2", 350);
     git(wd, None, &["push", "-q", "-f", "bare", "main"]);
-    let events = read_until(&mut body, &mut d, |e| matches!(e, Event::Commit(_))).await;
-    assert!(matches!(events.last(), Some(Event::Commit(c)) if c.timestamp == 350));
+    tap.until_commit(350).await;
     git(
         &bare_path,
         None,
@@ -323,8 +364,13 @@ async fn live_follow_survives_a_force_push_and_gc() {
     // New commits still reach the open stream.
     commit(wd, "c3", 600);
     git(wd, None, &["push", "-q", "bare", "main"]);
-    let events = read_until(&mut body, &mut d, |e| matches!(e, Event::Commit(_))).await;
-    assert!(matches!(events.last(), Some(Event::Commit(c)) if c.timestamp == 600));
+    tap.until_commit(600).await;
+    tap.quiet().await;
+    assert_eq!(
+        tap.shape(),
+        ["hello", "100", "200", "300", "end", "350", "600"]
+    );
+    assert_eq!(history.len(), 5);
     follower.abort();
 }
 
@@ -341,7 +387,6 @@ fn git_ok(dir: &Path, args: &[&str]) -> bool {
 /// Rewrite main, force-push, and prune the old objects, all before the next
 /// poll; then new commits. Each commit must reach the open stream once.
 async fn prune_between_polls(all_branches: bool) {
-    use gource_serve::repo::Served;
     let work = tempfile::tempdir().unwrap();
     fixture(work.path());
     let bare = tempfile::tempdir().unwrap();
@@ -423,4 +468,146 @@ async fn prune_before_the_next_poll_head_only() {
 #[tokio::test(flavor = "multi_thread")]
 async fn prune_before_the_next_poll_all_branches() {
     prune_between_polls(true).await;
+}
+
+/// A bare repository of the fixture (main: a100 c300), a history loaded from
+/// it and an open stream.
+struct Fx {
+    work: tempfile::TempDir,
+    _bare: tempfile::TempDir,
+    bare_path: std::path::PathBuf,
+    source: GitSource,
+    tips: Vec<String>,
+    history: std::sync::Arc<History>,
+    tap: Tap,
+}
+
+async fn live_bare(all_branches: bool) -> Fx {
+    let work = tempfile::tempdir().unwrap();
+    fixture(work.path());
+    let bare = tempfile::tempdir().unwrap();
+    let bare_path = bare.path().join("r.git");
+    let bp = bare_path.to_str().unwrap();
+    git(work.path(), None, &["clone", "-q", "--bare", ".", bp]);
+    git(work.path(), None, &["remote", "add", "bare", bp]);
+    let source = GitSource::new(bp, all_branches, VcsOptions::default());
+    let (commits, tips) = source.load().unwrap();
+    let history = History::new(commits, true, StringHasher::default());
+    let mut tap = Tap::open(&history).await;
+    tap.until(|e| *e == Event::EndOfHistory).await;
+    Fx {
+        work,
+        _bare: bare,
+        bare_path,
+        source,
+        tips,
+        history,
+        tap,
+    }
+}
+
+/// Make the repository unusable for a moment, like one caught mid-update.
+fn break_repo(bare: &Path) {
+    std::fs::rename(bare.join("HEAD"), bare.join("HEAD.x")).unwrap();
+}
+
+fn fix_repo(bare: &Path) {
+    std::fs::rename(bare.join("HEAD.x"), bare.join("HEAD")).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_poll_between_two_commits_loses_nothing_and_repeats_nothing() {
+    let Fx {
+        work,
+        _bare,
+        bare_path,
+        source,
+        tips,
+        history,
+        mut tap,
+    } = live_bare(false).await;
+    let follower = tokio::spawn(follow(
+        history.clone(),
+        source,
+        tips,
+        Duration::from_millis(40),
+    ));
+    let wd = work.path();
+    commit(wd, "x", 700);
+    git(wd, None, &["push", "-q", "bare", "main"]);
+    tap.until_commit(700).await;
+
+    break_repo(&bare_path);
+    // Several polls fail.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    fix_repo(&bare_path);
+    commit(wd, "y", 800);
+    git(wd, None, &["push", "-q", "bare", "main"]);
+    tap.until_commit(800).await;
+    tap.quiet().await;
+    assert_eq!(tap.shape(), ["hello", "100", "300", "end", "700", "800"]);
+    assert_eq!(history.len(), 4);
+    follower.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn state_survives_a_failed_poll_even_after_the_startup_tips_are_pruned() {
+    for all_branches in [false, true] {
+        let Fx {
+            work,
+            _bare,
+            bare_path,
+            source,
+            tips,
+            history,
+            mut tap,
+        } = live_bare(all_branches).await;
+        let served = std::sync::Mutex::new(None);
+        let poll = |want: &[i64]| {
+            let new = poll_step(&served, &source, &tips).unwrap();
+            assert_eq!(stamps(&new), want, "all_branches={all_branches}");
+            history.append(new);
+        };
+        poll(&[]);
+        let wd = work.path();
+        commit(wd, "x", 700);
+        git(wd, None, &["push", "-q", "bare", "main"]);
+        poll(&[700]);
+
+        // A poll fails; nothing about the state may change.
+        break_repo(&bare_path);
+        assert!(poll_step(&served, &source, &tips).is_err());
+        assert!(poll_step(&served, &source, &tips).is_err());
+        fix_repo(&bare_path);
+
+        // The start-up tips die: rewrite main to its first commit, prune.
+        git(wd, None, &["reset", "-q", "--hard", "HEAD~2"]);
+        commit(wd, "y", 800);
+        git(wd, None, &["push", "-q", "-f", "bare", "main"]);
+        git(
+            &bare_path,
+            None,
+            &["reflog", "expire", "--expire=now", "--all"],
+        );
+        git(&bare_path, None, &["gc", "-q", "--prune=now"]);
+        assert!(
+            tips.iter()
+                .any(|t| !git_ok(&bare_path, &["cat-file", "-e", t]))
+        );
+        poll(&[800]);
+        commit(wd, "z", 900);
+        git(wd, None, &["push", "-q", "bare", "main"]);
+        poll(&[900]);
+        poll(&[]);
+
+        tap.until_commit(900).await;
+        tap.quiet().await;
+        let mut want = vec!["hello", "100"];
+        if all_branches {
+            want.push("200");
+        }
+        want.extend(["300", "end", "700", "800", "900"]);
+        assert_eq!(tap.shape(), want, "all_branches={all_branches}");
+        let _ = Served::default();
+    }
 }
