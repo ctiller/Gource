@@ -47,6 +47,7 @@ impl WorldHistory for World {
 
         // Track last-touched file position for each active user to place them accurately
         let mut user_last_file_path: BTreeMap<String, String> = BTreeMap::new();
+        let mut touched_dirs: Vec<gource_scene::DirId> = Vec::new();
 
         // Materialize live files
         for live in &snap.files {
@@ -126,12 +127,18 @@ impl WorldHistory for World {
                     self.dirs[did].add_visible();
                 }
                 self.dirs[did].since_last_file_change = 0.0;
-                self.on_node_updated(did, true);
+                if !touched_dirs.contains(&did) {
+                    touched_dirs.push(did);
+                }
             }
 
             if let Some(user_name) = history.users.get(live.last_user) {
                 user_last_file_path.insert(user_name.to_string(), fullpath);
             }
+        }
+
+        for did in touched_dirs {
+            self.on_node_updated(did, true);
         }
 
         // Apply weighted layout if a file size metric is active

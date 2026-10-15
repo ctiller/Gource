@@ -127,12 +127,22 @@ impl LiveGitWatcher {
                     "--encoding=UTF-8",
                     "--no-renames",
                 ]);
+                let remerge = formats::git::supports_remerge_diff();
+                if remerge {
+                    cmd.arg("--remerge-diff");
+                }
                 if options.include_numstat {
                     cmd.arg("--numstat");
                 }
                 cmd.arg("--no-show-signature");
                 if options.author_time {
-                    cmd.arg("--pretty=format:user:%aN%n%at");
+                    if remerge {
+                        cmd.arg("--pretty=format:user:%aN%n%at%nparents:%P");
+                    } else {
+                        cmd.arg("--pretty=format:user:%aN%n%at");
+                    }
+                } else if remerge {
+                    cmd.arg("--pretty=format:user:%aN%n%ct%nparents:%P");
                 } else {
                     cmd.arg("--pretty=format:user:%aN%n%ct");
                 }
@@ -246,12 +256,22 @@ impl LiveGitWatcher {
                         "--encoding=UTF-8",
                         "--no-renames",
                     ]);
+                    let remerge = formats::git::supports_remerge_diff();
+                    if remerge {
+                        cmd.arg("--remerge-diff");
+                    }
                     if options.include_numstat {
                         cmd.arg("--numstat");
                     }
                     cmd.arg("--no-show-signature");
                     if options.author_time {
-                        cmd.arg("--pretty=format:user:%aN%n%at");
+                        if remerge {
+                            cmd.arg("--pretty=format:user:%aN%n%at%nparents:%P");
+                        } else {
+                            cmd.arg("--pretty=format:user:%aN%n%at");
+                        }
+                    } else if remerge {
+                        cmd.arg("--pretty=format:user:%aN%n%ct%nparents:%P");
                     } else {
                         cmd.arg("--pretty=format:user:%aN%n%ct");
                     }

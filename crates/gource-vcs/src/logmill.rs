@@ -205,9 +205,13 @@ fn generate_log(
     abort_flag: Option<&Arc<AtomicBool>>,
     child_process: Option<&Arc<Mutex<Option<Child>>>>,
 ) -> Result<(NamedTempFile, String), String> {
-    let command_str = match formats::log_command_with_options(vcs, options) {
-        Some(cmd) => cmd,
-        None => return Err("failed to generate log file".to_string()),
+    let command_str = if vcs == "git" {
+        formats::git::log_command_for_repo(options)
+    } else {
+        match formats::log_command_with_options(vcs, options) {
+            Some(cmd) => cmd,
+            None => return Err("failed to generate log file".to_string()),
+        }
     };
 
     let temp_file = NamedTempFile::new().map_err(|e| e.to_string())?;

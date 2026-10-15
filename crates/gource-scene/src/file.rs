@@ -226,7 +226,7 @@ impl File {
     /// Port of `RFile::getAlpha()`.
     pub fn alpha(&self) -> f32 {
         let mut alpha = self.pawn.alpha();
-        if self.fade_start > 0.0 {
+        if self.fade_start >= 0.0 {
             let fade_elapsed = (self.pawn.elapsed - self.fade_start).clamp(0.0, 1.0);
             alpha = 1.0 - fade_elapsed;
         }
@@ -302,12 +302,12 @@ impl File {
         }
 
         let mut just_expired = false;
-        if self.fade_start > 0.0 && !self.expired && (self.pawn.elapsed - self.fade_start) >= 1.0 {
+        if self.fade_start >= 0.0 && !self.expired && (self.pawn.elapsed - self.fade_start) >= 1.0 {
             self.expired = true;
             just_expired = true;
         }
 
-        if self.pawn.is_hidden() && !self.forced_removal {
+        if self.pawn.is_hidden() && !self.forced_removal && !self.removing {
             self.pawn.elapsed = 0.0;
         }
 
@@ -317,7 +317,7 @@ impl File {
     /// The weighted-mode size the file is animating towards (Q8): zero
     /// while hidden or fading out.
     pub fn size_goal(&self) -> Fx {
-        if self.pawn.is_hidden() || self.removing || self.fade_start > 0.0 {
+        if self.pawn.is_hidden() || self.removing || self.fade_start >= 0.0 {
             0
         } else {
             self.sim.target_size
@@ -537,5 +537,46 @@ mod tests {
         assert!((f.target_size() - base * 0.5).abs() < 0.01);
         f.set_weight_target(1_000_000, 1, 8.0);
         assert!((f.target_size() - base * 4.0).abs() < 0.02);
+    }
+
+    #[test]
+    fn file_removed_at_zero_elapsed_fades_and_expires() {
+        // Case 1: touched and removed on the very first tick (pawn.elapsed == 0.0, fade_start == 0.0)
+        let mut f = File::new(
+            "/docs/reviews/r1.md",
+            Vec3::ONE,
+            Vec2::ZERO,
+            1,
+            8.0,
+            4.0,
+            false,
+        );
+        f.touch(100, Vec3::ONE);
+        assert_eq!(f.pawn.elapsed, 0.0);
+        f.remove_with_timestamp(100);
+        assert!(f.removing);
+        assert_eq!(f.fade_start, 0.0);
+        assert_eq!(f.size_goal(), 0);
+
+        assert!(!f.logic(0.5, 0.0));
+        assert!((f.alpha() - 0.5).abs() < 1e-4);
+        assert!(f.logic(0.6, 0.0));
+        assert!(f.expired);
+        assert_eq!(f.alpha(), 0.0);
+
+        // Case 2: removed while still hidden (never touched before delete action finishes)
+        let mut hidden_f = File::new(
+            "/docs/reviews/r2.md",
+            Vec3::ONE,
+            Vec2::ZERO,
+            2,
+            8.0,
+            4.0,
+            false,
+        );
+        assert!(hidden_f.pawn.is_hidden());
+        hidden_f.remove_with_timestamp(100);
+        assert!(hidden_f.logic(1.1, 0.0));
+        assert!(hidden_f.expired);
     }
 }

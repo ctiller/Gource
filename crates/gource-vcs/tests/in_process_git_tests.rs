@@ -251,3 +251,75 @@ fn test_in_process_git_empty_commit_and_detached_head() {
     let content = fs::read_to_string(log_file.path()).unwrap();
     assert!(content.contains("file.txt"));
 }
+
+#[test]
+fn test_merge_commit_deletes_files_from_both_parents() {
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+
+    run_git(dir, &["init", "-b", "main", "--ref-format=files"]);
+    run_git(dir, &["config", "user.name", "Merge Author"]);
+    run_git(dir, &["config", "user.email", "merge@example.com"]);
+    run_git(dir, &["config", "commit.gpgsign", "false"]);
+
+    // Commit 1 on main: add docs/reviews/from_main.md and README.md
+    fs::create_dir_all(dir.join("docs/reviews")).unwrap();
+    fs::write(dir.join("docs/reviews/from_main.md"), "r1\nr2\n").unwrap();
+    fs::write(dir.join("README.md"), "hello\n").unwrap();
+    run_git(dir, &["add", "."]);
+    run_git(dir, &["commit", "-m", "Add initial review"]);
+
+    // Branch feature: add docs/reviews/from_feature.md
+    run_git(dir, &["checkout", "-b", "feature"]);
+    fs::write(dir.join("docs/reviews/from_feature.md"), "f1\nf2\nf3\n").unwrap();
+    run_git(dir, &["add", "."]);
+    run_git(dir, &["commit", "-m", "Add feature review"]);
+
+    // Back on main: modify README.md so merge is non-fast-forward
+    run_git(dir, &["checkout", "main"]);
+    fs::write(dir.join("README.md"), "hello\nworld\n").unwrap();
+    run_git(dir, &["add", "."]);
+    run_git(dir, &["commit", "-m", "Update README"]);
+
+    // Merge feature into main while retiring all of docs/reviews/ in the merge commit
+    run_git(dir, &["merge", "--no-commit", "--no-ff", "feature"]);
+    run_git(dir, &["rm", "-rf", "docs/reviews"]);
+    run_git(dir, &["commit", "-m", "Retire review archive in merge"]);
+
+    for backend in ["in-process", "cli"] {
+        for include_numstat in [false, true] {
+            let options = VcsOptions {
+                git_backend: backend.to_string(),
+                include_numstat,
+                ..Default::default()
+            };
+            let mut log = LogMill::fetch_blocking(dir.to_str().unwrap(), &options).unwrap();
+            let mut alive = std::collections::BTreeSet::new();
+            while let Some(c) = log.next_commit() {
+                // Ensure no commit emits duplicate entries for the same file when numstat is enabled
+                let mut seen_in_commit = std::collections::BTreeSet::new();
+                for f in &c.files {
+                    assert!(
+                        seen_in_commit.insert(f.filename.clone()),
+                        "duplicate file {} in commit (backend={backend}, numstat={include_numstat})",
+                        f.filename
+                    );
+                    match f.action {
+                        gource_vcs::FileAction::Add | gource_vcs::FileAction::Modify => {
+                            alive.insert(f.filename.clone());
+                        }
+                        gource_vcs::FileAction::Delete => {
+                            alive.remove(&f.filename);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            assert!(
+                !alive.iter().any(|p| p.starts_with("/docs/reviews/")),
+                "docs/reviews should be completely deleted after merge (backend={backend}, numstat={include_numstat}): {alive:?}"
+            );
+            assert!(alive.contains("/README.md"));
+        }
+    }
+}

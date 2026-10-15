@@ -355,6 +355,86 @@ impl World {
         })
     }
 
+    /// Batch-delete a slice of files, coalescing per-directory radius/ring
+    /// recalculations and directory reaping so deleting thousands of files on
+    /// the same tick runs in O(N) time instead of O(N^2).
+    pub fn delete_files(&mut self, file_ids: &[FileId]) -> Vec<DeletedFileInfo> {
+        if file_ids.len() <= 4 {
+            return file_ids
+                .iter()
+                .filter_map(|&fid| self.delete_file(fid))
+                .collect();
+        }
+
+        let mut last_in_dir: std::collections::HashMap<DirId, FileId> =
+            std::collections::HashMap::new();
+        let mut seen = std::collections::HashSet::with_capacity(file_ids.len());
+        let mut unique_fids = Vec::with_capacity(file_ids.len());
+        for &fid in file_ids {
+            if seen.insert(fid)
+                && let Some(file) = self.files.get(fid)
+            {
+                unique_fids.push(fid);
+                if let Some(did) = file.dir {
+                    last_in_dir.insert(did, fid);
+                }
+            }
+        }
+
+        let last_fids: std::collections::HashSet<FileId> = last_in_dir.values().copied().collect();
+        let mut batch_removed = std::collections::HashSet::with_capacity(unique_fids.len());
+        let mut touched_dirs = std::collections::HashSet::new();
+        let mut out = Vec::with_capacity(unique_fids.len());
+        let mut deferred = Vec::with_capacity(last_fids.len());
+
+        for fid in unique_fids {
+            if last_fids.contains(&fid) {
+                deferred.push(fid);
+                continue;
+            }
+            if let Some(file) = self.files.remove(fid) {
+                self.files_by_path.remove(&file.fullpath);
+                let was_visible = !file.pawn.is_hidden();
+                if let Some(did) = file.dir
+                    && let Some(dir) = self.dirs.get_mut(did)
+                {
+                    if was_visible && dir.visible_count > 0 {
+                        dir.visible_count -= 1;
+                    }
+                    touched_dirs.insert(did);
+                }
+                batch_removed.insert(fid);
+                out.push(DeletedFileInfo {
+                    file_id: fid,
+                    fullpath: file.fullpath,
+                    ext: file.ext,
+                });
+            }
+        }
+
+        if !batch_removed.is_empty() {
+            for did in touched_dirs {
+                if let Some(dir) = self.dirs.get_mut(did) {
+                    dir.files.retain(|f| !batch_removed.contains(f));
+                }
+            }
+            for (_, user) in &mut self.users {
+                user.actions.retain(|a| !batch_removed.contains(&a.target));
+                user.active_actions
+                    .retain(|a| !batch_removed.contains(&a.target));
+            }
+            self.removed_files.retain(|f| !batch_removed.contains(f));
+        }
+
+        for fid in deferred {
+            if let Some(del) = self.delete_file(fid) {
+                out.push(del);
+            }
+        }
+
+        out
+    }
+
     /// Port of `Gource::addFileAction(const RCommit& commit, const RCommitFile& cf, RFile* file, float t)`.
     pub fn add_file_action(
         &mut self,
@@ -517,10 +597,22 @@ impl World {
         if file_path == current_abspath {
             self.dirs[dir_id].files.push(file_id);
             self.files[file_id].dir = Some(dir_id);
-            if !self.files[file_id].pawn.is_hidden() {
+            let is_hidden = self.files[file_id].pawn.is_hidden();
+            if !is_hidden {
                 self.dirs[dir_id].visible_count += 1;
             }
-            self.on_file_updated(dir_id);
+            if !is_hidden || self.dirs[dir_id].files.len() == 1 {
+                self.on_file_updated(dir_id);
+            } else {
+                // Hidden files do not affect visible_count, directory radii, or ring slots;
+                // only reset change timers along the ancestor chain.
+                self.dirs[dir_id].since_last_file_change = 0.0;
+                let mut cur = self.dirs[dir_id].parent;
+                while let Some(pid) = cur {
+                    self.dirs[pid].since_last_node_change = 0.0;
+                    cur = self.dirs[pid].parent;
+                }
+            }
             return true;
         }
 
@@ -932,6 +1024,61 @@ mod tests {
             .collect();
         assert!(files.len() > 10);
         assert!(files.iter().all(|f| f.sim.size > ONE));
+    }
+
+    #[test]
+    fn weighted_large_directory_and_batch_delete_reaps_dir() {
+        let settings = GourceSettings {
+            file_size_metric: gource_settings::FileSizeMetric::Lines,
+            max_file_lag: 0.1,
+            ..Default::default()
+        };
+        let mut world = World::new(17, 31);
+        world.weighted_mode = true;
+        let mut review_fids = Vec::new();
+        for i in 0..200 {
+            let cf = CommitFile {
+                filename: format!("/docs/reviews/r{i}.md"),
+                action: FileAction::Add,
+                colour: gource_model::commit::WHITE,
+                lines_added: Some(50),
+                ..Default::default()
+            };
+            let commit = Commit {
+                timestamp: 100,
+                username: "alice".to_string(),
+                files: vec![cf.clone()],
+                ..Default::default()
+            };
+            let fid = world.add_file(&cf, &settings).unwrap();
+            world.add_file_action(&commit, &cf, fid, 0.0, &settings);
+            review_fids.push(fid);
+        }
+        let keep_cf = CommitFile {
+            filename: "/docs/findings/f0.md".to_string(),
+            action: FileAction::Add,
+            colour: gource_model::commit::WHITE,
+            lines_added: Some(120),
+            ..Default::default()
+        };
+        let keep_commit = Commit {
+            timestamp: 100,
+            username: "alice".to_string(),
+            files: vec![keep_cf.clone()],
+            ..Default::default()
+        };
+        let keep_fid = world.add_file(&keep_cf, &settings).unwrap();
+        world.add_file_action(&keep_commit, &keep_cf, keep_fid, 0.0, &settings);
+
+        for n in 0..30 {
+            tick(&mut world, n, &settings);
+        }
+        assert!(world.dir_map.contains_key("/docs/reviews/"));
+
+        let deleted = world.delete_files(&review_fids);
+        assert_eq!(deleted.len(), 200);
+        assert!(!world.dir_map.contains_key("/docs/reviews/"));
+        assert!(world.dir_map.contains_key("/docs/findings/"));
     }
 
     #[test]

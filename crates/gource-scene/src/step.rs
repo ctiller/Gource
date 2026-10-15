@@ -320,9 +320,14 @@ impl World {
                 })
             };
 
+            let mut touched_dirs: Vec<DirId> = Vec::new();
             for (action, needs_apply, finished_now) in events {
-                if needs_apply {
-                    self.apply_action(uid, action.target, action.timestamp, action.colour);
+                if needs_apply
+                    && let Some(did) =
+                        self.apply_action(uid, action.target, action.timestamp, action.colour)
+                    && !touched_dirs.contains(&did)
+                {
+                    touched_dirs.push(did);
                 }
                 if finished_now
                     && matches!(action.kind, ActionKind::Remove)
@@ -330,6 +335,9 @@ impl World {
                 {
                     file.remove_with_timestamp(action.timestamp);
                 }
+            }
+            for did in touched_dirs {
+                self.on_node_updated(did, true);
             }
 
             if self.weighted_mode {
@@ -352,25 +360,24 @@ impl World {
     }
 
     /// A user's action reaching a file: touch it (C++ `RAction::apply`) and,
-    /// in weighted mode, kick it away from the user.
+    /// in weighted mode, kick it away from the user. Returns the file's
+    /// parent `DirId` so callers can batch `on_node_updated` across a tick.
     fn apply_action(
         &mut self,
         uid: UserId,
         fid: FileId,
         timestamp: i64,
         colour: gource_core::Vec3,
-    ) {
+    ) -> Option<DirId> {
         let user_pos = self.users[uid].sim.pos;
         let weighted = self.weighted_mode;
         let root = self.root;
-        let Some(file_abs) = self.file_sim_pos(fid) else {
-            return;
-        };
-        let Some(file) = self.files.get_mut(fid) else {
-            return;
-        };
+        let file_abs = self.file_sim_pos(fid)?;
+        let file = self.files.get_mut(fid)?;
         let was_hidden = file.pawn.is_hidden();
-        if file.touch(timestamp, colour) {
+        let file_dir = file.dir;
+        let dir_vis = file_dir.map_or(0, |d| self.dirs[d].visible_count);
+        if self.files[fid].touch(timestamp, colour) {
             self.removed_files.retain(|&rf| rf != fid);
         }
         let file = &mut self.files[fid];
@@ -379,12 +386,22 @@ impl World {
             if was_hidden {
                 file.sim.size = ONE / 10;
                 file.sim.radius = ONE / 20;
-                let nudge = match beam {
-                    Some(b) => (-b).unit_times(ONE as i64 / 2),
-                    None => crate::trig::direction(
+                let nudge = if dir_vis >= 8 {
+                    let spiral_dir = crate::trig::direction(
                         crate::trig::GOLDEN_ANGLE.wrapping_mul(file.pawn.tagid as u16),
-                    )
-                    .unit_times(ONE as i64 / 2),
+                    );
+                    let r_est = (file.sim.target_size / 2).max(2 * ONE) as u64;
+                    let spiral_dist =
+                        ((crate::kernel::fixed::isqrt((dir_vis as u64) << 16) * r_est) >> 8) as i64;
+                    spiral_dir.unit_times(spiral_dist)
+                } else {
+                    match beam {
+                        Some(b) => (-b).unit_times(ONE as i64 / 2),
+                        None => crate::trig::direction(
+                            crate::trig::GOLDEN_ANGLE.wrapping_mul(file.pawn.tagid as u16),
+                        )
+                        .unit_times(ONE as i64 / 2),
+                    }
                 };
                 file.sim.pos = nudge;
                 file.sim.prev_pos = nudge;
@@ -406,7 +423,9 @@ impl World {
                 self.dirs[did].add_visible();
             }
             self.dirs[did].since_last_file_change = 0.0;
-            self.on_node_updated(did, true);
+            Some(did)
+        } else {
+            None
         }
     }
 
@@ -435,10 +454,12 @@ impl World {
             file.sim.vel = (file.sim.vel + beam.unit_times(18 * ONE as i64 / TICK_HZ as i64))
                 .clamp_len(20 * ONE);
             if let Some(did) = file.dir
-                && did != root
                 && let Some(dir) = self.dirs.get_mut(did)
             {
-                dir.sim.ext_accel += beam.unit_times(2 * ONE as i64);
+                dir.since_last_file_change = 0.0;
+                if did != root {
+                    dir.sim.ext_accel += beam.unit_times(2 * ONE as i64);
+                }
             }
         }
     }
@@ -545,6 +566,16 @@ impl World {
     /// (post-order), weighted radii, then directory contact resolution.
     pub fn update_weighted_layout_step(&mut self, preorder: &[DirId]) {
         for &d in preorder.iter().rev() {
+            if self.dirs[d].visible_count == 0 {
+                self.recalc_weighted_radius(d);
+                continue;
+            }
+            if self.dirs[d].since_last_file_change > 3.0 {
+                if !self.dirs[d].children.is_empty() {
+                    self.recalc_weighted_radius(d);
+                }
+                continue;
+            }
             let fids: Vec<FileId> = self.dirs[d]
                 .files
                 .iter()
@@ -577,6 +608,11 @@ impl World {
     /// Weighted-mode radii of one directory from its visible files.
     pub(crate) fn recalc_weighted_radius(&mut self, d: DirId) {
         let children_area = self.children_area(d);
+        if self.dirs[d].visible_count == 0 {
+            let r = crate::files::weighted_radii(&[], children_area, self.params.padding);
+            self.dirs[d].set_radii(r);
+            return;
+        }
         let files: Vec<(Fx, Fx)> = self.dirs[d]
             .files
             .iter()

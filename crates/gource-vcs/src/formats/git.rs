@@ -10,7 +10,28 @@ use std::sync::LazyLock;
 /// Build the git log command string with explicit options.
 /// Appends ` --numstat` when `options.include_numstat` is true.
 pub fn log_command_with_options(options: &VcsOptions) -> String {
+    build_log_command(options, false)
+}
+
+/// Build the git log command string for repository log generation.
+/// Includes `--remerge-diff` on Git >= 2.36 so merge commits that add,
+/// modify, or delete files emit their changes instead of being skipped.
+pub fn log_command_for_repo(options: &VcsOptions) -> String {
+    build_log_command(options, supports_remerge_diff())
+}
+
+/// Returns true if the installed `git` supports `--remerge-diff` (Git >= 2.36).
+pub fn supports_remerge_diff() -> bool {
+    let git_ver = cached_git_version();
+    git_ver.0 == 0 || git_ver.0 > 2 || (git_ver.0 == 2 && git_ver.1 >= 36)
+}
+
+fn build_log_command(options: &VcsOptions, remerge_diff: bool) -> String {
     let mut cmd = String::from("git log --reverse --raw --encoding=UTF-8 --no-renames");
+
+    if remerge_diff {
+        cmd.push_str(" --remerge-diff");
+    }
 
     if options.include_numstat {
         cmd.push_str(" --numstat");
@@ -18,13 +39,19 @@ pub fn log_command_with_options(options: &VcsOptions) -> String {
 
     // Check git version or default to including --no-show-signature.
     // Git on modern systems is >= 2.10.
-    let git_ver = read_git_version();
+    let git_ver = cached_git_version();
     if git_ver.0 == 0 || git_ver.0 > 2 || (git_ver.0 == 2 && git_ver.1 >= 10) {
         cmd.push_str(" --no-show-signature");
     }
 
     if options.author_time {
-        cmd.push_str(" --pretty=format:user:%aN%n%at");
+        if remerge_diff {
+            cmd.push_str(" --pretty=format:user:%aN%n%at%nparents:%P");
+        } else {
+            cmd.push_str(" --pretty=format:user:%aN%n%at");
+        }
+    } else if remerge_diff {
+        cmd.push_str(" --pretty=format:user:%aN%n%ct%nparents:%P");
     } else {
         cmd.push_str(" --pretty=format:user:%aN%n%ct");
     }
@@ -64,6 +91,11 @@ fn format_timestamp_date(timestamp: i64) -> String {
     }
 }
 
+fn cached_git_version() -> (u32, u32, u32) {
+    static GIT_VER: LazyLock<(u32, u32, u32)> = LazyLock::new(read_git_version);
+    *GIT_VER
+}
+
 fn read_git_version() -> (u32, u32, u32) {
     std::process::Command::new("git")
         .arg("--version")
@@ -99,10 +131,13 @@ where
     let mut line = String::new();
     commit.username.clear();
     commit.files.clear();
+    let mut numstat_cursor: usize = 0;
+    let mut is_merge = false;
 
     while get_line(&mut line) && !line.is_empty() {
         if line.starts_with("user:") {
             commit.username = line[5..].to_string();
+            is_merge = false;
 
             if !get_line(&mut line) {
                 return false;
@@ -112,6 +147,11 @@ where
             if commit.timestamp == 0 {
                 return false;
             }
+            continue;
+        }
+
+        if let Some(parents) = line.strip_prefix("parents:") {
+            is_merge = parents.trim().contains(' ');
             continue;
         }
 
@@ -154,17 +194,44 @@ where
                     continue;
                 }
 
-                // If this file was already added (e.g. by --raw), update its stats
+                // If this file was already added (e.g. by --raw), update its stats.
+                // Fast paths: check last entry (interleaved raw+numstat) and cursor
+                // (sequential --raw block followed by --numstat block) in O(1).
                 let mut normalized = gource_core::utf8::filter_utf8(resolved_path.as_bytes());
                 if !normalized.starts_with('/') {
                     normalized.insert(0, '/');
                 }
 
-                if let Some(existing) = commit.files.iter_mut().find(|f| f.filename == normalized) {
+                let matched_idx = if commit
+                    .files
+                    .last()
+                    .is_some_and(|f| f.filename == normalized)
+                {
+                    Some(commit.files.len() - 1)
+                } else if commit
+                    .files
+                    .get(numstat_cursor)
+                    .is_some_and(|f| f.filename == normalized)
+                {
+                    let idx = numstat_cursor;
+                    numstat_cursor += 1;
+                    Some(idx)
+                } else {
+                    commit
+                        .files
+                        .iter()
+                        .position(|f| f.filename == normalized)
+                        .inspect(|&idx| {
+                            numstat_cursor = idx + 1;
+                        })
+                };
+
+                if let Some(idx) = matched_idx {
+                    let existing = &mut commit.files[idx];
                     existing.lines_added = lines_added;
                     existing.lines_removed = lines_removed;
                     existing.is_binary = is_binary;
-                } else {
+                } else if !is_merge {
                     commit.add_file_with_stats(
                         &resolved_path,
                         "M",
@@ -182,6 +249,9 @@ where
         // One byte, like C++'s substr(tab - 1, 1). Half of a multi-byte
         // character isn't a status; `get` avoids panicking on it.
         let status = line.get(tab - 1..tab).unwrap_or("");
+        if is_merge && status != "A" && status != "D" {
+            continue;
+        }
         let raw_file = &line[tab + 1..];
         let resolved_file = parse_git_path(raw_file);
         if resolved_file.is_empty() {

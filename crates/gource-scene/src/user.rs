@@ -276,36 +276,75 @@ impl User {
         let find_nearby_action = !self.actions.is_empty() && self.action_interval <= 0.0;
 
         // Queue next active action
-        let mut i = 0;
-        while i < self.actions.len() {
-            // Check overdue
-            let is_overdue = max_file_lag >= 0.0 && self.actions[i].t < t - max_file_lag;
-            if is_overdue {
-                let mut action = self.actions.remove(i);
-                action.rate = 2.0;
-                self.active_actions.push(action);
-                continue;
-            }
-
-            if !find_nearby_action {
-                break;
-            }
-
-            let file_pos = get_file_pos(self.actions[i].target);
-            let in_range = match file_pos {
-                Some(pos) => {
-                    (pos - self.sim.pos).len_sq() < (beam_dist as i64) * (beam_dist as i64)
+        let first_overdue = self
+            .actions
+            .first()
+            .is_some_and(|a| max_file_lag >= 0.0 && a.t < t - max_file_lag);
+        if first_overdue {
+            let active_actions = &mut self.active_actions;
+            let user_pos = self.sim.pos;
+            let beam_dist_sq = (beam_dist as i64) * (beam_dist as i64);
+            let mut found_nearby = false;
+            let mut stop_scan = false;
+            let mut nearby_checks = 0usize;
+            self.actions.retain_mut(|action| {
+                if stop_scan {
+                    return true;
                 }
-                None => false,
-            };
+                let is_overdue = max_file_lag >= 0.0 && action.t < t - max_file_lag;
+                if is_overdue {
+                    let mut a = action.clone();
+                    a.rate = 2.0;
+                    active_actions.push(a);
+                    return false;
+                }
+                if !find_nearby_action || found_nearby {
+                    stop_scan = true;
+                    return true;
+                }
+                nearby_checks += 1;
+                if nearby_checks > 128 {
+                    stop_scan = true;
+                    return true;
+                }
+                let in_range = get_file_pos(action.target)
+                    .is_some_and(|pos| (pos - user_pos).len_sq() < beam_dist_sq);
+                if in_range {
+                    active_actions.push(action.clone());
+                    found_nearby = true;
+                    stop_scan = true;
+                    return false;
+                }
+                true
+            });
+        } else if find_nearby_action {
+            let max_scan = self.actions.len().min(128);
+            let mut i = 0;
+            while i < max_scan {
+                let is_overdue = max_file_lag >= 0.0 && self.actions[i].t < t - max_file_lag;
+                if is_overdue {
+                    let mut action = self.actions.remove(i);
+                    action.rate = 2.0;
+                    self.active_actions.push(action);
+                    continue;
+                }
 
-            if in_range {
-                let action = self.actions.remove(i);
-                self.active_actions.push(action);
-                break;
+                let file_pos = get_file_pos(self.actions[i].target);
+                let in_range = match file_pos {
+                    Some(pos) => {
+                        (pos - self.sim.pos).len_sq() < (beam_dist as i64) * (beam_dist as i64)
+                    }
+                    None => false,
+                };
+
+                if in_range {
+                    let action = self.actions.remove(i);
+                    self.active_actions.push(action);
+                    break;
+                }
+
+                i += 1;
             }
-
-            i += 1;
         }
 
         if self.action_interval <= 0.0 {
@@ -320,22 +359,13 @@ impl User {
         // Advance active actions
         let mut executed_events = Vec::new();
         let pending_count = self.actions.len();
-        let mut a_idx = 0;
-        while a_idx < self.active_actions.len() {
-            let (needs_apply, finished_now) = self.active_actions[a_idx].logic(dt, pending_count);
+        self.active_actions.retain_mut(|action| {
+            let (needs_apply, finished_now) = action.logic(dt, pending_count);
             if needs_apply || finished_now {
-                executed_events.push((
-                    self.active_actions[a_idx].clone(),
-                    needs_apply,
-                    finished_now,
-                ));
+                executed_events.push((action.clone(), needs_apply, finished_now));
             }
-            if self.active_actions[a_idx].is_finished() {
-                self.active_actions.remove(a_idx);
-            } else {
-                a_idx += 1;
-            }
-        }
+            !action.is_finished()
+        });
 
         executed_events
     }

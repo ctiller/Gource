@@ -2417,10 +2417,8 @@ impl Gource {
 
         // Delete reaped files
         let removed = std::mem::take(&mut self.world.removed_files);
-        for fid in removed {
-            if let Some(del) = self.world.delete_file(fid) {
-                self.file_key.dec(&del.ext);
-            }
+        for del in self.world.delete_files(&removed) {
+            self.file_key.dec(&del.ext);
         }
 
         // Process commits up to currtime

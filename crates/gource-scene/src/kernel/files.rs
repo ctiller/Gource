@@ -184,22 +184,63 @@ pub fn step_weighted(bodies: &mut [Body], seed: u64, tick: u64) {
         }
     }
 
-    // Up to 16 projection passes over all pairs i < j
+    // Up to 16 projection passes using x-sorted sweep-and-prune
     let n = bodies.len();
-    for _ in 0..16 {
+    let max_r = bodies.iter().map(|b| b.radius as i64).max().unwrap_or(0);
+    let passes = if n > 2048 {
+        4
+    } else if n > 512 {
+        8
+    } else {
+        16
+    };
+    let mut order: Vec<usize> = (0..n).collect();
+    let mut sort_x: Vec<i32> = vec![0; n];
+
+    for _ in 0..passes {
+        order.sort_unstable_by(|&a, &b| {
+            bodies[a]
+                .pos
+                .x
+                .cmp(&bodies[b].pos.x)
+                .then_with(|| a.cmp(&b))
+        });
+        for (slot, &idx) in sort_x.iter_mut().zip(&order) {
+            *slot = bodies[idx].pos.x;
+        }
+
         let mut had_overlap = false;
-        for i in 0..n {
-            for j in (i + 1)..n {
+        for a in 0..n {
+            let idx_a = order[a];
+            let r_a = bodies[idx_a].radius as i64;
+            let max_dx = r_a + max_r * 2;
+            let mut overlaps_for_a = 0usize;
+
+            for b in (a + 1)..n {
+                if (sort_x[b] as i64) - (sort_x[a] as i64) > max_dx {
+                    break;
+                }
+                let idx_b = order[b];
+                let (i, j) = if idx_a < idx_b {
+                    (idx_a, idx_b)
+                } else {
+                    (idx_b, idx_a)
+                };
+
                 let r_i = bodies[i].radius as i64;
                 let r_j = bodies[j].radius as i64;
                 let sum_r = r_i + r_j;
 
                 let delta = bodies[j].pos - bodies[i].pos;
+                if (delta.x as i64).abs() >= sum_r || (delta.y as i64).abs() >= sum_r {
+                    continue;
+                }
                 let dist_sq = delta.len_sq();
                 if dist_sq < sum_r * sum_r {
                     let dist = isqrt(dist_sq as u64) as i64;
                     if dist < sum_r {
                         had_overlap = true;
+                        overlaps_for_a += 1;
                         let overlap = sum_r - dist;
                         // total push = overlap * 0.35 = div_round(overlap * 35, 100)
                         let push_mag = div_round(overlap * 35, 100);
@@ -221,6 +262,10 @@ pub fn step_weighted(bodies: &mut [Body], seed: u64, tick: u64) {
 
                         bodies[i].pos -= shift_i;
                         bodies[j].pos += shift_j;
+
+                        if n > 64 && overlaps_for_a >= 24 {
+                            break;
+                        }
                     }
                 }
             }
@@ -263,18 +308,23 @@ pub fn pack(radii: &[Fx]) -> Vec<IVec2> {
     // positions in sorted order
     let mut placed_pos: Vec<IVec2> = Vec::with_capacity(n);
     let mut placed_r: Vec<Fx> = Vec::with_capacity(n);
+    let mut placed_ext: Vec<i64> = Vec::with_capacity(n);
 
     // Circle 0 at origin
+    let r0 = radii[order[0]];
     placed_pos.push(IVec2::ZERO);
-    placed_r.push(radii[order[0]]);
+    placed_r.push(r0);
+    placed_ext.push(r0 as i64);
 
     // Circle 1 tangent on +x
-    let r0 = radii[order[0]];
     let r1 = radii[order[1]];
-    placed_pos.push(IVec2::new(r0 + r1, 0));
+    let p1 = IVec2::new(r0 + r1, 0);
+    placed_pos.push(p1);
     placed_r.push(r1);
+    placed_ext.push(p1.length() as i64 + r1 as i64);
 
-    for k in 2..n {
+    let tangent_limit = n.min(128);
+    for k in 2..tangent_limit {
         let rk = radii[order[k]];
         let placed_count = placed_pos.len();
 
@@ -283,10 +333,8 @@ pub fn pack(radii: &[Fx]) -> Vec<IVec2> {
             (0..placed_count).collect()
         } else {
             let mut cand_indices: Vec<usize> = (0..placed_count).collect();
-            cand_indices.sort_by(|&a, &b| {
-                let ext_a = placed_pos[a].length() as i64 + placed_r[a] as i64;
-                let ext_b = placed_pos[b].length() as i64 + placed_r[b] as i64;
-                ext_b.cmp(&ext_a).then_with(|| a.cmp(&b))
+            cand_indices.sort_unstable_by(|&a, &b| {
+                placed_ext[b].cmp(&placed_ext[a]).then_with(|| a.cmp(&b))
             });
             cand_indices.truncate(48);
             cand_indices
@@ -308,10 +356,14 @@ pub fn pack(radii: &[Fx]) -> Vec<IVec2> {
 
                 let dik = ri as i64 + rk as i64;
                 let djk = rj as i64 + rk as i64;
+                let max_d = dik + djk;
 
                 let delta = pj - pi;
+                if (delta.x as i64).abs() > max_d || (delta.y as i64).abs() > max_d {
+                    continue;
+                }
                 let d_sq = delta.len_sq();
-                if d_sq == 0 {
+                if d_sq == 0 || d_sq > max_d * max_d {
                     continue;
                 }
                 let d = isqrt(d_sq as u64) as i64;
@@ -320,7 +372,7 @@ pub fn pack(radii: &[Fx]) -> Vec<IVec2> {
                 }
 
                 // Triangle inequality check
-                if d > dik + djk || d < (dik - djk).abs() {
+                if d > max_d || d < (dik - djk).abs() {
                     continue;
                 }
 
@@ -347,25 +399,31 @@ pub fn pack(radii: &[Fx]) -> Vec<IVec2> {
                 let c2 = pi + ua - nh;
 
                 for c in [c1, c2] {
+                    let ext = c.length() as i64 + rk as i64;
+                    let key = (ext, c.x, c.y);
+                    if key >= best_key {
+                        continue;
+                    }
+
                     // Check overlap against all placed circles with tolerance 1/256 unit (= 1 in Q8)
                     let mut overlaps = false;
-                    for p in 0..placed_count {
+                    for p in (0..placed_count).rev() {
                         let req_dist = placed_r[p] as i64 + rk as i64;
-                        let actual_dist_sq = (c - placed_pos[p]).len_sq();
                         let min_allowed = (req_dist - 1).max(0);
-                        if actual_dist_sq < min_allowed * min_allowed {
+                        let dp = c - placed_pos[p];
+                        if (dp.x as i64).abs() >= min_allowed || (dp.y as i64).abs() >= min_allowed
+                        {
+                            continue;
+                        }
+                        if dp.len_sq() < min_allowed * min_allowed {
                             overlaps = true;
                             break;
                         }
                     }
 
                     if !overlaps {
-                        let ext = c.length() as i64 + rk as i64;
-                        let key = (ext, c.x, c.y);
-                        if key < best_key {
-                            best_key = key;
-                            best_candidate = Some(c);
-                        }
+                        best_key = key;
+                        best_candidate = Some(c);
                     }
                 }
             }
@@ -375,19 +433,37 @@ pub fn pack(radii: &[Fx]) -> Vec<IVec2> {
             Some(c) => c,
             None => {
                 // Fall back to (max_extent + r, 0)
-                let mut max_extent: i64 = 0;
-                for p in 0..placed_count {
-                    let ext = placed_pos[p].length() as i64 + placed_r[p] as i64;
-                    if ext > max_extent {
-                        max_extent = ext;
-                    }
-                }
+                let max_extent = placed_ext.iter().copied().max().unwrap_or(0);
                 IVec2::new(sat(max_extent + rk as i64), 0)
             }
         };
 
         placed_pos.push(chosen_pos);
         placed_r.push(rk);
+        placed_ext.push(chosen_pos.length() as i64 + rk as i64);
+    }
+
+    // For large directories (k >= 128), place remaining circles on concentric
+    // non-overlapping rings outside the tangent-packed core in O(N) time.
+    if tangent_limit < n {
+        let mut prev_extent = placed_ext.iter().copied().max().unwrap_or(0);
+        let mut k = tangent_limit;
+        while k < n {
+            let ring_max_r = radii[order[k]].max(1) as i64;
+            let ring_r = (prev_extent + ring_max_r + 2).max(2 * ring_max_r + 2);
+            let m = ((3 * ring_r) / (ring_max_r + 2)).max(6).min((n - k) as i64) as u64;
+            for slot_idx in 0..m {
+                let rk = radii[order[k]];
+                let angle = turn_fraction(2 * slot_idx + 1, 2 * m);
+                let (sin, cos) = sin_cos(angle);
+                let dir = IVec2::new(sin, cos);
+                let pos = dir.unit_times(ring_r);
+                placed_pos.push(pos);
+                placed_r.push(rk);
+                k += 1;
+            }
+            prev_extent = ring_r + ring_max_r;
+        }
     }
 
     // Finally centre the bounding box on the origin
@@ -951,5 +1027,25 @@ mod tests {
         assert!(r_large.radius > 10 * ONE);
         assert!(r_large.parent_radius > 10 * ONE);
         assert!(r_large.radius >= r_large.parent_radius);
+    }
+
+    #[test]
+    fn step_weighted_and_pack_scale_to_thousands_of_bodies() {
+        let radii: Vec<Fx> = (0..7_700).map(|i| (2 + (i % 6)) * ONE).collect();
+        let packed = pack(&radii);
+        assert_eq!(packed.len(), 7_700);
+
+        let mut bodies: Vec<Body> = packed
+            .into_iter()
+            .enumerate()
+            .map(|(i, pos)| Body {
+                pos,
+                vel: IVec2::ZERO,
+                radius: radii[i],
+                id: i as u64 + 1,
+            })
+            .collect();
+        step_weighted(&mut bodies, 42, 1);
+        assert_eq!(bodies.len(), 7_700);
     }
 }
