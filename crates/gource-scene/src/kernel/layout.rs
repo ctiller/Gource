@@ -185,12 +185,11 @@ fn place_ring_batch(
             cursor += w;
         }
     } else {
-        // Distribute symmetrically inside [-span/2, +span/2], expanding slightly into budget
-        // when natural span < budget so branches breathe without crowding the center ray.
+        // Distribute symmetrically inside [-span/2, +span/2], keeping natural tight span
+        // when it fits inside budget, with only a small gentle margin per child.
         let natural = total_alpha_span.min(budget as i64) as i32;
-        let effective_span = ((natural + budget) / 2).min(budget);
-        let extra_per_child = (effective_span - natural).max(0) / (k as i32);
-        let actual_span = natural + extra_per_child * (k as i32);
+        let extra_per_child = ((budget - natural).max(0) / (k as i32 * 4)).min(1024);
+        let actual_span = (natural + extra_per_child * (k as i32)).min(budget);
         let mut cursor = -actual_span / 2 + stagger_shift;
         for m in 0..k {
             let w = 2 * alphas[m] + extra_per_child;
@@ -203,10 +202,23 @@ fn place_ring_batch(
     (placements, outer_r)
 }
 
-/// Compute a deterministic, crossing-free, non-overlapping layout for the directory tree.
+/// Compute a deterministic, crossing-free, non-overlapping layout for the directory tree,
+/// followed by [`optimize_settled_layout`] to eliminate any crossed edges and compact
+/// subtrees to minimize total layout size.
 ///
 /// `dirs` must be ordered in tree preorder (`0` is root, every parent precedes its children).
 pub fn solve_settled_tree(dirs: &[TreeDirIn], padding: Fx, min_dir_size: Fx) -> Vec<TreeDirOut> {
+    let mut out = solve_settled_tree_initial(dirs, padding, min_dir_size);
+    optimize_settled_layout(dirs, &mut out, padding, min_dir_size);
+    out
+}
+
+/// Stage 1: Cone-free bottom-up + top-down multi-ring radial placement.
+pub fn solve_settled_tree_initial(
+    dirs: &[TreeDirIn],
+    padding: Fx,
+    min_dir_size: Fx,
+) -> Vec<TreeDirOut> {
     let n = dirs.len();
     if n == 0 {
         return Vec::new();
@@ -259,16 +271,14 @@ pub fn solve_settled_tree(dirs: &[TreeDirIn], padding: Fx, min_dir_size: Fx) -> 
 
         let is_root = d.parent.is_none();
         let k = vis_children.len();
+        // Cone-free 360-degree placement: every directory uses the full circle except
+        // a narrow 22.5-degree corridor around the incoming parent edge.
         let cone_budget = if is_root {
             65536
         } else if k == 1 {
             0
-        } else if k <= 4 {
-            24576 // ~135 deg
-        } else if k <= 8 {
-            36408 // ~200 deg
         } else {
-            50972 // ~280 deg (leaves 80 deg corridor around incoming parent edge)
+            61440 // 337.5 deg
         };
 
         let mut r_inner = if own_r > 0 {
@@ -285,9 +295,9 @@ pub fn solve_settled_tree(dirs: &[TreeDirIn], padding: Fx, min_dir_size: Fx) -> 
         let mut placements = Vec::with_capacity(k);
         let mut max_outer = r_inner;
 
-        // Up to 10 children fit cleanly on a single proportional-wedge ring;
-        // > 10 children (spider directories) pack into concentric staggered arc-rings!
-        if k <= 10 {
+        // Up to 12 children fit cleanly on a single proportional-wedge ring;
+        // > 12 children (spider directories) pack into concentric staggered arc-rings!
+        if k <= 12 {
             let (ring_pos, outer) =
                 place_ring_batch(&child_radii, r_inner, cone_budget, is_root, gap, 0);
             for (idx, (dist, ang)) in vis_children.iter().copied().zip(ring_pos) {
@@ -297,7 +307,7 @@ pub fn solve_settled_tree(dirs: &[TreeDirIn], padding: Fx, min_dir_size: Fx) -> 
         } else {
             // Multi-ring spider packing:
             let avg_r: Fx = (child_radii.iter().map(|&r| r as i64).sum::<i64>() / k as i64) as Fx;
-            r_inner = r_inner.max(avg_r * 3 / 2);
+            r_inner = r_inner.max(avg_r);
 
             let mut start = 0usize;
             let mut ring_idx = 0usize;
@@ -305,7 +315,7 @@ pub fn solve_settled_tree(dirs: &[TreeDirIn], padding: Fx, min_dir_size: Fx) -> 
                 let half_gap = (gap / 2).max(ONE);
                 let mut angle_acc = 0i32;
                 let mut end = start;
-                let min_on_ring = (6 + ring_idx * 4).min(k - start);
+                let min_on_ring = (8 + ring_idx * 4).min(k - start);
 
                 while end < k {
                     let r_c = child_radii[end].saturating_add(half_gap);
@@ -367,6 +377,447 @@ pub fn solve_settled_tree(dirs: &[TreeDirIn], padding: Fx, min_dir_size: Fx) -> 
     }
 
     out
+}
+
+/// Squared distance from point `p` to segment `(a, b)` in `i64` (Q16).
+#[inline]
+pub fn point_segment_dist_sq(p: IVec2, a: IVec2, b: IVec2) -> i64 {
+    let ab = b - a;
+    let ap = p - a;
+    let ab_len2 = ab.len_sq();
+    if ab_len2 <= 0 {
+        return ap.len_sq();
+    }
+    let dot = ap.x as i64 * ab.x as i64 + ap.y as i64 * ab.y as i64;
+    if dot <= 0 {
+        return ap.len_sq();
+    }
+    if dot >= ab_len2 {
+        return (p - b).len_sq();
+    }
+    let proj_x = a.x as i64 + div_round(ab.x as i64 * dot, ab_len2);
+    let proj_y = a.y as i64 + div_round(ab.y as i64 * dot, ab_len2);
+    let dx = p.x as i64 - proj_x;
+    let dy = p.y as i64 - proj_y;
+    dx * dx + dy * dy
+}
+
+/// Stage 2: Continuous first-contact subtree compaction, obstacle rolling, and 2-opt
+/// edge uncrossing optimizer.
+///
+/// Minimizes total edge length and layout bounding radius while strictly maintaining:
+/// 1. Pairwise non-overlap of every visible directory's own file-cluster disc (`parent_radius`).
+/// 2. Zero edge crossings (`!segments_intersect`) across all visible tree edges.
+/// 3. Node-to-edge clearance between visible directories and non-incident tree edges.
+pub fn optimize_settled_layout(
+    dirs: &[TreeDirIn],
+    out: &mut [TreeDirOut],
+    padding: Fx,
+    min_dir_size: Fx,
+) {
+    let n = dirs.len();
+    if n <= 1 || out.len() < n {
+        return;
+    }
+
+    let gap = mul_fx(4 * ONE, padding).max(3 * ONE);
+    let edge_clear_pad = 2 * ONE;
+
+    let disc_r: Vec<Fx> = (0..n)
+        .map(|i| {
+            out[i]
+                .radii
+                .parent_radius
+                .max(if dirs[i].visible_files > 0 {
+                    dirs[i].own_file_radius.max(5 * ONE)
+                } else {
+                    (min_dir_size / 3).max(4 * ONE)
+                })
+        })
+        .collect();
+
+    // Build visible node list and visible subtree node sets bottom-up.
+    let vis_nodes: Vec<usize> = (0..n).filter(|&i| dirs[i].visible).collect();
+    if vis_nodes.len() <= 1 {
+        return;
+    }
+
+    let mut sub_vis: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut in_sub_flag: Vec<Vec<bool>> = vec![vec![false; n]; n];
+    for i in (0..n).rev() {
+        if !dirs[i].visible {
+            continue;
+        }
+        let mut s = vec![i];
+        in_sub_flag[i][i] = true;
+        for &c in &dirs[i].children {
+            if c < n && dirs[c].visible {
+                for &w in &sub_vis[c] {
+                    in_sub_flag[i][w] = true;
+                    s.push(w);
+                }
+            }
+        }
+        sub_vis[i] = s;
+    }
+
+    let mut out_vis: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for u in 1..n {
+        if dirs[u].visible {
+            out_vis[u] = vis_nodes
+                .iter()
+                .copied()
+                .filter(|&z| !in_sub_flag[u][z])
+                .collect();
+        }
+    }
+
+    // Collect all visible tree edges `(parent, child)`.
+    let mut vis_edges: Vec<(usize, usize)> = Vec::with_capacity(vis_nodes.len());
+    for &u in &vis_nodes {
+        if let Some(p) = dirs[u].parent
+            && p < n
+            && dirs[p].visible
+        {
+            vis_edges.push((p, u));
+        }
+    }
+
+    let mut pos: Vec<IVec2> = out.iter().map(|o| o.target_pos).collect();
+
+    // Phase A: 2-opt uncrossing of any crossed sibling subtrees (e.g. if called after an external solver).
+    for _pass in 0..4 {
+        let mut swapped_any = false;
+        for ei in 0..vis_edges.len() {
+            let (p1, c1) = vis_edges[ei];
+            for &(p2, c2) in &vis_edges[(ei + 1)..] {
+                if p1 == p2 || p1 == c2 || c1 == p2 || c1 == c2 {
+                    continue;
+                }
+                if !segments_intersect(pos[p1], pos[c1], pos[p2], pos[c2]) {
+                    continue;
+                }
+                // Find lowest common ancestor `lca` and its two distinct children `a1`, `a2`
+                // containing `c1` and `c2`.
+                let mut lca_opt = None;
+                for cand in (0..n).rev() {
+                    if dirs[cand].visible && in_sub_flag[cand][c1] && in_sub_flag[cand][c2] {
+                        lca_opt = Some(cand);
+                        break;
+                    }
+                }
+                if let Some(lca) = lca_opt {
+                    let a1_opt = dirs[lca]
+                        .children
+                        .iter()
+                        .copied()
+                        .find(|&ch| ch < n && dirs[ch].visible && in_sub_flag[ch][c1]);
+                    let a2_opt = dirs[lca]
+                        .children
+                        .iter()
+                        .copied()
+                        .find(|&ch| ch < n && dirs[ch].visible && in_sub_flag[ch][c2]);
+                    if let (Some(a1), Some(a2)) = (a1_opt, a2_opt)
+                        && a1 != a2
+                    {
+                        let pivot = pos[lca];
+                        let ang1 = atan2_u16(pos[a1] - pivot);
+                        let ang2 = atan2_u16(pos[a2] - pivot);
+                        let delta_ang = ang2.wrapping_sub(ang1);
+                        let neg_delta = 0u16.wrapping_sub(delta_ang);
+                        for &w in &sub_vis[a1] {
+                            pos[w] = pivot + rotate_by_u16(pos[w] - pivot, delta_ang);
+                        }
+                        for &w in &sub_vis[a2] {
+                            pos[w] = pivot + rotate_by_u16(pos[w] - pivot, neg_delta);
+                        }
+                        swapped_any = true;
+                        break;
+                    }
+                }
+            }
+            if swapped_any {
+                break;
+            }
+        }
+        if !swapped_any {
+            break;
+        }
+    }
+
+    // Helper: check if shifting `sub_vis[u]` by `delta` preserves all disc, edge-crossing,
+    // and node-edge clearance invariants.
+    let is_valid_shift = |u: usize, delta: IVec2, pos: &[IVec2]| -> bool {
+        if delta == IVec2::ZERO {
+            return false;
+        }
+        let sub = &sub_vis[u];
+        let outs = &out_vis[u];
+        let in_sub = &in_sub_flag[u];
+
+        // 1. Disc non-overlap between `w in sub` and `z in outs`.
+        for &w in sub {
+            let pw = pos[w] + delta;
+            let rw = disc_r[w];
+            for &z in outs {
+                let pz = pos[z];
+                let min_d = rw + disc_r[z] + gap;
+                if (pw.x - pz.x).abs() >= min_d || (pw.y - pz.y).abs() >= min_d {
+                    continue;
+                }
+                let min_d64 = min_d as i64;
+                if (pw - pz).len_sq() < min_d64 * min_d64 {
+                    return false;
+                }
+            }
+        }
+
+        // 2. Edge non-crossing between edges with >=1 endpoint in `sub` and edges with <2 endpoints in `sub`.
+        for &(p1, c1) in &vis_edges {
+            let m1_p = in_sub[p1];
+            let m1_c = in_sub[c1];
+            if !m1_p && !m1_c {
+                continue;
+            }
+            let a1 = if m1_p { pos[p1] + delta } else { pos[p1] };
+            let a2 = if m1_c { pos[c1] + delta } else { pos[c1] };
+
+            for &(p2, c2) in &vis_edges {
+                let m2_p = in_sub[p2];
+                let m2_c = in_sub[c2];
+                if m2_p && m2_c {
+                    continue;
+                }
+                if p1 == p2 || p1 == c2 || c1 == p2 || c1 == c2 {
+                    continue;
+                }
+                let b1 = if m2_p { pos[p2] + delta } else { pos[p2] };
+                let b2 = if m2_c { pos[c2] + delta } else { pos[c2] };
+                if segments_intersect(a1, a2, b1, b2) {
+                    return false;
+                }
+            }
+
+            // 3. Node-to-edge clearance for moved edge `(a1, a2)` against outside nodes `z`.
+            let seg_min_x = a1.x.min(a2.x);
+            let seg_max_x = a1.x.max(a2.x);
+            let seg_min_y = a1.y.min(a2.y);
+            let seg_max_y = a1.y.max(a2.y);
+            for &z in outs {
+                if z == p1 || z == c1 {
+                    continue;
+                }
+                let pz = pos[z];
+                let min_r = (disc_r[z] / 2).max(3 * ONE) + edge_clear_pad;
+                if pz.x < seg_min_x - min_r
+                    || pz.x > seg_max_x + min_r
+                    || pz.y < seg_min_y - min_r
+                    || pz.y > seg_max_y + min_r
+                {
+                    continue;
+                }
+                let min_r64 = min_r as i64;
+                if point_segment_dist_sq(pz, a1, a2) < min_r64 * min_r64 {
+                    return false;
+                }
+            }
+        }
+
+        // 4. Node-to-edge clearance for moved nodes `w in sub` against unmoved edges `(p2, c2)`.
+        for &(p2, c2) in &vis_edges {
+            if in_sub[p2] || in_sub[c2] {
+                continue;
+            }
+            let b1 = pos[p2];
+            let b2 = pos[c2];
+            let seg_min_x = b1.x.min(b2.x);
+            let seg_max_x = b1.x.max(b2.x);
+            let seg_min_y = b1.y.min(b2.y);
+            let seg_max_y = b1.y.max(b2.y);
+            for &w in sub {
+                if w == p2 || w == c2 {
+                    continue;
+                }
+                let pw = pos[w] + delta;
+                let min_r = (disc_r[w] / 2).max(3 * ONE) + edge_clear_pad;
+                if pw.x < seg_min_x - min_r
+                    || pw.x > seg_max_x + min_r
+                    || pw.y < seg_min_y - min_r
+                    || pw.y > seg_max_y + min_r
+                {
+                    continue;
+                }
+                let min_r64 = min_r as i64;
+                if point_segment_dist_sq(pw, b1, b2) < min_r64 * min_r64 {
+                    return false;
+                }
+            }
+        }
+
+        true
+    };
+
+    // Helper: compute closed-form first-contact slide distance along unit vector `dir_u`
+    // and return the largest valid displacement `delta`.
+    let best_slide_along = |u: usize, dir_u: IVec2, max_t: Fx, pos: &[IVec2]| -> Option<IVec2> {
+        if max_t < ONE || dir_u == IVec2::ZERO {
+            return None;
+        }
+        let mut t_cap = max_t;
+        let sub = &sub_vis[u];
+        let outs = &out_vis[u];
+        let ux = dir_u.x as i64;
+        let uy = dir_u.y as i64;
+
+        for &w in sub {
+            let pw = pos[w];
+            let rw = disc_r[w];
+            for &z in outs {
+                let pz = pos[z];
+                let r_sum = (rw + disc_r[z] + gap) as i64;
+                let dx = (pw.x - pz.x) as i64;
+                let dy = (pw.y - pz.y) as i64;
+
+                if (ux >= 0 && dx >= r_sum)
+                    || (ux <= 0 && dx <= -r_sum)
+                    || (uy >= 0 && dy >= r_sum)
+                    || (uy <= 0 && dy <= -r_sum)
+                {
+                    continue;
+                }
+                let reach = t_cap as i64 + r_sum;
+                if dx.abs() > reach || dy.abs() > reach {
+                    continue;
+                }
+                let proj = div_round(dx * ux + dy * uy, UNIT as i64);
+                if proj >= 0 {
+                    continue;
+                }
+                let a = -proj;
+                let d2 = dx * dx + dy * dy;
+                let perp2 = (d2 - a * a).max(0);
+                let r_pad = r_sum + ONE as i64;
+                let r_pad2 = r_pad * r_pad;
+                if perp2 < r_pad2 {
+                    let h = crate::kernel::fixed::isqrt((r_pad2 - perp2) as u64) as i64 + 1;
+                    let t_hit = (a - h).max(0) as Fx;
+                    if t_hit < t_cap {
+                        t_cap = t_hit;
+                        if t_cap < ONE {
+                            return None;
+                        }
+                    }
+                }
+            }
+        }
+
+        for num in [4i64, 3, 2, 1] {
+            let t = (t_cap as i64 * num / 4) as Fx;
+            if t < ONE {
+                continue;
+            }
+            let delta = dir_u.unit_times(t as i64);
+            if is_valid_shift(u, delta, pos) {
+                return Some(delta);
+            }
+        }
+        None
+    };
+
+    // Phase B: Multi-pass subtree compaction + obstacle rolling.
+    // Order nodes by `(subtree_size, dist_to_parent_sq)` ascending so:
+    // 1. Leaves compact onto their parent spokes first.
+    // 2. Spokes compact onto spider hubs from inner rings to outer rings.
+    // 3. Spider hubs and higher-level subtrees compact toward root once their spokes are tight.
+    for _round in 0..3 {
+        let mut order: Vec<usize> = vis_nodes.iter().copied().filter(|&u| u > 0).collect();
+        order.sort_by_key(|&u| {
+            let p = dirs[u].parent.unwrap_or(0);
+            let d2 = (pos[u] - pos[p]).len_sq();
+            (sub_vis[u].len(), d2)
+        });
+
+        let mut moved_in_round = false;
+        for u in order {
+            let Some(p) = dirs[u].parent else {
+                continue;
+            };
+            let min_edge = disc_r[p] + disc_r[u] + gap;
+            let v_to_p = pos[p] - pos[u];
+            let d_to_p = v_to_p.length();
+
+            // 1. Direct slide toward parent `p`.
+            if d_to_p > min_edge + ONE
+                && let Some(dir_p) = v_to_p.unit()
+            {
+                let max_t = d_to_p - min_edge;
+                if let Some(delta) = best_slide_along(u, dir_p, max_t, &pos) {
+                    for &w in &sub_vis[u] {
+                        pos[w] += delta;
+                    }
+                    moved_in_round = true;
+                }
+            }
+
+            // 2. Obstacle rolling: try +/- 28 deg around `dir_to_parent` if still far from `p`.
+            let v_to_p2 = pos[p] - pos[u];
+            let d_to_p2 = v_to_p2.length();
+            if d_to_p2 > min_edge + 6 * ONE
+                && let Some(dir_p) = v_to_p2.unit()
+            {
+                let cur_cost = d_to_p2 as i64 + (pos[u].length() as i64) / 4;
+                let max_roll = ((d_to_p2 - min_edge) / 2).min(48 * ONE);
+                for rot in [5097u16, 0u16.wrapping_sub(5097)] {
+                    let roll_dir = rotate_by_u16(dir_p, rot);
+                    if let Some(delta) = best_slide_along(u, roll_dir, max_roll, &pos) {
+                        let new_u = pos[u] + delta;
+                        let new_d = (pos[p] - new_u).length();
+                        let new_cost = new_d as i64 + (new_u.length() as i64) / 4;
+                        if new_d >= min_edge && new_cost + (2 * ONE as i64) < cur_cost {
+                            for &w in &sub_vis[u] {
+                                pos[w] += delta;
+                            }
+                            moved_in_round = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if !moved_in_round {
+            break;
+        }
+    }
+
+    // Write compacted positions, updated outward angles, and true tightened subtree radii back to `out`.
+    out[0].target_pos = pos[0];
+    out[0].outward_angle = 0;
+    for i in 1..n {
+        if dirs[i].visible {
+            out[i].target_pos = pos[i];
+            if let Some(p) = dirs[i].parent {
+                out[i].outward_angle = atan2_u16(pos[i] - pos[p]);
+            }
+        } else if let Some(p) = dirs[i].parent {
+            out[i].target_pos = out[p].target_pos;
+            out[i].outward_angle = out[p].outward_angle;
+        }
+    }
+
+    for i in (0..n).rev() {
+        if !dirs[i].visible {
+            continue;
+        }
+        let pi = out[i].target_pos;
+        let mut max_r = out[i].radii.parent_radius.max(min_dir_size);
+        for &w in &sub_vis[i] {
+            let d = (out[w].target_pos - pi).length() + disc_r[w] + 2 * ONE;
+            if d > max_r {
+                max_r = d;
+            }
+        }
+        out[i].radii.radius = max_r;
+    }
 }
 
 /// Signed 2D orientation `(b - a) x (c - a)` in `i64`.
@@ -904,18 +1355,21 @@ mod tests {
             }
         }
 
+        let initial = solve_settled_tree_initial(&dirs, 384, 15 * ONE);
         let solved = solve_settled_tree(&dirs, 384, 15 * ONE);
         assert_eq!(solved.len(), dirs.len());
+        assert!(
+            solved[0].radii.radius < initial[0].radii.radius,
+            "optimizer must compact total layout radius: solved={} vs initial={}",
+            solved[0].radii.radius,
+            initial[0].radii.radius
+        );
 
-        // Check that no two file-bearing directories overlap!
-        let file_dirs: Vec<usize> = (0..dirs.len())
-            .filter(|&i| dirs[i].visible_files > 0)
-            .collect();
-        for a in 0..file_dirs.len() {
-            let i = file_dirs[a];
-            for &j in &file_dirs[(a + 1)..] {
+        // Check that no two visible directories overlap their own file-cluster discs!
+        for i in 0..dirs.len() {
+            for j in (i + 1)..dirs.len() {
                 let dist = (solved[i].target_pos - solved[j].target_pos).length();
-                let min_sep = dirs[i].own_file_radius + dirs[j].own_file_radius;
+                let min_sep = solved[i].radii.parent_radius + solved[j].radii.parent_radius;
                 assert!(
                     dist >= min_sep,
                     "dirs {i} and {j} overlap: dist={dist} < min_sep={min_sep}"
@@ -923,20 +1377,93 @@ mod tests {
             }
         }
 
-        // Check that no sibling subtrees under wasm-ops (2) or x86-forms (3) overlap!
-        for spider in [2usize, 3usize] {
-            let children = &dirs[spider].children;
-            for a in 0..children.len() {
-                let ci = children[a];
-                for &cj in &children[(a + 1)..] {
-                    let dist = (solved[ci].target_pos - solved[cj].target_pos).length();
-                    let min_sep = solved[ci].radii.radius + solved[cj].radii.radius;
-                    assert!(
-                        dist >= min_sep,
-                        "spider {spider} children {ci} and {cj} subtrees overlap: dist={dist} < {min_sep}"
-                    );
+        // Check that zero tree edges cross!
+        for i in 0..edges.len() {
+            let e1 = edges[i];
+            for e2 in &edges[(i + 1)..] {
+                if e1.parent == e2.parent
+                    || e1.parent == e2.child
+                    || e1.child == e2.parent
+                    || e1.child == e2.child
+                {
+                    continue;
                 }
+                assert!(
+                    !segments_intersect(
+                        solved[e1.parent].target_pos,
+                        solved[e1.child].target_pos,
+                        solved[e2.parent].target_pos,
+                        solved[e2.child].target_pos
+                    ),
+                    "edges ({}->{}) and ({}->{}) cross!",
+                    e1.parent,
+                    e1.child,
+                    e2.parent,
+                    e2.child
+                );
             }
         }
+    }
+
+    #[test]
+    fn optimizer_uncrosses_crossed_subtrees_and_compacts() {
+        let dirs = vec![
+            TreeDirIn {
+                parent: None,
+                children: vec![1, 2],
+                own_file_radius: 4 * ONE,
+                visible_files: 1,
+                visible: true,
+            },
+            TreeDirIn {
+                parent: Some(0),
+                children: vec![3],
+                own_file_radius: 5 * ONE,
+                visible_files: 1,
+                visible: true,
+            },
+            TreeDirIn {
+                parent: Some(0),
+                children: vec![4],
+                own_file_radius: 5 * ONE,
+                visible_files: 1,
+                visible: true,
+            },
+            TreeDirIn {
+                parent: Some(1),
+                children: Vec::new(),
+                own_file_radius: 5 * ONE,
+                visible_files: 1,
+                visible: true,
+            },
+            TreeDirIn {
+                parent: Some(2),
+                children: Vec::new(),
+                own_file_radius: 5 * ONE,
+                visible_files: 1,
+                visible: true,
+            },
+        ];
+
+        let mut out = solve_settled_tree_initial(&dirs, 384, 15 * ONE);
+        // Deliberately cross edges (1->3) and (2->4) and inflate distances:
+        out[1].target_pos = IVec2::new(40 * ONE, 30 * ONE);
+        out[2].target_pos = IVec2::new(40 * ONE, -30 * ONE);
+        out[3].target_pos = IVec2::new(120 * ONE, -50 * ONE);
+        out[4].target_pos = IVec2::new(120 * ONE, 50 * ONE);
+        assert!(segments_intersect(
+            out[1].target_pos,
+            out[3].target_pos,
+            out[2].target_pos,
+            out[4].target_pos
+        ));
+
+        optimize_settled_layout(&dirs, &mut out, 384, 15 * ONE);
+        assert!(!segments_intersect(
+            out[1].target_pos,
+            out[3].target_pos,
+            out[2].target_pos,
+            out[4].target_pos
+        ));
     }
 }

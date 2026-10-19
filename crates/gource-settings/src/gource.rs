@@ -84,7 +84,7 @@ impl FileSizeMetric {
     }
 }
 
-/// `--layout-engine` (`hybrid`, `settled`, `particles`, `classic`).
+/// `--layout-engine` (`hybrid`, `settled`, `z3`, `particles`, `classic`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum LayoutEngine {
     /// Crossing-free settled tree targets combined with world-space per-file cohesion/repulsion.
@@ -92,6 +92,8 @@ pub enum LayoutEngine {
     Hybrid,
     /// Deterministic non-overlapping settled layout with smooth damped interpolation ("fake dynamics").
     Settled,
+    /// Z3 SMT-solver optimized non-overlapping layout with smooth damped interpolation.
+    Z3,
     /// Flat per-file world-space simulation with same-dir attraction, cross-dir repulsion, and edge uncrossing.
     Particles,
     /// Classic C++ Gource hierarchical directory force simulation.
@@ -103,6 +105,7 @@ impl LayoutEngine {
         match s {
             "hybrid" | "auto" => Some(LayoutEngine::Hybrid),
             "settled" | "target" | "fake" => Some(LayoutEngine::Settled),
+            "z3" | "smt" | "opt" => Some(LayoutEngine::Z3),
             "particles" | "flat" | "flock" => Some(LayoutEngine::Particles),
             "classic" | "legacy" | "cpp" => Some(LayoutEngine::Classic),
             _ => None,
@@ -113,6 +116,7 @@ impl LayoutEngine {
         match self {
             LayoutEngine::Hybrid => "hybrid",
             LayoutEngine::Settled => "settled",
+            LayoutEngine::Z3 => "z3",
             LayoutEngine::Particles => "particles",
             LayoutEngine::Classic => "classic",
         }

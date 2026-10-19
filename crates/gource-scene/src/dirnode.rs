@@ -326,6 +326,7 @@ impl DirNode {
         self.sim.pos = pos;
         self.sim.prev_pos = pos;
         self.sim.target_pos = pos;
+        self.sim.initialized = true;
         self.pos = crate::view::from_ivec(pos);
     }
 

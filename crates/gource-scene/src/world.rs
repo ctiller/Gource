@@ -1251,7 +1251,7 @@ mod tests {
                 "engine {engine:?} failed to settle spider directories within 360 ticks"
             );
 
-            // Verify sibling subtrees under /crates/wasm-ops/ and /crates/x86-forms/ do not overlap.
+            // Verify sibling directory file clusters under /crates/wasm-ops/ and /crates/x86-forms/ do not overlap.
             for spider_path in ["/crates/wasm-ops/", "/crates/x86-forms/"] {
                 let spider_id = world.dir_map[spider_path];
                 let children = &world.dirs[spider_id].children;
@@ -1261,7 +1261,7 @@ mod tests {
                         let ca = &world.dirs[children[a]];
                         let cb = &world.dirs[children[b]];
                         let dist = (ca.sim.pos - cb.sim.pos).length();
-                        let min_d = ca.sim.radii.radius + cb.sim.radii.radius;
+                        let min_d = ca.sim.radii.parent_radius + cb.sim.radii.parent_radius;
                         assert!(
                             dist >= min_d - 2 * ONE,
                             "engine {engine:?} sibling overlap in {spider_path}: dist={dist} < min_d={min_d}"
@@ -1279,6 +1279,7 @@ mod tests {
         for engine in [
             LayoutEngine::Hybrid,
             LayoutEngine::Settled,
+            LayoutEngine::Z3,
             LayoutEngine::Particles,
             LayoutEngine::Classic,
         ] {

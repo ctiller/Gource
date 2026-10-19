@@ -624,11 +624,19 @@ impl World {
             })
             .collect();
 
-        let outs = crate::layout::solve_settled_tree(
-            &tree_ins,
-            self.params.padding,
-            self.params.min_dir_size,
-        );
+        let outs = if self.layout_engine == gource_settings::LayoutEngine::Z3 {
+            crate::z3_solver::solve_z3_tree(
+                &tree_ins,
+                self.params.padding,
+                self.params.min_dir_size,
+            )
+        } else {
+            crate::layout::solve_settled_tree(
+                &tree_ins,
+                self.params.padding,
+                self.params.min_dir_size,
+            )
+        };
         for (&d, out) in order.iter().zip(outs) {
             let dir = &mut self.dirs[d];
             dir.sim.target_pos = out.target_pos;
@@ -680,7 +688,7 @@ impl World {
             gource_settings::LayoutEngine::Classic => {
                 self.update_dirs_classic(dt, file_idle_time, profile);
             }
-            gource_settings::LayoutEngine::Settled => {
+            gource_settings::LayoutEngine::Settled | gource_settings::LayoutEngine::Z3 => {
                 self.update_dirs_settled(dt, file_idle_time, profile);
             }
             gource_settings::LayoutEngine::Hybrid => {
