@@ -18,6 +18,18 @@ pub struct DirSim {
     /// Spline control point.
     pub spos: IVec2,
     pub prev_spos: IVec2,
+    /// Velocity (Q8 units/s) for settled/hybrid/particles directory motion.
+    pub vel: IVec2,
+    /// Settled target position (Q8) in world space.
+    pub target_pos: IVec2,
+    /// Outward ray angle from parent (`u16` turn units).
+    pub outward_angle: u16,
+    /// Radius (Q8) of this directory's own packed visible files (`0` if none).
+    pub own_file_radius: Fx,
+    /// Cached hash of packed visible files + target sizes for incremental repacking.
+    pub packed_file_hash: u64,
+    /// True when all visible files in this directory have reached their settled targets.
+    pub files_settled: bool,
     /// Extra acceleration for the next tick (weighted-mode beam pushes).
     pub ext_accel: IVec2,
     pub radii: Radii,
@@ -313,6 +325,7 @@ impl DirNode {
     pub fn place(&mut self, pos: IVec2) {
         self.sim.pos = pos;
         self.sim.prev_pos = pos;
+        self.sim.target_pos = pos;
         self.pos = crate::view::from_ivec(pos);
     }
 

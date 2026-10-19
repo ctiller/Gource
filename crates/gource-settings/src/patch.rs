@@ -6,7 +6,9 @@
 //! - Timeline: Time-to-tick mapping change (applied from playhead; later checkpoints dropped).
 //! - Structural: Log filter changes (requires scene rematerialization at playhead).
 
-use crate::gource::{CameraMode, DashboardPeriod, FileColourMode, FileSizeMetric, GourceSettings};
+use crate::gource::{
+    CameraMode, DashboardPeriod, FileColourMode, FileSizeMetric, GourceSettings, LayoutEngine,
+};
 use gource_core::{Vec3, Vec4};
 
 /// Simulation impact classification of a setting change.
@@ -119,6 +121,7 @@ pub enum SettingValue {
     OptionalString(Option<String>),
     CameraMode(CameraMode),
     FileSizeMetric(FileSizeMetric),
+    LayoutEngine(LayoutEngine),
     FileColourMode(FileColourMode),
     DashboardPeriod(DashboardPeriod),
     HideFlags(HideFlags),
@@ -153,6 +156,7 @@ pub enum SettingId {
     FileIdleTime,
     MaxFileLag,
     FileSizeMetric,
+    LayoutEngine,
     TuningDirPadding,
     TuningMinDirSize,
     TuningFileDiameter,
@@ -204,6 +208,7 @@ impl SettingId {
         SettingId::FileIdleTime,
         SettingId::MaxFileLag,
         SettingId::FileSizeMetric,
+        SettingId::LayoutEngine,
         SettingId::TuningDirPadding,
         SettingId::TuningMinDirSize,
         SettingId::TuningFileDiameter,
@@ -256,6 +261,7 @@ impl SettingId {
             | SettingId::FileIdleTime
             | SettingId::MaxFileLag
             | SettingId::FileSizeMetric
+            | SettingId::LayoutEngine
             | SettingId::TuningDirPadding
             | SettingId::TuningMinDirSize
             | SettingId::TuningFileDiameter
@@ -307,6 +313,7 @@ impl SettingId {
             SettingId::FileIdleTime => "File Idle Time",
             SettingId::MaxFileLag => "Max File Lag",
             SettingId::FileSizeMetric => "File Size Metric",
+            SettingId::LayoutEngine => "Layout Engine",
             SettingId::TuningDirPadding => "Directory Padding",
             SettingId::TuningMinDirSize => "Minimum Directory Size",
             SettingId::TuningFileDiameter => "File Diameter",
@@ -408,6 +415,7 @@ impl SettingId {
             SettingId::FileIdleTime => SettingValue::F32(settings.file_idle_time),
             SettingId::MaxFileLag => SettingValue::F32(settings.max_file_lag),
             SettingId::FileSizeMetric => SettingValue::FileSizeMetric(settings.file_size_metric),
+            SettingId::LayoutEngine => SettingValue::LayoutEngine(settings.layout_engine),
             SettingId::TuningDirPadding => SettingValue::F32(tuning.dir_padding),
             SettingId::TuningMinDirSize => SettingValue::F32(tuning.min_dir_size),
             SettingId::TuningFileDiameter => SettingValue::F32(tuning.file_diameter),
@@ -553,6 +561,9 @@ impl SettingId {
             }
             (SettingId::FileSizeMetric, SettingValue::FileSizeMetric(m)) => {
                 settings.file_size_metric = *m;
+            }
+            (SettingId::LayoutEngine, SettingValue::LayoutEngine(e)) => {
+                settings.layout_engine = *e;
             }
             (SettingId::TuningDirPadding, SettingValue::F32(v)) => {
                 tuning.dir_padding = *v;
@@ -739,7 +750,7 @@ mod tests {
     #[test]
     fn test_setting_id_all() {
         let all = SettingId::all();
-        assert_eq!(all.len(), 42);
+        assert_eq!(all.len(), 43);
         for id in all {
             assert!(!id.name().is_empty());
             let _ = id.class();
@@ -783,6 +794,10 @@ mod tests {
                 SettingValue::FileSizeMetric(_) => {
                     SettingValue::FileSizeMetric(FileSizeMetric::None)
                 }
+                SettingValue::LayoutEngine(LayoutEngine::Hybrid) => {
+                    SettingValue::LayoutEngine(LayoutEngine::Settled)
+                }
+                SettingValue::LayoutEngine(_) => SettingValue::LayoutEngine(LayoutEngine::Hybrid),
                 SettingValue::FileColourMode(FileColourMode::Extension) => {
                     SettingValue::FileColourMode(FileColourMode::Churn)
                 }

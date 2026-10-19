@@ -20,6 +20,7 @@ pub use kernel::files;
 pub use kernel::fixed::{Fx, IVec2, ONE, TICK_HZ, UNIT};
 pub use kernel::grid;
 pub use kernel::hash;
+pub use kernel::layout;
 pub use kernel::rng;
 pub use kernel::trig;
 pub use kernel::users;

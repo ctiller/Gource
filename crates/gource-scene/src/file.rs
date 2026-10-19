@@ -24,6 +24,8 @@ pub struct FileSim {
     /// `dest * distance`.
     pub dest: IVec2,
     pub distance: Fx,
+    /// Settled local target position (Q8) relative to directory.
+    pub target_pos: IVec2,
     /// Weighted mode: velocity (Q8 units/s), animated diameter, target
     /// diameter and collision radius.
     pub vel: IVec2,

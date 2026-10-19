@@ -38,6 +38,8 @@ impl WorldHistory for World {
         self.dir_tree = None;
 
         self.weighted_mode = settings.file_size_metric != gource_settings::FileSizeMetric::None;
+        self.layout_engine = settings.layout_engine;
+        self.layout_dirty = true;
 
         self.dirs.clear();
         self.dir_map.clear();

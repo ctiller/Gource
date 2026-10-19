@@ -323,7 +323,7 @@ pub fn pack(radii: &[Fx]) -> Vec<IVec2> {
     placed_r.push(r1);
     placed_ext.push(p1.length() as i64 + r1 as i64);
 
-    let tangent_limit = n.min(128);
+    let tangent_limit = if n > 256 { 24 } else { n.min(128) };
     for k in 2..tangent_limit {
         let rk = radii[order[k]];
         let placed_count = placed_pos.len();

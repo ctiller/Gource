@@ -1828,6 +1828,21 @@ Separate multiple elements with commas (eg "mouse,progress,dashboards")"#,
         live: Some(SettingId::FileSizeMetric),
     },
     SettingDesc {
+        apply: Apply::Gource(Field::Custom(crate::gource::custom_gource_layout_engine)),
+        name: "layout-engine",
+        short: None,
+        section: Section::Gource,
+        kind: Kind::String,
+        metavar: Some("ENGINE"),
+        default: "hybrid",
+        range: None,
+        group: "evolution",
+        help: r#"  --layout-engine ENGINE            Layout simulation engine (hybrid, settled, particles, classic)"#,
+        man: r#"Layout simulation engine used for directory and file positioning: 'hybrid' (settled tree targets with world-space per-file dynamics), 'settled' (deterministic non-overlapping target layout with smooth interpolation), 'particles' (flat per-file cohesion, cross-directory repulsion, and edge uncrossing), or 'classic' (legacy hierarchical force relaxation)."#,
+        extended: true,
+        live: Some(SettingId::LayoutEngine),
+    },
+    SettingDesc {
         apply: Apply::Gource(Field::F32 {
             get: |s| &mut s.file_pulse,
             min: Some(0.0),
@@ -2512,6 +2527,7 @@ pub fn cli_flag_for_setting_id(id: SettingId) -> Option<&'static str> {
         SettingId::FileIdleTime => Some("--file-idle-time"),
         SettingId::MaxFileLag => Some("--max-file-lag"),
         SettingId::FileSizeMetric => Some("--file-size-metric"),
+        SettingId::LayoutEngine => Some("--layout-engine"),
         SettingId::TuningDirPadding
         | SettingId::TuningMinDirSize
         | SettingId::TuningFileDiameter

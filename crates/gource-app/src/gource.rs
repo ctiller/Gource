@@ -15,8 +15,8 @@ use gource_history::{
     ChangeOp, ChurnDecayModel, CohortMode, CommitInput, FileChangeInput, History, HistoryBuilder,
 };
 use gource_settings::{
-    CameraMode, FileColourMode, FileSizeMetric, GourceSettings, SettingClass, SettingId,
-    SettingValue, SettingsPatch, TuningSettings,
+    CameraMode, FileColourMode, FileSizeMetric, GourceSettings, LayoutEngine, SettingClass,
+    SettingId, SettingValue, SettingsPatch, TuningSettings,
 };
 use gource_vcs::CommitLog;
 use gource_vcs::commit::{Commit, FileAction};
@@ -409,6 +409,7 @@ impl Gource {
         };
         let mut world = World::new(seed, settings.hash_seed);
         world.weighted_mode = settings.file_size_metric != FileSizeMetric::None;
+        world.layout_engine = settings.layout_engine;
         let tuning_settings = TuningSettings {
             gravity: world.tuning.force_gravity,
             min_dir_size: world.tuning.min_dir_size,
@@ -641,6 +642,7 @@ impl Gource {
         let hash_seed = self.world.hasher.seed;
         let mut world = World::new(seed, hash_seed);
         world.weighted_mode = self.settings.file_size_metric != FileSizeMetric::None;
+        world.layout_engine = self.settings.layout_engine;
         world.apply_tuning(&self.tuning_settings);
         self.world = world;
         self.tick_accum = 0.0;
@@ -919,6 +921,7 @@ impl Gource {
                     SettingValue::CameraMode(cm) => cm.as_str().to_string(),
                     SettingValue::FileSizeMetric(m) => m.as_str().to_string(),
                     SettingValue::FileColourMode(m) => m.as_str().to_string(),
+                    SettingValue::LayoutEngine(e) => e.as_str().to_string(),
                     SettingValue::DashboardPeriod(p) => p.as_str().to_string(),
                     _ => String::new(),
                 };
@@ -1045,6 +1048,9 @@ impl Gource {
                     let mut patch = SettingsPatch::new();
                     patch.push(id, def_val);
                     let _ = patch.apply(&mut self.settings, &mut self.tuning_settings);
+                    self.world.weighted_mode =
+                        self.settings.file_size_metric != FileSizeMetric::None;
+                    self.world.layout_engine = self.settings.layout_engine;
                     self.world.apply_tuning(&self.tuning_settings);
                 }
             }
@@ -1108,6 +1114,15 @@ impl Gource {
                             };
                             Some(SettingValue::FileSizeMetric(next))
                         }
+                        SettingId::LayoutEngine => {
+                            let next = match self.settings.layout_engine {
+                                LayoutEngine::Hybrid => LayoutEngine::Settled,
+                                LayoutEngine::Settled => LayoutEngine::Particles,
+                                LayoutEngine::Particles => LayoutEngine::Classic,
+                                LayoutEngine::Classic => LayoutEngine::Hybrid,
+                            };
+                            Some(SettingValue::LayoutEngine(next))
+                        }
                         SettingId::DashboardPeriod => {
                             let next = match self.settings.dashboard_period {
                                 gource_settings::DashboardPeriod::Day => {
@@ -1131,6 +1146,9 @@ impl Gource {
                         let mut patch = SettingsPatch::new();
                         patch.push(id, val);
                         let _ = patch.apply(&mut self.settings, &mut self.tuning_settings);
+                        self.world.weighted_mode =
+                            self.settings.file_size_metric != FileSizeMetric::None;
+                        self.world.layout_engine = self.settings.layout_engine;
                         self.world.apply_tuning(&self.tuning_settings);
                     }
                 }
@@ -1145,6 +1163,8 @@ impl Gource {
             TuningHit::ResetAll => {
                 self.settings = GourceSettings::default();
                 self.tuning_settings = TuningSettings::default();
+                self.world.weighted_mode = self.settings.file_size_metric != FileSizeMetric::None;
+                self.world.layout_engine = self.settings.layout_engine;
                 self.world.apply_tuning(&self.tuning_settings);
                 self.tuning_status = Some("Reset all settings".to_string());
             }

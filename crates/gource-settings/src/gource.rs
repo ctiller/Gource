@@ -84,6 +84,41 @@ impl FileSizeMetric {
     }
 }
 
+/// `--layout-engine` (`hybrid`, `settled`, `particles`, `classic`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum LayoutEngine {
+    /// Crossing-free settled tree targets combined with world-space per-file cohesion/repulsion.
+    #[default]
+    Hybrid,
+    /// Deterministic non-overlapping settled layout with smooth damped interpolation ("fake dynamics").
+    Settled,
+    /// Flat per-file world-space simulation with same-dir attraction, cross-dir repulsion, and edge uncrossing.
+    Particles,
+    /// Classic C++ Gource hierarchical directory force simulation.
+    Classic,
+}
+
+impl LayoutEngine {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "hybrid" | "auto" => Some(LayoutEngine::Hybrid),
+            "settled" | "target" | "fake" => Some(LayoutEngine::Settled),
+            "particles" | "flat" | "flock" => Some(LayoutEngine::Particles),
+            "classic" | "legacy" | "cpp" => Some(LayoutEngine::Classic),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LayoutEngine::Hybrid => "hybrid",
+            LayoutEngine::Settled => "settled",
+            LayoutEngine::Particles => "particles",
+            LayoutEngine::Classic => "classic",
+        }
+    }
+}
+
 /// `--file-colour-mode` (`ext` / `extension`, `age`, `churn`, `cohort`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum FileColourMode {
@@ -370,6 +405,7 @@ pub struct GourceSettings {
 
     // Evolution settings
     pub file_size_metric: FileSizeMetric,
+    pub layout_engine: LayoutEngine,
     pub file_pulse: f32,
     pub file_colour_mode: FileColourMode,
     pub dashboards: Vec<DashboardPanel>,
@@ -528,6 +564,7 @@ impl Default for GourceSettings {
             log_level: LogLevel::Off,
 
             file_size_metric: FileSizeMetric::None,
+            layout_engine: LayoutEngine::Hybrid,
             file_pulse: 0.0,
             file_colour_mode: FileColourMode::Extension,
             dashboards: Vec::new(),
@@ -722,6 +759,10 @@ impl GourceSettings {
         if self.file_size_metric != def.file_size_metric {
             args.push("--file-size-metric".to_string());
             args.push(self.file_size_metric.as_str().to_string());
+        }
+        if self.layout_engine != def.layout_engine {
+            args.push("--layout-engine".to_string());
+            args.push(self.layout_engine.as_str().to_string());
         }
 
         if (self.days_per_second - def.days_per_second).abs() > 1e-4 {
@@ -1481,6 +1522,22 @@ pub(crate) fn custom_gource_file_size_metric(
     }
     if let Some(metric) = FileSizeMetric::parse(&entry.value) {
         settings.file_size_metric = metric;
+        Ok(())
+    } else {
+        Err(conf.invalid_value_error(entry))
+    }
+}
+
+pub(crate) fn custom_gource_layout_engine(
+    settings: &mut GourceSettings,
+    entry: &ConfEntry,
+    conf: &ConfFile,
+) -> Result<(), SettingsError> {
+    if !entry.has_value() {
+        return Err(conf.missing_value_error(entry));
+    }
+    if let Some(engine) = LayoutEngine::parse(&entry.value) {
+        settings.layout_engine = engine;
         Ok(())
     } else {
         Err(conf.invalid_value_error(entry))

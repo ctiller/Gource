@@ -151,6 +151,7 @@ Extended Options:
   --shadow-alpha FLOAT              Alpha opacity of shadow in-flight files (default: 0.45)
 
   --file-size-metric METRIC         File size metric (none, size, lines, diff, churn)
+  --layout-engine ENGINE            Layout simulation engine (hybrid, settled, particles, classic)
   --file-pulse SECONDS              Pulse duration for modified files (0 to disable)
   --file-colour-mode MODE           File colouring mode (extension, age, churn, cohort)
   --dashboard PANELS                Evolution dashboard panels (lines, diff, editors,

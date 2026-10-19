@@ -26,7 +26,7 @@ pub use conffile::{ConfEntry, ConfFile, ConfSection};
 pub use display::DisplaySettings;
 pub use gource::{
     CameraMode, DashboardPanel, DashboardPeriod, FileColourMode, FileSizeMetric, GitBackend,
-    GourceSettings, LogLevel,
+    GourceSettings, LayoutEngine, LogLevel,
 };
 pub use patch::*;
 

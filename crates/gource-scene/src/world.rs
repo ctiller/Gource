@@ -143,6 +143,8 @@ pub struct World {
     /// their images (`RUser::assignUserImage`), which needs the texture store.
     pub new_users: Vec<UserId>,
     pub weighted_mode: bool,
+    pub layout_engine: gource_settings::LayoutEngine,
+    pub layout_dirty: bool,
 }
 
 impl World {
@@ -185,6 +187,8 @@ impl World {
             view: ViewTransform::default(),
             new_users: Vec::new(),
             weighted_mode: false,
+            layout_engine: gource_settings::LayoutEngine::default(),
+            layout_dirty: true,
         }
     }
 
@@ -211,6 +215,7 @@ impl World {
         self.tuning.personal_space_dist = tuning.personal_space;
         self.tuning.shadow_strength = tuning.shadow_strength;
         self.params = SceneParams::from_tuning(&self.tuning);
+        self.layout_dirty = true;
     }
 
     /// Rotate the view of directories and users by angle (sin, cos),
@@ -489,6 +494,7 @@ impl World {
                     gource_settings::FileSizeMetric::None => (1, 1),
                 };
                 file.set_weight_target(weight, ref_weight, self.tuning.file_diameter);
+                self.layout_dirty = true;
             }
             if settings.file_colour_mode == gource_settings::FileColourMode::Cohort
                 && file.dominant_cohort_colour.is_none()
@@ -825,12 +831,14 @@ impl World {
     }
 
     fn on_file_updated(&mut self, dir_id: DirId) {
+        self.layout_dirty = true;
         self.recalc_radius(dir_id);
         self.dirs[dir_id].since_last_file_change = 0.0;
         self.on_node_updated(dir_id, false);
     }
 
     pub fn on_node_updated(&mut self, dir_id: DirId, user_initiated: bool) {
+        self.layout_dirty = true;
         if user_initiated {
             self.dirs[dir_id].since_last_node_change = 0.0;
         }
@@ -1163,5 +1171,167 @@ mod tests {
         // Common parent should be "/"
         assert_eq!(world.dirs[world.root].path(), "/");
         assert!(world.dirs[world.root].children.len() >= 2);
+    }
+
+    #[test]
+    fn spider_directories_settle_across_layout_engines() {
+        use gource_settings::{FileSizeMetric, LayoutEngine};
+
+        for engine in [
+            LayoutEngine::Hybrid,
+            LayoutEngine::Settled,
+            LayoutEngine::Particles,
+        ] {
+            let settings = GourceSettings {
+                file_size_metric: FileSizeMetric::Lines,
+                layout_engine: engine,
+                max_file_lag: 0.05,
+                ..Default::default()
+            };
+            let mut world = World::new(23, 31);
+            world.weighted_mode = true;
+            world.layout_engine = engine;
+
+            let mut cfs = Vec::new();
+            for i in 0..56 {
+                cfs.push(CommitFile {
+                    filename: format!("/crates/wasm-ops/op_{i}/Cargo.toml"),
+                    action: FileAction::Add,
+                    colour: gource_model::commit::WHITE,
+                    lines_added: Some(25),
+                    ..Default::default()
+                });
+                cfs.push(CommitFile {
+                    filename: format!("/crates/wasm-ops/op_{i}/src/lib.rs"),
+                    action: FileAction::Add,
+                    colour: gource_model::commit::WHITE,
+                    lines_added: Some(120 + (i % 5) * 30),
+                    ..Default::default()
+                });
+            }
+            for i in 0..42 {
+                cfs.push(CommitFile {
+                    filename: format!("/crates/x86-forms/form_{i}/Cargo.toml"),
+                    action: FileAction::Add,
+                    colour: gource_model::commit::WHITE,
+                    lines_added: Some(20),
+                    ..Default::default()
+                });
+                cfs.push(CommitFile {
+                    filename: format!("/crates/x86-forms/form_{i}/src/lib.rs"),
+                    action: FileAction::Add,
+                    colour: gource_model::commit::WHITE,
+                    lines_added: Some(90 + (i % 4) * 40),
+                    ..Default::default()
+                });
+            }
+
+            let commit = Commit {
+                timestamp: 1000,
+                username: "author".to_string(),
+                files: cfs.clone(),
+                ..Default::default()
+            };
+            for cf in &cfs {
+                let fid = world.add_file(cf, &settings).unwrap();
+                world.add_file_action(&commit, cf, fid, 0.0, &settings);
+            }
+
+            // Step until all user actions complete, then let the tree and files settle.
+            let mut settled_at = None;
+            for n in 0..360 {
+                let d = tick(&mut world, n, &settings);
+                if n > 30 && d.dirs.is_empty() && d.files.is_empty() {
+                    settled_at = Some(n);
+                    break;
+                }
+            }
+            assert!(
+                settled_at.is_some(),
+                "engine {engine:?} failed to settle spider directories within 360 ticks"
+            );
+
+            // Verify sibling subtrees under /crates/wasm-ops/ and /crates/x86-forms/ do not overlap.
+            for spider_path in ["/crates/wasm-ops/", "/crates/x86-forms/"] {
+                let spider_id = world.dir_map[spider_path];
+                let children = &world.dirs[spider_id].children;
+                assert!(children.len() >= 40);
+                for a in 0..children.len() {
+                    for b in (a + 1)..children.len() {
+                        let ca = &world.dirs[children[a]];
+                        let cb = &world.dirs[children[b]];
+                        let dist = (ca.sim.pos - cb.sim.pos).length();
+                        let min_d = ca.sim.radii.radius + cb.sim.radii.radius;
+                        assert!(
+                            dist >= min_d - 2 * ONE,
+                            "engine {engine:?} sibling overlap in {spider_path}: dist={dist} < min_d={min_d}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn all_layout_engines_run_and_preserve_undo() {
+        use gource_settings::LayoutEngine;
+
+        for engine in [
+            LayoutEngine::Hybrid,
+            LayoutEngine::Settled,
+            LayoutEngine::Particles,
+            LayoutEngine::Classic,
+        ] {
+            let settings = GourceSettings {
+                layout_engine: engine,
+                ..Default::default()
+            };
+            let mut world = nested_world(11);
+            let mut world2 = nested_world(11);
+            world.layout_engine = engine;
+            world2.layout_engine = engine;
+            for n in 0..40 {
+                tick(&mut world, n, &settings);
+                tick(&mut world2, n, &settings);
+            }
+            assert_eq!(
+                world.state_hash(),
+                world2.state_hash(),
+                "determinism mismatch for {engine:?}"
+            );
+            let dirs_before: Vec<_> = world
+                .dirs
+                .values()
+                .map(|d| (d.sim.pos, d.sim.spos))
+                .collect();
+            let files_before: Vec<_> = world.files.values().map(|f| f.sim.pos).collect();
+            let users_before: Vec<_> = world.users.values().map(|u| u.sim.pos).collect();
+            let mut deltas = Vec::new();
+            for n in 40..60 {
+                deltas.push(tick(&mut world, n, &settings));
+            }
+            for d in deltas.iter().rev() {
+                world.undo_tick(d);
+            }
+            assert_eq!(
+                world
+                    .dirs
+                    .values()
+                    .map(|d| (d.sim.pos, d.sim.spos))
+                    .collect::<Vec<_>>(),
+                dirs_before,
+                "dir undo mismatch for {engine:?}"
+            );
+            assert_eq!(
+                world.files.values().map(|f| f.sim.pos).collect::<Vec<_>>(),
+                files_before,
+                "file undo mismatch for {engine:?}"
+            );
+            assert_eq!(
+                world.users.values().map(|u| u.sim.pos).collect::<Vec<_>>(),
+                users_before,
+                "user undo mismatch for {engine:?}"
+            );
+        }
     }
 }

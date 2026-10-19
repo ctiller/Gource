@@ -33,6 +33,7 @@ pub struct SceneParams {
     /// One file's area, Q16.
     pub file_area: i64,
     pub padding: Fx,
+    pub min_dir_size: Fx,
     pub gravity: Fx,
     pub gravity_on: bool,
     pub action_dist: Fx,
@@ -47,6 +48,7 @@ impl SceneParams {
             file_diameter,
             file_area: crate::dirs::file_area(file_diameter),
             padding: to_fx(t.dir_padding),
+            min_dir_size: to_fx(t.min_dir_size),
             gravity: to_fx(t.force_gravity),
             gravity_on: t.gravity,
             action_dist: to_fx(t.action_dist),
@@ -421,8 +423,10 @@ impl World {
         if let Some(did) = file.dir {
             if was_hidden {
                 self.dirs[did].add_visible();
+                self.layout_dirty = true;
             }
             self.dirs[did].since_last_file_change = 0.0;
+            self.dirs[did].sim.files_settled = false;
             Some(did)
         } else {
             None
@@ -457,6 +461,7 @@ impl World {
                 && let Some(dir) = self.dirs.get_mut(did)
             {
                 dir.since_last_file_change = 0.0;
+                dir.sim.files_settled = false;
                 if did != root {
                     dir.sim.ext_accel += beam.unit_times(2 * ONE as i64);
                 }
@@ -464,10 +469,230 @@ impl World {
         }
     }
 
+    /// Recompute local file targets (`target_pos`, `dest`, `distance`) and
+    /// `own_file_radius` for directory `d` if its visible files or target sizes changed.
+    fn pack_dir_file_targets(&mut self, d: DirId, force: bool) -> bool {
+        let mut h = StateHasher::new();
+        h.write_u64(u64::from(self.weighted_mode));
+        h.write_i32(self.params.file_diameter);
+
+        let mut vis_count = 0usize;
+        let mut any_weighted = self.weighted_mode;
+        for &fid in &self.dirs[d].files {
+            if let Some(f) = self.files.get(fid)
+                && !f.pawn.is_hidden()
+            {
+                let r = if self.weighted_mode || f.weighted {
+                    any_weighted = true;
+                    let diam = if f.weighted {
+                        f.sim.target_size
+                    } else {
+                        f.sim.size.max(f.sim.target_size)
+                    };
+                    (diam / 2).max(self.params.file_diameter / 4)
+                } else {
+                    self.params.file_diameter / 2
+                };
+                h.write_u64(ent(fid));
+                h.write_i32(r);
+                vis_count += 1;
+            }
+        }
+
+        self.dirs[d].visible_count = vis_count;
+        if vis_count > 0 {
+            self.dirs[d].visible = true;
+        }
+
+        let hash = h.finish();
+        if !force && hash == self.dirs[d].sim.packed_file_hash {
+            return false;
+        }
+
+        let fids = self.dirs[d].files.clone();
+        if vis_count == 0 {
+            for fid in fids {
+                if let Some(f) = self.files.get_mut(fid) {
+                    f.sim.dest = IVec2::ZERO;
+                    f.sim.distance = 0;
+                    f.sim.target_pos = IVec2::ZERO;
+                }
+            }
+            self.dirs[d].sim.own_file_radius = 0;
+            self.dirs[d].sim.files_settled = true;
+        } else if any_weighted {
+            let mut vis_fids = Vec::with_capacity(vis_count);
+            let mut radii = Vec::with_capacity(vis_count);
+            for fid in fids {
+                let Some(f) = self.files.get_mut(fid) else {
+                    continue;
+                };
+                if f.pawn.is_hidden() {
+                    f.sim.dest = IVec2::ZERO;
+                    f.sim.distance = 0;
+                    f.sim.target_pos = IVec2::ZERO;
+                } else {
+                    let diam = if f.weighted {
+                        f.sim.target_size
+                    } else {
+                        f.sim.size.max(f.sim.target_size)
+                    };
+                    let r = (diam / 2).max(self.params.file_diameter / 4);
+                    vis_fids.push(fid);
+                    radii.push(r);
+                }
+            }
+            let placed = crate::files::pack(&radii);
+            let mut max_ext: Fx = 0;
+            for ((&fid, &pos), &r) in vis_fids.iter().zip(&placed).zip(&radii) {
+                let f = &mut self.files[fid];
+                f.sim.target_pos = pos;
+                let dist = pos.length();
+                f.sim.dest = pos.unit().unwrap_or(IVec2::ZERO);
+                f.sim.distance = dist;
+                max_ext = max_ext.max(dist.saturating_add(r));
+            }
+            self.dirs[d].sim.own_file_radius = max_ext;
+            self.dirs[d].sim.files_settled = false;
+        } else {
+            let slots = crate::files::ring_slots(vis_count as u32, self.params.file_diameter);
+            let file_r = (self.params.file_diameter / 2).max(ONE);
+            let mut max_ext: Fx = 0;
+            let mut it = slots.into_iter();
+            for fid in fids {
+                let Some(f) = self.files.get_mut(fid) else {
+                    continue;
+                };
+                if f.pawn.is_hidden() {
+                    f.sim.dest = IVec2::ZERO;
+                    f.sim.distance = 0;
+                    f.sim.target_pos = IVec2::ZERO;
+                } else {
+                    let slot = it.next().unwrap_or_default();
+                    let target_pos = slot.dest.unit_times(slot.distance as i64);
+                    f.sim.dest = slot.dest;
+                    f.sim.distance = slot.distance;
+                    f.sim.target_pos = target_pos;
+                    max_ext = max_ext.max(slot.distance.saturating_add(file_r));
+                }
+            }
+            self.dirs[d].sim.own_file_radius = max_ext;
+            self.dirs[d].sim.files_settled = false;
+        }
+
+        self.dirs[d].sim.packed_file_hash = hash;
+        true
+    }
+
+    /// Recompute the crossing-free settled target layout for all directories
+    /// when any directory or file target has changed.
+    pub(crate) fn recompute_settled_targets(&mut self, order: &[DirId], force_all: bool) {
+        let mut any_file_changed = false;
+        for &d in order {
+            if (force_all || self.layout_dirty || self.dirs[d].since_last_file_change <= 3.0)
+                && self.pack_dir_file_targets(d, force_all)
+            {
+                any_file_changed = true;
+            }
+        }
+        if !force_all && !self.layout_dirty && !any_file_changed {
+            return;
+        }
+
+        let vis = self.visibility(order);
+        let mut index: SecondaryMap<DirId, usize> = SecondaryMap::with_capacity(order.len());
+        for (i, &d) in order.iter().enumerate() {
+            index.insert(d, i);
+        }
+
+        let tree_ins: Vec<crate::layout::TreeDirIn> = order
+            .iter()
+            .map(|&d| {
+                let dir = &self.dirs[d];
+                let children = dir
+                    .children
+                    .iter()
+                    .filter_map(|&c| index.get(c).copied())
+                    .collect();
+                crate::layout::TreeDirIn {
+                    parent: dir.parent.and_then(|p| index.get(p).copied()),
+                    children,
+                    own_file_radius: dir.sim.own_file_radius,
+                    visible_files: dir.visible_count as u32,
+                    visible: vis[d],
+                }
+            })
+            .collect();
+
+        let outs = crate::layout::solve_settled_tree(
+            &tree_ins,
+            self.params.padding,
+            self.params.min_dir_size,
+        );
+        for (&d, out) in order.iter().zip(outs) {
+            let dir = &mut self.dirs[d];
+            dir.sim.target_pos = out.target_pos;
+            dir.sim.outward_angle = out.outward_angle;
+            dir.set_radii(out.radii);
+        }
+        self.layout_dirty = false;
+    }
+
+    /// Step a single directory's visible files using [`crate::layout::step_hybrid_dir_files`].
+    fn step_dir_files_hybrid(&mut self, d: DirId) {
+        let fids: Vec<FileId> = self.dirs[d]
+            .files
+            .iter()
+            .copied()
+            .filter(|f| self.files.get(*f).is_some_and(|f| !f.pawn.is_hidden()))
+            .collect();
+        if fids.is_empty() {
+            self.dirs[d].sim.files_settled = true;
+            return;
+        }
+        let mut particles: Vec<crate::layout::LocalFileParticle> = fids
+            .iter()
+            .map(|&f| {
+                let file = &self.files[f];
+                crate::layout::LocalFileParticle {
+                    pos: file.sim.pos,
+                    vel: file.sim.vel,
+                    target_pos: file.sim.target_pos,
+                    radius: file.sim.radius.max(ONE / 20),
+                    tag: file.pawn.tagid as u16,
+                }
+            })
+            .collect();
+        let settled = crate::layout::step_hybrid_dir_files(&mut particles);
+        for (&f, p) in fids.iter().zip(&particles) {
+            let file = &mut self.files[f];
+            file.sim.pos = p.pos;
+            file.sim.vel = p.vel;
+        }
+        self.dirs[d].sim.files_settled = settled;
+    }
+
     /// The directory force pass, per-directory motion and file logic, and
     /// (weighted mode) the file solver. `dt` is the tick length (timers);
     /// `file_idle_time` is `gGourceSettings.file_idle_time`.
     pub fn update_dirs(&mut self, dt: f32, file_idle_time: f32, profile: &mut LogicProfile) {
+        match self.layout_engine {
+            gource_settings::LayoutEngine::Classic => {
+                self.update_dirs_classic(dt, file_idle_time, profile);
+            }
+            gource_settings::LayoutEngine::Settled => {
+                self.update_dirs_settled(dt, file_idle_time, profile);
+            }
+            gource_settings::LayoutEngine::Hybrid => {
+                self.update_dirs_hybrid(dt, file_idle_time, profile);
+            }
+            gource_settings::LayoutEngine::Particles => {
+                self.update_dirs_particles(dt, file_idle_time, profile);
+            }
+        }
+    }
+
+    fn update_dirs_classic(&mut self, dt: f32, file_idle_time: f32, profile: &mut LogicProfile) {
         let order = self.preorder_dirs();
         let vis = self.visibility(&order);
         let mut index: SecondaryMap<DirId, u32> = SecondaryMap::with_capacity(order.len());
@@ -516,11 +741,9 @@ impl World {
                     let h = crate::dirs::hash_direction(hash);
                     let pos = crate::dirs::initial_position(pp, gpos, h);
                     dir.sim.pos = pos;
-                    dir.sim.prev_pos = pos;
                     // C++: spos = pos - (parent - pos) / 2.
                     let spos = pos - (pp - pos).scale(1, 2);
                     dir.sim.spos = spos;
-                    dir.sim.prev_spos = spos;
                     dir.sim.initialized = true;
                 }
                 let accel = accels[i] + dir.sim.ext_accel;
@@ -557,7 +780,331 @@ impl World {
         profile.mark(LogicSpan::DirLogic);
 
         if weighted {
-            self.update_weighted_layout_step(&order);
+            self.update_weighted_layout_step_classic(&order);
+        }
+        profile.mark(LogicSpan::Weighted);
+    }
+
+    fn update_dirs_settled(&mut self, dt: f32, file_idle_time: f32, profile: &mut LogicProfile) {
+        let order = self.preorder_dirs();
+        self.recompute_settled_targets(&order, false);
+        let vis = self.visibility(&order);
+        profile.mark(LogicSpan::DirForces);
+
+        let weighted = self.weighted_mode;
+        for &d in &order {
+            let ppos = self.dirs[d].parent.map(|p| self.dirs[p].sim.pos);
+            let dir = &mut self.dirs[d];
+            if let Some(pp) = ppos {
+                if vis[d] {
+                    if !dir.sim.initialized {
+                        let step_dir = (dir.sim.target_pos - pp)
+                            .unit()
+                            .unwrap_or_else(|| crate::trig::direction(dir.sim.outward_angle));
+                        let pos = pp + step_dir.unit_times(2 * ONE as i64);
+                        dir.sim.pos = pos;
+                        dir.sim.spos = pos - (pp - pos).scale(1, 2);
+                        dir.sim.initialized = true;
+                    }
+                    let (next_pos, next_vel) = crate::layout::step_settled_pos(
+                        dir.sim.pos,
+                        dir.sim.vel,
+                        dir.sim.target_pos,
+                        IVec2::ZERO,
+                        8,
+                        5,
+                        8,
+                        800 * ONE,
+                    );
+                    dir.sim.pos = next_pos;
+                    dir.sim.vel = next_vel;
+                    dir.sim.spos = crate::dirs::spline_point(dir.sim.spos, dir.sim.pos, pp);
+                }
+            } else {
+                dir.sim.pos = IVec2::ZERO;
+                dir.sim.spos = IVec2::ZERO;
+                dir.sim.vel = IVec2::ZERO;
+            }
+            dir.sim.ext_accel = IVec2::ZERO;
+
+            let file_ids = dir.files.clone();
+            for fid in file_ids {
+                let Some(file) = self.files.get_mut(fid) else {
+                    continue;
+                };
+                if weighted || file.weighted {
+                    file.sim.size = crate::files::animate_size(file.sim.size, file.size_goal());
+                    file.sim.radius = (file.sim.size / 2).max(ONE / 20);
+                }
+                if !file.pawn.is_hidden() {
+                    let (p, v) = crate::layout::step_settled_pos(
+                        file.sim.pos,
+                        file.sim.vel,
+                        file.sim.target_pos,
+                        IVec2::ZERO,
+                        8,
+                        5,
+                        8,
+                        150 * ONE,
+                    );
+                    file.sim.pos = p;
+                    file.sim.vel = v;
+                }
+                if file.logic(dt, file_idle_time) {
+                    self.removed_files.push(fid);
+                }
+            }
+
+            let dir = &mut self.dirs[d];
+            dir.calc_colour(&self.files);
+            if dir.visible {
+                dir.since_node_visible += dt;
+            }
+            dir.since_last_file_change += dt;
+            dir.since_last_node_change += dt;
+        }
+        profile.mark(LogicSpan::DirLogic);
+        profile.mark(LogicSpan::Weighted);
+    }
+
+    fn update_dirs_hybrid(&mut self, dt: f32, file_idle_time: f32, profile: &mut LogicProfile) {
+        let order = self.preorder_dirs();
+        self.recompute_settled_targets(&order, false);
+        let vis = self.visibility(&order);
+
+        let any_moving = order
+            .iter()
+            .any(|&d| vis[d] && self.dirs[d].sim.pos != self.dirs[d].sim.target_pos);
+        let uncross = if any_moving && order.len() <= 512 {
+            let mut index: SecondaryMap<DirId, usize> = SecondaryMap::with_capacity(order.len());
+            for (i, &d) in order.iter().enumerate() {
+                index.insert(d, i);
+            }
+            let positions: Vec<IVec2> = order.iter().map(|&d| self.dirs[d].sim.pos).collect();
+            let mut edges = Vec::with_capacity(order.len());
+            for (i, &d) in order.iter().enumerate() {
+                if vis[d]
+                    && let Some(p) = self.dirs[d].parent
+                    && let Some(&pi) = index.get(p)
+                {
+                    edges.push(crate::layout::TreeEdge {
+                        parent: pi,
+                        child: i,
+                    });
+                }
+            }
+            crate::layout::uncross_edges(&positions, &edges, 24 * ONE)
+        } else {
+            vec![IVec2::ZERO; order.len()]
+        };
+        profile.mark(LogicSpan::DirForces);
+
+        let weighted = self.weighted_mode;
+        for (i, &d) in order.iter().enumerate() {
+            let ppos = self.dirs[d].parent.map(|p| self.dirs[p].sim.pos);
+            let dir = &mut self.dirs[d];
+            if let Some(pp) = ppos {
+                if vis[d] {
+                    if !dir.sim.initialized {
+                        let step_dir = (dir.sim.target_pos - pp)
+                            .unit()
+                            .unwrap_or_else(|| crate::trig::direction(dir.sim.outward_angle));
+                        let pos = pp + step_dir.unit_times(2 * ONE as i64);
+                        dir.sim.pos = pos;
+                        dir.sim.spos = pos - (pp - pos).scale(1, 2);
+                        dir.sim.initialized = true;
+                    }
+                    let ext = dir.sim.ext_accel + uncross[i];
+                    let (next_pos, next_vel) = crate::layout::step_settled_pos(
+                        dir.sim.pos,
+                        dir.sim.vel,
+                        dir.sim.target_pos,
+                        ext,
+                        8,
+                        5,
+                        8,
+                        800 * ONE,
+                    );
+                    dir.sim.pos = next_pos;
+                    dir.sim.vel = next_vel;
+                    dir.sim.spos = crate::dirs::spline_point(dir.sim.spos, dir.sim.pos, pp);
+                }
+            } else {
+                dir.sim.pos = IVec2::ZERO;
+                dir.sim.spos = IVec2::ZERO;
+                dir.sim.vel = IVec2::ZERO;
+            }
+            dir.sim.ext_accel = IVec2::ZERO;
+
+            let file_ids = dir.files.clone();
+            for fid in file_ids {
+                let Some(file) = self.files.get_mut(fid) else {
+                    continue;
+                };
+                if weighted || file.weighted {
+                    file.sim.size = crate::files::animate_size(file.sim.size, file.size_goal());
+                    file.sim.radius = (file.sim.size / 2).max(ONE / 20);
+                }
+                if file.logic(dt, file_idle_time) {
+                    self.removed_files.push(fid);
+                }
+            }
+
+            if !self.dirs[d].sim.files_settled || self.dirs[d].since_last_file_change <= 3.0 {
+                self.step_dir_files_hybrid(d);
+            }
+
+            let dir = &mut self.dirs[d];
+            dir.calc_colour(&self.files);
+            if dir.visible {
+                dir.since_node_visible += dt;
+            }
+            dir.since_last_file_change += dt;
+            dir.since_last_node_change += dt;
+        }
+        profile.mark(LogicSpan::DirLogic);
+        profile.mark(LogicSpan::Weighted);
+    }
+
+    fn update_dirs_particles(&mut self, dt: f32, file_idle_time: f32, profile: &mut LogicProfile) {
+        let order = self.preorder_dirs();
+        self.recompute_settled_targets(&order, false);
+        let vis = self.visibility(&order);
+
+        let mut index: SecondaryMap<DirId, usize> = SecondaryMap::with_capacity(order.len());
+        for (i, &d) in order.iter().enumerate() {
+            index.insert(d, i);
+        }
+
+        let any_moving = order
+            .iter()
+            .any(|&d| vis[d] && self.dirs[d].sim.pos != self.dirs[d].sim.target_pos);
+        let uncross = if any_moving && order.len() <= 512 {
+            let positions: Vec<IVec2> = order.iter().map(|&d| self.dirs[d].sim.pos).collect();
+            let mut edges = Vec::with_capacity(order.len());
+            for (i, &d) in order.iter().enumerate() {
+                if vis[d]
+                    && let Some(p) = self.dirs[d].parent
+                    && let Some(&pi) = index.get(p)
+                {
+                    edges.push(crate::layout::TreeEdge {
+                        parent: pi,
+                        child: i,
+                    });
+                }
+            }
+            crate::layout::uncross_edges(&positions, &edges, 24 * ONE)
+        } else {
+            vec![IVec2::ZERO; order.len()]
+        };
+        profile.mark(LogicSpan::DirForces);
+
+        for (i, &d) in order.iter().enumerate() {
+            let ppos = self.dirs[d].parent.map(|p| self.dirs[p].sim.pos);
+            let dir = &mut self.dirs[d];
+            if let Some(pp) = ppos {
+                if vis[d] {
+                    if !dir.sim.initialized {
+                        let step_dir = (dir.sim.target_pos - pp)
+                            .unit()
+                            .unwrap_or_else(|| crate::trig::direction(dir.sim.outward_angle));
+                        let pos = pp + step_dir.unit_times(2 * ONE as i64);
+                        dir.sim.pos = pos;
+                        dir.sim.spos = pos - (pp - pos).scale(1, 2);
+                        dir.sim.initialized = true;
+                    }
+                    let ext = dir.sim.ext_accel + uncross[i];
+                    let (next_pos, next_vel) = crate::layout::step_settled_pos(
+                        dir.sim.pos,
+                        dir.sim.vel,
+                        dir.sim.target_pos,
+                        ext,
+                        8,
+                        5,
+                        8,
+                        800 * ONE,
+                    );
+                    dir.sim.pos = next_pos;
+                    dir.sim.vel = next_vel;
+                    dir.sim.spos = crate::dirs::spline_point(dir.sim.spos, dir.sim.pos, pp);
+                }
+            } else {
+                dir.sim.pos = IVec2::ZERO;
+                dir.sim.spos = IVec2::ZERO;
+                dir.sim.vel = IVec2::ZERO;
+            }
+            dir.sim.ext_accel = IVec2::ZERO;
+        }
+
+        // Collect active visible files in world space for flat particle simulation.
+        let weighted = self.weighted_mode;
+        let mut world_fids = Vec::new();
+        let mut world_particles = Vec::new();
+        for (dir_idx, &d) in order.iter().enumerate() {
+            let dir_pos = self.dirs[d].sim.pos;
+            let dir_target = self.dirs[d].sim.target_pos;
+            let dir_active = !self.dirs[d].sim.files_settled
+                || self.dirs[d].since_last_file_change <= 3.0
+                || dir_pos != dir_target;
+            let file_ids = self.dirs[d].files.clone();
+            for fid in file_ids {
+                let Some(file) = self.files.get_mut(fid) else {
+                    continue;
+                };
+                if !file.pawn.is_hidden() && dir_active {
+                    let target_size = if weighted || file.weighted {
+                        file.size_goal()
+                    } else {
+                        file.sim.size
+                    };
+                    world_fids.push((d, fid));
+                    world_particles.push(crate::layout::WorldFileParticle {
+                        dir_idx,
+                        pos: dir_pos + file.sim.pos,
+                        vel: file.sim.vel,
+                        target_pos: dir_target + file.sim.target_pos,
+                        size: file.sim.size,
+                        target_size,
+                        radius: file.sim.radius.max(ONE / 20),
+                        tag: file.pawn.tagid as u16,
+                    });
+                }
+                if file.logic(dt, file_idle_time) {
+                    self.removed_files.push(fid);
+                }
+            }
+        }
+        profile.mark(LogicSpan::DirLogic);
+
+        if !world_particles.is_empty() {
+            let use_live = world_particles.len() <= 2048;
+            crate::layout::step_world_files(
+                &mut world_particles,
+                order.len(),
+                use_live,
+                2 * ONE,
+                8 * ONE,
+            );
+            for (&(d, fid), wp) in world_fids.iter().zip(&world_particles) {
+                let dir_pos = self.dirs[d].sim.pos;
+                let file = &mut self.files[fid];
+                file.sim.pos = wp.pos - dir_pos;
+                file.sim.vel = wp.vel;
+                if weighted || file.weighted {
+                    file.sim.size = wp.size;
+                    file.sim.radius = wp.radius;
+                }
+            }
+        }
+
+        for &d in &order {
+            let dir = &mut self.dirs[d];
+            dir.calc_colour(&self.files);
+            if dir.visible {
+                dir.since_node_visible += dt;
+            }
+            dir.since_last_file_change += dt;
+            dir.since_last_node_change += dt;
         }
         profile.mark(LogicSpan::Weighted);
     }
@@ -565,6 +1112,56 @@ impl World {
     /// One tick of the weighted layout: each directory's file solver
     /// (post-order), weighted radii, then directory contact resolution.
     pub fn update_weighted_layout_step(&mut self, preorder: &[DirId]) {
+        if self.layout_engine == gource_settings::LayoutEngine::Classic {
+            self.update_weighted_layout_step_classic(preorder);
+            return;
+        }
+
+        for &d in preorder {
+            for i in 0..self.dirs[d].files.len() {
+                let fid = self.dirs[d].files[i];
+                if let Some(file) = self.files.get_mut(fid)
+                    && (self.weighted_mode || file.weighted)
+                {
+                    let goal = file.size_goal();
+                    if file.sim.size != goal {
+                        file.sim.size = crate::files::animate_size(file.sim.size, goal);
+                        file.sim.radius = (file.sim.size / 2).max(ONE / 20);
+                    }
+                }
+            }
+        }
+
+        self.recompute_settled_targets(preorder, false);
+        let vis = self.visibility(preorder);
+        for &d in preorder {
+            if !self.dirs[d].sim.files_settled || self.dirs[d].since_last_file_change <= 3.0 {
+                self.step_dir_files_hybrid(d);
+            }
+            let ppos = self.dirs[d].parent.map(|p| self.dirs[p].sim.pos);
+            let dir = &mut self.dirs[d];
+            if let Some(pp) = ppos
+                && vis[d]
+            {
+                let (next_pos, next_vel) = crate::layout::step_settled_pos(
+                    dir.sim.pos,
+                    dir.sim.vel,
+                    dir.sim.target_pos,
+                    dir.sim.ext_accel,
+                    8,
+                    5,
+                    8,
+                    800 * ONE,
+                );
+                dir.sim.pos = next_pos;
+                dir.sim.vel = next_vel;
+                dir.sim.spos = crate::dirs::spline_point(dir.sim.spos, dir.sim.pos, pp);
+                dir.sim.ext_accel = IVec2::ZERO;
+            }
+        }
+    }
+
+    fn update_weighted_layout_step_classic(&mut self, preorder: &[DirId]) {
         for &d in preorder.iter().rev() {
             if self.dirs[d].visible_count == 0 {
                 self.recalc_weighted_radius(d);
@@ -660,6 +1257,35 @@ impl World {
     /// Weighted mode: pack every directory's files from scratch and resolve
     /// directory contacts (used when materialising a snapshot).
     pub fn update_weighted_layout(&mut self) {
+        if self.layout_engine != gource_settings::LayoutEngine::Classic {
+            let order = self.preorder_dirs();
+            self.recompute_settled_targets(&order, true);
+            for f in self.files.values_mut() {
+                if !f.pawn.is_hidden() {
+                    f.sim.pos = f.sim.target_pos;
+                    f.sim.prev_pos = f.sim.target_pos;
+                    f.sim.vel = IVec2::ZERO;
+                }
+            }
+            for &d in &order {
+                let ppos = self.dirs[d].parent.map(|p| self.dirs[p].sim.target_pos);
+                let dir = &mut self.dirs[d];
+                let pos = dir.sim.target_pos;
+                dir.sim.pos = pos;
+                dir.sim.prev_pos = pos;
+                dir.sim.vel = IVec2::ZERO;
+                let spos = match ppos {
+                    Some(pp) => pos - (pp - pos).scale(1, 2),
+                    None => pos,
+                };
+                dir.sim.spos = spos;
+                dir.sim.prev_spos = spos;
+                dir.sim.initialized = !dir.is_empty();
+                dir.sim.files_settled = true;
+            }
+            return;
+        }
+
         let order = self.preorder_dirs();
         for &d in order.iter().rev() {
             let fids: Vec<FileId> = self.dirs[d]
@@ -701,12 +1327,15 @@ impl World {
             if file.pawn.is_hidden() {
                 file.sim.dest = IVec2::ZERO;
                 file.sim.distance = 0;
+                file.sim.target_pos = IVec2::ZERO;
                 continue;
             }
             let slot = it.next().unwrap_or_default();
             file.sim.dest = slot.dest;
             file.sim.distance = slot.distance;
+            file.sim.target_pos = slot.dest.unit_times(slot.distance as i64);
         }
+        self.dirs[d].sim.files_settled = false;
     }
 
     /// A 64-bit hash of the whole simulation state, in a canonical order
