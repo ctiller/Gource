@@ -10,6 +10,7 @@ pub mod fixed;
 pub mod grid;
 pub mod hash;
 pub mod layout;
+pub mod particles;
 pub mod rng;
 pub mod trig;
 pub mod users;

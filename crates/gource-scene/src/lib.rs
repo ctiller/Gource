@@ -11,7 +11,6 @@ pub mod step;
 pub mod user;
 pub mod view;
 pub mod world;
-pub mod z3_solver;
 
 pub use action::{Action, ActionKind};
 pub use dirnode::DirNode;
@@ -22,6 +21,7 @@ pub use kernel::fixed::{Fx, IVec2, ONE, TICK_HZ, UNIT};
 pub use kernel::grid;
 pub use kernel::hash;
 pub use kernel::layout;
+pub use kernel::particles;
 pub use kernel::rng;
 pub use kernel::trig;
 pub use kernel::users;

@@ -32,6 +32,8 @@ pub struct FileSim {
     pub size: Fx,
     pub target_size: Fx,
     pub radius: Fx,
+    /// `particles` engine: the file has been dropped into the world simulation.
+    pub particle_init: bool,
 }
 
 /// A file in the visualizer repository tree.

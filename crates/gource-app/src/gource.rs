@@ -1117,8 +1117,7 @@ impl Gource {
                         SettingId::LayoutEngine => {
                             let next = match self.settings.layout_engine {
                                 LayoutEngine::Hybrid => LayoutEngine::Settled,
-                                LayoutEngine::Settled => LayoutEngine::Z3,
-                                LayoutEngine::Z3 => LayoutEngine::Particles,
+                                LayoutEngine::Settled => LayoutEngine::Particles,
                                 LayoutEngine::Particles => LayoutEngine::Classic,
                                 LayoutEngine::Classic => LayoutEngine::Hybrid,
                             };

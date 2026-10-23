@@ -1251,6 +1251,37 @@ mod tests {
                 "engine {engine:?} failed to settle spider directories within 360 ticks"
             );
 
+            if engine == LayoutEngine::Particles {
+                // Fully physics-driven: files of different directories never overlap.
+                let files: Vec<_> = world
+                    .files
+                    .values()
+                    .filter(|f| !f.pawn.is_hidden())
+                    .map(|f| {
+                        (
+                            f.dir,
+                            world.dirs[f.dir.unwrap()].sim.pos + f.sim.pos,
+                            f.sim.radius,
+                        )
+                    })
+                    .collect();
+                for a in 0..files.len() {
+                    for b in (a + 1)..files.len() {
+                        let (da, pa, ra) = files[a];
+                        let (db, pb, rb) = files[b];
+                        if da != db {
+                            let dist = (pa - pb).length();
+                            assert!(
+                                dist >= ra + rb,
+                                "files of different dirs overlap: {dist} < {}",
+                                ra + rb
+                            );
+                        }
+                    }
+                }
+                continue;
+            }
+
             // Verify sibling directory file clusters under /crates/wasm-ops/ and /crates/x86-forms/ do not overlap.
             for spider_path in ["/crates/wasm-ops/", "/crates/x86-forms/"] {
                 let spider_id = world.dir_map[spider_path];
@@ -1279,7 +1310,6 @@ mod tests {
         for engine in [
             LayoutEngine::Hybrid,
             LayoutEngine::Settled,
-            LayoutEngine::Z3,
             LayoutEngine::Particles,
             LayoutEngine::Classic,
         ] {

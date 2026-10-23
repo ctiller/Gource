@@ -356,7 +356,7 @@ Alpha opacity (0.0 to 1.0) of shadow in-flight files and commit beams in worktre
 Metric used to scale file node sizes: 'none' (fixed default size), 'size' (file byte size), 'lines' (line count), 'diff' (lines modified in commit), or 'churn' (cumulative edits).
 .TP
 \fB\-\-layout\-engine ENGINE\fR
-Layout simulation engine used for directory and file positioning: 'hybrid' (settled tree targets with world-space per-file dynamics), 'settled' (deterministic non-overlapping target layout with smooth interpolation), 'z3' (Z3 SMT-solver optimized layout), 'particles' (flat per-file cohesion, cross-directory repulsion, and edge uncrossing), or 'classic' (legacy hierarchical force relaxation).
+Layout simulation engine used for directory and file positioning: 'hybrid' (settled tree targets with world-space per-file dynamics), 'settled' (deterministic non-overlapping target layout with smooth interpolation), 'particles' (fully physics-driven files: same-directory cohesion, cross-directory repulsion, collisions, and downstream edge-uncrossing forces, with each directory tip on its files' centroid), or 'classic' (legacy hierarchical force relaxation).
 .TP
 \fB\-\-file\-pulse SECONDS\fR
 Duration in seconds for modified files to pulse with an animated accent ring upon commit (0 to disable).
