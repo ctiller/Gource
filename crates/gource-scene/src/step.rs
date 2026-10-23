@@ -66,16 +66,27 @@ pub struct TickDelta {
     pub dirs: Vec<(DirId, IVec2, IVec2)>,
     pub files: Vec<(FileId, IVec2)>,
     pub users: Vec<(UserId, IVec2)>,
+    /// `particles` engine heights: `(dir, Δz, Δspos_z)` and `(file, Δz)`.
+    pub dirs_z: Vec<(DirId, Fx, Fx)>,
+    pub files_z: Vec<(FileId, Fx)>,
 }
 
 impl TickDelta {
     pub fn is_empty(&self) -> bool {
-        self.dirs.is_empty() && self.files.is_empty() && self.users.is_empty()
+        self.dirs.is_empty()
+            && self.files.is_empty()
+            && self.users.is_empty()
+            && self.dirs_z.is_empty()
+            && self.files_z.is_empty()
     }
 
     /// Number of moved entities.
     pub fn len(&self) -> usize {
-        self.dirs.len() + self.files.len() + self.users.len()
+        self.dirs.len()
+            + self.files.len()
+            + self.users.len()
+            + self.dirs_z.len()
+            + self.files_z.len()
     }
 }
 
@@ -159,9 +170,12 @@ impl World {
         for d in self.dirs.values_mut() {
             d.sim.prev_pos = d.sim.pos;
             d.sim.prev_spos = d.sim.spos;
+            d.sim.prev_z = d.sim.z;
+            d.sim.prev_spos_z = d.sim.spos_z;
         }
         for f in self.files.values_mut() {
             f.sim.prev_pos = f.sim.pos;
+            f.sim.prev_z = f.sim.z;
         }
         for u in self.users.values_mut() {
             u.sim.prev_pos = u.sim.pos;
@@ -178,11 +192,19 @@ impl World {
             if dp != IVec2::ZERO || ds != IVec2::ZERO {
                 delta.dirs.push((id, dp, ds));
             }
+            let (dz, dsz) = (d.sim.z - d.sim.prev_z, d.sim.spos_z - d.sim.prev_spos_z);
+            if dz != 0 || dsz != 0 {
+                delta.dirs_z.push((id, dz, dsz));
+            }
         }
         for (id, f) in &self.files {
             let dp = f.sim.pos - f.sim.prev_pos;
             if dp != IVec2::ZERO {
                 delta.files.push((id, dp));
+            }
+            let dz = f.sim.z - f.sim.prev_z;
+            if dz != 0 {
+                delta.files_z.push((id, dz));
             }
         }
         for (id, u) in &self.users {
@@ -209,6 +231,20 @@ impl World {
             if let Some(f) = self.files.get_mut(id) {
                 f.sim.prev_pos = f.sim.pos;
                 f.sim.pos -= dp;
+            }
+        }
+        for &(id, dz, dsz) in &delta.dirs_z {
+            if let Some(d) = self.dirs.get_mut(id) {
+                d.sim.prev_z = d.sim.z;
+                d.sim.prev_spos_z = d.sim.spos_z;
+                d.sim.z -= dz;
+                d.sim.spos_z -= dsz;
+            }
+        }
+        for &(id, dz) in &delta.files_z {
+            if let Some(f) = self.files.get_mut(id) {
+                f.sim.prev_z = f.sim.z;
+                f.sim.z -= dz;
             }
         }
         for &(id, dp) in &delta.users {
@@ -1017,6 +1053,7 @@ impl World {
         let weighted = self.weighted_mode;
         let mut fids = Vec::new();
         let mut parts = Vec::new();
+        let spawn_height = 10 * self.params.file_diameter;
         for (dir_idx, &d) in order.iter().enumerate() {
             let dir_pos = self.dirs[d].sim.pos;
             let file_ids = self.dirs[d].files.clone();
@@ -1032,6 +1069,10 @@ impl World {
                             let r = file.sim.radius.max(2 * ONE) as i64;
                             file.sim.pos = crate::trig::direction(ang).unit_times(3 * r);
                         }
+                        // New files drop in from above.
+                        file.sim.z = spawn_height;
+                        file.sim.prev_z = spawn_height;
+                        file.sim.vz = 0;
                         file.sim.particle_init = true;
                     }
                     let target_size = if weighted || file.weighted {
@@ -1049,6 +1090,10 @@ impl World {
                         target_size,
                         radius: file.sim.radius.max(ONE / 2),
                         tag: file.pawn.tagid as u16,
+                        z: file.sim.z,
+                        vz: file.sim.vz,
+                        // A deleted (or expiring) file loses the floor's support.
+                        falling: file.removing || file.fade_start >= 0.0,
                     });
                 }
                 if file.logic(dt, file_idle_time) {
@@ -1060,16 +1105,18 @@ impl World {
 
         // Arm bends are derived from the spline control points, so they need no
         // extra state and reverse playback restores them exactly.
-        let mut bends: Vec<IVec2> = order
+        let mut bends: Vec<crate::particles::ArmBend> = order
             .iter()
             .enumerate()
             .map(|(i, &d)| match pdirs[i].parent {
                 Some(pi) if vis[d] => {
-                    let pp = self.dirs[order[pi]].sim.pos;
-                    let pd = self.dirs[d].sim.pos;
-                    self.dirs[d].sim.spos - (pp + (pd - pp).scale(1, 2))
+                    let (par, dir) = (&self.dirs[order[pi]].sim, &self.dirs[d].sim);
+                    crate::particles::ArmBend {
+                        xy: dir.spos - (par.pos + (dir.pos - par.pos).scale(1, 2)),
+                        z: dir.spos_z - (par.z + (dir.z - par.z) / 2),
+                    }
                 }
-                _ => IVec2::ZERO,
+                _ => crate::particles::ArmBend::default(),
             })
             .collect();
         let params = crate::particles::ParticleParams::for_file_diameter(self.params.file_diameter);
@@ -1081,6 +1128,8 @@ impl World {
             file.sim.pos = local;
             file.sim.target_pos = local;
             file.sim.vel = wp.vel;
+            file.sim.z = wp.z;
+            file.sim.vz = wp.vz;
             if weighted || file.weighted {
                 file.sim.size = wp.size;
                 file.sim.radius = wp.radius;
@@ -1101,10 +1150,18 @@ impl World {
             dir.sim.vel = IVec2::ZERO;
             dir.sim.ext_accel = IVec2::ZERO;
             dir.sim.files_settled = true;
-            dir.sim.spos = match ppos {
-                Some(pp) => pp + (pos - pp).scale(1, 2) + bends[i],
-                None => pos,
+            let z = frame.pos_z[i];
+            (dir.sim.spos, dir.sim.spos_z) = match ppos {
+                Some(pp) => {
+                    let pz = frame.pos_z[pdirs[i].parent.unwrap_or(i)];
+                    (
+                        pp + (pos - pp).scale(1, 2) + bends[i].xy,
+                        pz + (z - pz) / 2 + bends[i].z,
+                    )
+                }
+                None => (pos, z),
             };
+            dir.sim.z = z;
             dir.set_radii(crate::dirs::Radii {
                 area,
                 radius: own,
@@ -1366,12 +1423,15 @@ impl World {
             h.write_vec(dir.sim.spos);
             h.write_i32(dir.sim.radii.radius);
             h.write_i32(dir.sim.radii.parent_radius);
+            h.write_i32(dir.sim.z);
+            h.write_i32(dir.sim.spos_z);
         }
         for &f in self.files_by_path.values() {
             let file = &self.files[f];
             h.write_vec(file.sim.pos);
             h.write_vec(file.sim.vel);
             h.write_i32(file.sim.size);
+            h.write_i32(file.sim.z);
         }
         for &u in self.users_by_name.values() {
             let user = &self.users[u];

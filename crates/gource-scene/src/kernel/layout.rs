@@ -1070,6 +1070,13 @@ pub struct WorldFileParticle {
     pub radius: Fx,
     /// Stable entity tag for deterministic coincidence tie-breaks.
     pub tag: u16,
+    /// Height of the file's centre above the floor (Q8; `particles` engine).
+    pub z: Fx,
+    /// Vertical velocity (Q8 units/s; `particles` engine).
+    pub vz: Fx,
+    /// The file is being deleted: the floor no longer supports it and it
+    /// falls away (`particles` engine).
+    pub falling: bool,
 }
 
 /// Advance file particles in world space for one tick:

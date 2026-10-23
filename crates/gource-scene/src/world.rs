@@ -1239,16 +1239,27 @@ mod tests {
 
             // Step until all user actions complete, then let the tree and files settle.
             let mut settled_at = None;
-            for n in 0..360 {
+            // The particles engine drops files in from above, so give it longer.
+            let limit = if engine == LayoutEngine::Particles {
+                900
+            } else {
+                360
+            };
+            for n in 0..limit {
                 let d = tick(&mut world, n, &settings);
-                if n > 30 && d.dirs.is_empty() && d.files.is_empty() {
+                if n > 30
+                    && d.dirs.is_empty()
+                    && d.files.is_empty()
+                    && d.dirs_z.is_empty()
+                    && d.files_z.is_empty()
+                {
                     settled_at = Some(n);
                     break;
                 }
             }
             assert!(
                 settled_at.is_some(),
-                "engine {engine:?} failed to settle spider directories within 360 ticks"
+                "engine {engine:?} failed to settle spider directories within {limit} ticks"
             );
 
             if engine == LayoutEngine::Particles {

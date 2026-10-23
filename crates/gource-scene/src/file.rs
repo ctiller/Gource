@@ -34,6 +34,11 @@ pub struct FileSim {
     pub radius: Fx,
     /// `particles` engine: the file has been dropped into the world simulation.
     pub particle_init: bool,
+    /// `particles` engine: height of the file's centre above the floor (Q8),
+    /// its value at the start of the tick, and its vertical velocity.
+    pub z: Fx,
+    pub prev_z: Fx,
+    pub vz: Fx,
 }
 
 /// A file in the visualizer repository tree.

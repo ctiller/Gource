@@ -35,6 +35,12 @@ pub struct DirSim {
     pub radii: Radii,
     /// C++ `position_initialized`: placed next to its parent.
     pub initialized: bool,
+    /// `particles` engine: height (Q8) of the tip and of the spline control
+    /// point, and their values at the start of the tick.
+    pub z: Fx,
+    pub prev_z: Fx,
+    pub spos_z: Fx,
+    pub prev_spos_z: Fx,
 }
 
 /// A directory node in the visualizer tree.
