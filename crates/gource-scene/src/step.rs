@@ -1453,6 +1453,8 @@ impl World {
             let dir = &mut self.dirs[d];
             dir.pos = view.point(lerp_ivec(dir.sim.prev_pos, dir.sim.pos, alpha));
             dir.spos = view.point(lerp_ivec(dir.sim.prev_spos, dir.sim.spos, alpha));
+            dir.view_z = crate::view::lerp_fx(dir.sim.prev_z, dir.sim.z, alpha);
+            dir.view_spos_z = crate::view::lerp_fx(dir.sim.prev_spos_z, dir.sim.spos_z, alpha);
             dir.dir_radius = from_fx(dir.sim.radii.radius);
             dir.parent_radius = from_fx(dir.sim.radii.parent_radius);
             dir.node_normal =
@@ -1461,6 +1463,7 @@ impl World {
         let weighted = self.weighted_mode;
         for f in self.files.values_mut() {
             f.pawn.pos = lerp_ivec(f.sim.prev_pos, f.sim.pos, alpha);
+            f.view_z = crate::view::lerp_fx(f.sim.prev_z, f.sim.z, alpha);
             if weighted && f.weighted {
                 f.pawn.size = from_fx(f.sim.size);
                 f.pawn.dims = Vec2::splat(f.pawn.size);

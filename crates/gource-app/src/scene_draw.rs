@@ -10,6 +10,32 @@ use gource_scene::user::UserId;
 use gource_scene::world::World;
 use gource_settings::GourceSettings;
 
+/// How strongly a file at height `z` (world units, centre above the floor)
+/// casts its floor shadow: full strength resting on the floor, fading to a
+/// fifth as it rises ten diameters, and none once it has fallen through the
+/// floor (`z < 0`). Files in the 2D engines sit at `z = 0`: full strength.
+pub fn shadow_lift(z: f32, size: f32) -> f32 {
+    if z < 0.0 {
+        return 0.0;
+    }
+    let above = z - size * 0.5;
+    if above <= 0.0 {
+        return 1.0;
+    }
+    (1.0 - above / (10.0 * size.max(1.0))).clamp(0.2, 1.0)
+}
+
+/// One file sprite (and its pulse ring), queued so files can be drawn from
+/// the lowest to the highest.
+#[derive(Debug, Clone, Copy)]
+struct FileSprite {
+    height: f32,
+    ring: Option<(Vec2, Vec2, Vec4)>,
+    pos: Vec2,
+    dims: Vec2,
+    col: Vec4,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct SceneTextures {
     pub file: TextureId,
@@ -86,13 +112,12 @@ trait WorldDrawInternal {
         shadow_strength: f32,
     );
     fn draw_user_actions(&self, list: &mut DrawList, proj: &Projection, beam_tex: TextureId);
-    fn draw_files_recursive(
+    fn collect_files_recursive(
         &self,
         dir_id: DirId,
-        list: &mut DrawList,
         proj: &Projection,
-        file_tex: TextureId,
         settings: &GourceSettings,
+        out: &mut Vec<FileSprite>,
     );
     fn draw_bloom_recursive(
         &self,
@@ -167,9 +192,19 @@ impl WorldDraw for World {
             self.draw_user_actions(list, proj, textures.beam);
         }
 
-        // 4. Files
+        // 4. Files, lowest first so higher ones are drawn over them (a
+        // stable sort: in the 2D engines, all at height 0, the order is
+        // unchanged).
         if !settings.hide_files {
-            self.draw_files_recursive(self.root, list, proj, textures.file, settings);
+            let mut sprites = Vec::with_capacity(self.files.len());
+            self.collect_files_recursive(self.root, proj, settings, &mut sprites);
+            sprites.sort_by(|a, b| a.height.total_cmp(&b.height));
+            for s in sprites {
+                if let Some((pos, dims, col)) = s.ring {
+                    list.rect(textures.file, pos, dims, col);
+                }
+                list.rect(textures.file, s.pos, s.dims, s.col);
+            }
         }
 
         // C++ `updateVBOs`: `--fixed-user-size` keeps users the same size on
@@ -340,8 +375,10 @@ impl WorldDrawInternal for World {
 
         let dir = &mut self.dirs[dir_id];
         dir.in_frustum = v_bounds.overlaps(&dir.quad_item_bounds);
-        dir.projected_pos = proj.to_screen(dir.pos);
-        dir.projected_spos = proj.to_screen(dir.spos);
+        // Heights (particles engine) project with perspective: closer to
+        // the camera looks bigger and further from the centre.
+        dir.projected_pos = proj.to_screen_at(dir.pos, dir.view_z);
+        dir.projected_spos = proj.to_screen_at(dir.spos, dir.view_spos_z);
 
         if let Some((p_pos, p_col)) = parent_data {
             let c_pos = dir.projected_pos;
@@ -359,7 +396,7 @@ impl WorldDrawInternal for World {
                 } else {
                     Vec2::new(5.5, -1.0)
                 };
-                let screen = proj.to_screen(abs_pos + offset);
+                let screen = proj.to_screen_at(abs_pos + offset, file.view_z);
                 file.pawn.screenpos = Vec3::new(screen.x, screen.y, 0.0);
             }
         }
@@ -487,11 +524,18 @@ impl WorldDrawInternal for World {
                 if file.pawn.is_hidden() {
                     continue;
                 }
+                // The shadow always lies on the floor, fading as the file
+                // rises above it; a file that has fallen through the floor
+                // casts none.
+                let lift = shadow_lift(file.view_z, file.pawn.size);
+                if lift <= 0.0 {
+                    continue;
+                }
                 let world_pos = file.absolute_pos(dir.pos) + offset_world;
                 let screen_pos = proj.to_screen(world_pos);
                 let screen_size = proj.to_screen_len(file.pawn.size);
                 let dims = Vec2::new(screen_size, screen_size * file.pawn.graphic_ratio);
-                let alpha = file.alpha() * shadow_strength;
+                let alpha = file.alpha() * shadow_strength * lift;
                 let col = Vec4::new(0.0, 0.0, 0.0, alpha);
                 list.rect(file_tex, screen_pos - dims * 0.5, dims, col);
             }
@@ -529,14 +573,14 @@ impl WorldDrawInternal for World {
                 let dest_world = file.absolute_pos(dir_pos);
 
                 let src = proj.to_screen(src_world);
-                let dest = proj.to_screen(dest_world);
+                let dest = proj.to_screen_at(dest_world, file.view_z);
 
                 let dir_vec = dest - src;
                 let len = dir_vec.length();
                 let n = if len > 0.0 { dir_vec / len } else { Vec2::ZERO };
                 let perp = Vec2::new(-n.y, n.x);
 
-                let target_screen_size = proj.to_screen_len(file.pawn.size);
+                let target_screen_size = proj.to_screen_len_at(file.pawn.size, file.view_z);
                 let offset = perp * target_screen_size * 0.5;
                 let offset_src = offset * 0.3;
 
@@ -565,13 +609,12 @@ impl WorldDrawInternal for World {
         }
     }
 
-    fn draw_files_recursive(
+    fn collect_files_recursive(
         &self,
         dir_id: DirId,
-        list: &mut DrawList,
         proj: &Projection,
-        file_tex: TextureId,
         settings: &GourceSettings,
+        out: &mut Vec<FileSprite>,
     ) {
         let dir = &self.dirs[dir_id];
         if dir.in_frustum {
@@ -581,15 +624,16 @@ impl WorldDrawInternal for World {
                     continue;
                 }
                 let world_pos = file.absolute_pos(dir.pos);
-                let screen_pos = proj.to_screen(world_pos);
+                let z = file.view_z;
+                let screen_pos = proj.to_screen_at(world_pos, z);
 
-                // Render pulse ring if active
-                if let Some((ring_size, ring_col)) = file.pulse_visual() {
-                    let rdims = Vec2::splat(proj.to_screen_len(ring_size));
-                    list.rect(file_tex, screen_pos - rdims * 0.5, rdims, ring_col);
-                }
+                // Pulse ring if active
+                let ring = file.pulse_visual().map(|(ring_size, ring_col)| {
+                    let rdims = Vec2::splat(proj.to_screen_len_at(ring_size, z));
+                    (screen_pos - rdims * 0.5, rdims, ring_col)
+                });
 
-                let screen_size = proj.to_screen_len(file.pawn.size);
+                let screen_size = proj.to_screen_len_at(file.pawn.size, z);
                 let dims = Vec2::new(screen_size, screen_size * file.pawn.graphic_ratio);
                 let mut c =
                     if settings.file_colour_mode == gource_settings::FileColourMode::Extension {
@@ -603,12 +647,18 @@ impl WorldDrawInternal for World {
                 }
                 let alpha = file.alpha();
                 let col = Vec4::new(c.x, c.y, c.z, alpha);
-                list.rect(file_tex, screen_pos - dims * 0.5, dims, col);
+                out.push(FileSprite {
+                    height: z,
+                    ring,
+                    pos: screen_pos - dims * 0.5,
+                    dims,
+                    col,
+                });
             }
         }
 
         for &cid in &dir.children {
-            self.draw_files_recursive(cid, list, proj, file_tex, settings);
+            self.collect_files_recursive(cid, proj, settings, out);
         }
     }
 
@@ -707,5 +757,24 @@ impl WorldDrawInternal for World {
         for &cid in &dir.children {
             self.draw_file_names_recursive(cid, list, gfx, settings, file_font, _selected_only);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shadow_lift_fades_with_height_and_vanishes_below_the_floor() {
+        // 2D engines: everything at height 0 casts a full shadow.
+        assert_eq!(shadow_lift(0.0, 8.0), 1.0);
+        // Resting on the floor (centre one radius up): full shadow.
+        assert_eq!(shadow_lift(4.0, 8.0), 1.0);
+        // Rising fades it, down to a fifth.
+        let half = shadow_lift(4.0 + 40.0, 8.0);
+        assert!((half - 0.5).abs() < 1e-6, "{half}");
+        assert_eq!(shadow_lift(4.0 + 1000.0, 8.0), 0.2);
+        // Fallen through the floor: no shadow.
+        assert_eq!(shadow_lift(-1.0, 8.0), 0.0);
     }
 }

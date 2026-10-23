@@ -74,6 +74,10 @@ pub struct DirNode {
     pub dir_area: f32,
     pub visible: bool,
     pub in_frustum: bool,
+    /// View: interpolated heights of the tip and the spline control point
+    /// (world units; `particles` engine, 0 otherwise).
+    pub view_z: f32,
+    pub view_spos_z: f32,
 
     pub since_node_visible: f32,
     pub since_last_file_change: f32,
@@ -128,6 +132,8 @@ impl DirNode {
             visible: false,
             in_frustum: false,
             since_node_visible: 0.0,
+            view_z: 0.0,
+            view_spos_z: 0.0,
             since_last_file_change: 0.0,
             since_last_node_change: 0.0,
             dir_radius: 1.0,

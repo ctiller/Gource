@@ -518,7 +518,10 @@ pub fn step_tree_particles(
             // Arms rest on the floor: the bend may sag down to it, or arch up.
             let (zp, zd) = (frame.pos_z[par], frame.pos_z[d]);
             let sag_floor = 2 * (p.arm_radius as i64 - (zp as i64 + zd as i64) / 2);
-            bends[d].z = (bends[d].z as i64).clamp(sag_floor, chord as i64) as Fx;
+            // (Tips raised above the floor, e.g. by files dropping in, can sag
+            // further than the arm is long; the floor limit wins.)
+            let arch_max = (chord as i64).max(sag_floor);
+            bends[d].z = (bends[d].z as i64).clamp(sag_floor, arch_max) as Fx;
             arms.push((
                 par,
                 d,

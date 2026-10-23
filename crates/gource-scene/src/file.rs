@@ -52,6 +52,9 @@ pub struct File {
 
     pub file_colour: Vec3,
     pub touch_colour: Vec3,
+    /// View: interpolated height above the floor (world units; `particles`
+    /// engine, 0 otherwise).
+    pub view_z: f32,
 
     pub dir: Option<DirId>,
 
@@ -124,6 +127,7 @@ impl File {
             },
             file_colour: colour,
             touch_colour: Vec3::ONE,
+            view_z: 0.0,
             dir: None,
             removed_timestamp: 0,
             forced_removal: false,

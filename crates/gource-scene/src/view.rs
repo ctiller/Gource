@@ -60,6 +60,13 @@ pub fn lerp_ivec(a: IVec2, b: IVec2, alpha: f32) -> Vec2 {
     fa + (from_ivec(b) - fa) * alpha
 }
 
+/// Interpolate two Q8 scalars into world units.
+#[inline]
+pub fn lerp_fx(a: Fx, b: Fx, alpha: f32) -> f32 {
+    let fa = from_fx(a);
+    fa + (from_fx(b) - fa) * alpha
+}
+
 /// The user's view rotation: `p' = M p + t`, accumulated from
 /// rotate requests. The simulation never rotates; forces are rotation
 /// invariant, so rotating the view is equivalent.

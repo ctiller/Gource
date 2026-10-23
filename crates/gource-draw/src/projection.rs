@@ -58,6 +58,32 @@ impl Projection {
         len * self.scale()
     }
 
+    /// Pixels per world unit at `height` above the plane (towards the
+    /// camera). Things closer to the camera look bigger; the distance is
+    /// clamped to a tenth of the camera distance so nothing blows up.
+    pub fn scale_at(&self, height: f32) -> f32 {
+        if height == 0.0 {
+            return self.scale();
+        }
+        let d = (self.distance - height).max(self.distance * 0.1);
+        let half_fov = (CAMERA_FOV_DEGREES * 0.5).to_radians();
+        (self.viewport.y * 0.5) / (d * half_fov.tan())
+    }
+
+    /// Perspective projection of `world` at `height` above the plane
+    /// (identical to [`Projection::to_screen`] at height 0).
+    pub fn to_screen_at(&self, world: Vec2, height: f32) -> Vec2 {
+        if height == 0.0 {
+            return self.to_screen(world);
+        }
+        (world - self.centre) * self.scale_at(height) + self.viewport * 0.5
+    }
+
+    /// A world-space length at `height` above the plane, in pixels.
+    pub fn to_screen_len_at(&self, len: f32, height: f32) -> f32 {
+        len * self.scale_at(height)
+    }
+
     /// The part of the plane visible in the viewport (the view frustum
     /// intersected with z = 0).
     pub fn visible_bounds(&self) -> Bounds2D {
@@ -92,6 +118,25 @@ mod tests {
         let b = p.visible_bounds();
         assert!(b.contains(Vec2::new(-5.0, 7.0)));
         assert!((b.height() - 500.0).abs() < 1e-2);
+    }
+
+    #[test]
+    fn height_projects_with_perspective() {
+        let p = Projection::new(Vec3::new(0.0, 0.0, -100.0), Vec2::new(800.0, 600.0));
+        let w = Vec2::new(10.0, 20.0);
+        // Height 0 is exactly the plane projection.
+        assert_eq!(p.to_screen_at(w, 0.0), p.to_screen(w));
+        assert_eq!(p.scale_at(0.0), p.scale());
+        // Halfway to the camera, everything is twice as big and twice as far
+        // from the screen centre.
+        assert!((p.scale_at(50.0) - 2.0 * p.scale()).abs() < 1e-4);
+        let off0 = p.to_screen(w) - p.viewport * 0.5;
+        let off50 = p.to_screen_at(w, 50.0) - p.viewport * 0.5;
+        assert!((off50 - off0 * 2.0).length() < 1e-3);
+        assert!((p.to_screen_len_at(4.0, 50.0) - 8.0 * p.scale()).abs() < 1e-3);
+        // Below the plane, things shrink; at or past the camera, the scale is clamped.
+        assert!(p.scale_at(-100.0) < p.scale());
+        assert!((p.scale_at(1000.0) - 10.0 * p.scale()).abs() < 1e-3);
     }
 
     #[test]
