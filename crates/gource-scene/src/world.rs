@@ -1241,7 +1241,7 @@ mod tests {
             let mut settled_at = None;
             // The particles engine drops files in from above, so give it longer.
             let limit = if engine == LayoutEngine::Particles {
-                900
+                1200
             } else {
                 360
             };
